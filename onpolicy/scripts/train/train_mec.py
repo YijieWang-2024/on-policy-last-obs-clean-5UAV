@@ -131,6 +131,7 @@ def parse_args(args, parser):
     parser.add_argument("--ob_state_with_timestep", action='store_true', default=False, help="If true, observation and state with timestep in first dimension")
     parser.add_argument("--use_kl_threshold", action='store_true', default=False, help="If true, r_mappo.py use kl threshold to stop update early")
     parser.add_argument("--perform_with_local_state", action='store_true', default=False, help="If true, self.state=self.obs in mec.py")
+    parser.add_argument("--state_is_k_hops", action='store_true', default=False, help="If true, self.state=M_i^k in mec.py. paper_0707")
     parser.add_argument("--concat_neighbor_obs", action='store_true', default=False, help="If true, concat neighbor's obs")
     parser.add_argument('--max_UAVs_obs_concat', type=int, default=3, help="max number of UAVs' obs to concat")
     parser.add_argument("--use_atten_actor", action='store_true', default=False, help="If true, use R_Actor_Attention")

@@ -225,6 +225,7 @@ class MECRunner(Runner):
                 for agent_id in range(self.num_agents):
                     self.buffer[agent_id].advantages[:step + 1] = updated_advantages[agent_id, :, :, np.newaxis].copy()
         elif (not self.average_local_advantage_timely) and (self.average_local_advantage or self.average_neighbor_advantage):
+            # 没有timely，就是每一步的adv固定迭代更新n_iterations次。（这样好像也不对？前几步明明可以更新的更多的啊）
             n_iterations = self.all_args.n_iterations
             if self.average_neighbor_advantage:
                 assert n_iterations==1

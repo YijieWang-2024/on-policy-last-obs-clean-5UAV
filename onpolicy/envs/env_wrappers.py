@@ -737,32 +737,38 @@ class ShareDummyVecEnv(ShareVecEnv):
         self.envs = [fn() for fn in env_fns]
         env = self.envs[0]
         ShareVecEnv.__init__(self, len(
-            env_fns), env.observation_space, env.share_observation_space, env.action_space)
+            env_fns), env.observation_space, env.share_observation_space, env.action_space, env.available_actions_space)
         self.actions = None
+
+    def process_actions(self, actions):
+        results = [env.process_actions(a) for (a, env) in zip(actions, self.envs)]
+        # processed_actions = map(np.array, zip(*results))
+        processed_actions = np.array(results)
+        return processed_actions
 
     def step_async(self, actions):
         self.actions = actions
 
     def step_wait(self):
         results = [env.step(a) for (a, env) in zip(self.actions, self.envs)]
-        obs, share_obs, rews, dones, infos, available_actions = map(
+        obs, share_obs, rews, dones, infos, available_actions, Metropolis_weights, attention_active_mask = map(
             np.array, zip(*results))
 
         for (i, done) in enumerate(dones):
             if 'bool' in done.__class__.__name__:
                 if done:
-                    obs[i], share_obs[i], available_actions[i] = self.envs[i].reset()
+                    obs[i], share_obs[i], available_actions[i], Metropolis_weights[i], attention_active_mask[i] = self.envs[i].reset()
             else:
                 if np.all(done):
-                    obs[i], share_obs[i], available_actions[i] = self.envs[i].reset()
+                    obs[i], share_obs[i], available_actions[i], Metropolis_weights[i], attention_active_mask[i] = self.envs[i].reset()
         self.actions = None
 
-        return obs, share_obs, rews, dones, infos, available_actions
+        return obs, share_obs, rews, dones, infos, available_actions, Metropolis_weights, attention_active_mask
 
     def reset(self):
         results = [env.reset() for env in self.envs]
-        obs, share_obs, available_actions = map(np.array, zip(*results))
-        return obs, share_obs, available_actions
+        obs, share_obs, available_actions, Metropolis_weights, attention_active_mask = map(np.array, zip(*results))
+        return obs, share_obs, available_actions, Metropolis_weights, attention_active_mask
 
     def close(self):
         for env in self.envs:

@@ -219,23 +219,34 @@ class R_Critic_Attention(nn.Module):
         self.hidden_size = args.hidden_size
         self.max_UAVs_obs_concat = args.max_UAVs_obs_concat if hasattr(args, 'max_UAVs_obs_concat') else 1
         self.perform_with_local_state = args.perform_with_local_state
+        self.state_is_k_hops = args.state_is_k_hops
         self.n_UAVs = args.n_UAVs
+        assert self.max_UAVs_obs_concat == self.n_UAVs
         self._use_orthogonal = args.use_orthogonal
         self.tpdv = dict(dtype=torch.float32, device=device)
         # Get centralized observation space dimensions
         cent_obs_shape = get_shape_from_obs_space(cent_obs_space)
         # Individual agent observation dimension
         original_feature_size = cent_obs_shape[0]
+
+        # if self.perform_with_local_state:
+        #     if self.max_UAVs_obs_concat > 1:
+        #         # Assuming the last dimension can be divided into max_UAVs_obs_concat parts
+        #         self.individual_obs_dim = original_feature_size // self.max_UAVs_obs_concat
+        #     else:
+        #         self.individual_obs_dim = original_feature_size
+        # else:
+        #     self.individual_obs_dim = original_feature_size // (self.n_UAVs + 1)
+
         if self.perform_with_local_state:
-            if self.max_UAVs_obs_concat > 1:
-                # Assuming the last dimension can be divided into max_UAVs_obs_concat parts
-                self.individual_obs_dim = original_feature_size // self.max_UAVs_obs_concat
-            else:
-                self.individual_obs_dim = original_feature_size
+            self.individual_obs_dim = original_feature_size
+        elif self.state_is_k_hops:   #k-hops或者直接拼接self+全局
+            self.individual_obs_dim = original_feature_size // self.max_UAVs_obs_concat
         else:
             self.individual_obs_dim = original_feature_size // (self.n_UAVs + 1)
+
         # Encoder for individual agent observations
-        self.agent_encoder = MLPBase(args, [self.individual_obs_dim], layer_N=0)
+        self.agent_encoder = MLPBase(args, [self.individual_obs_dim], layer_N=0)    # 每一个individual_obs_dim到args.hidden_size，带active_func
         # Attention layer for inter-agent information exchange
         self.attention = AttentionLayer(self.hidden_size, self.hidden_size*2)
         # Final MLP after attention
@@ -253,8 +264,11 @@ class R_Critic_Attention(nn.Module):
         rnn_states = check(rnn_states).to(**self.tpdv)
         masks = check(masks).to(**self.tpdv)
 
-        # 如果是用的全局的critic，不需要attention_mask来指示哪些智能体的状态可用了。全部可用。
-        if not self.perform_with_local_state:
+        # # 如果是用的全局的critic，不需要attention_mask来指示哪些智能体的状态可用了。全部可用。
+        # if not self.perform_with_local_state:
+        #     attention_active_mask = None
+
+        if not self.state_is_k_hops:    # local-state（s_{i,t}）或者全局拼接self+所有的state。都不需要active_mask。
             attention_active_mask = None
 
         if attention_active_mask is not None:
@@ -262,22 +276,20 @@ class R_Critic_Attention(nn.Module):
 
         batch_size = cent_obs.shape[0]
 
-        if self.perform_with_local_state or self.max_UAVs_obs_concat > 1:
-            # [batch_size, cent_obs_dim] -> [batch_size, max_UAVs_obs_concat, individual_obs_dim]
+        if not self.perform_with_local_state:
+            # [batch_size, cent_obs_dim] -> [batch_size, max_UAVs_obs_concat(或者n_UAVs+1), individual_obs_dim]
             obs_reshaped = cent_obs.view(batch_size, -1, self.individual_obs_dim)
-
             agent_features = self.agent_encoder(obs_reshaped)
-
             # Apply attention mechanism with agent mask
             attended_features = self.attention(agent_features, attention_active_mask)
-
             # 上边的代码使用了self-attention。这里对max_UAVs_obs_concat求了平均。（不平均的话，其实只取第一个观测，即自己的观测就好。）
             if attention_active_mask is not None:
                 # Expand mask to match attended_features shape for broadcasting
                 expanded_mask = attention_active_mask.unsqueeze(-1)
                 # Compute weighted sum (using mask as weights)
                 masked_sum = torch.sum(attended_features * expanded_mask, dim=1)
-                valid_agents = torch.sum(attention_active_mask, dim=1, keepdim=True).clamp(min=1.0)  # Avoid division by zero
+                valid_agents = torch.sum(attention_active_mask, dim=1, keepdim=True).clamp(
+                    min=1.0)  # Avoid division by zero
                 aggregated_features = masked_sum / valid_agents
             else:
                 # Simple mean if no mask provided
@@ -290,6 +302,35 @@ class R_Critic_Attention(nn.Module):
         else:
             # Single agent processing
             features = self.agent_encoder(cent_obs)
+
+        # if self.perform_with_local_state or self.max_UAVs_obs_concat > 1:
+        #     # [batch_size, cent_obs_dim] -> [batch_size, max_UAVs_obs_concat, individual_obs_dim]
+        #     obs_reshaped = cent_obs.view(batch_size, -1, self.individual_obs_dim)
+        #
+        #     agent_features = self.agent_encoder(obs_reshaped)
+        #
+        #     # Apply attention mechanism with agent mask
+        #     attended_features = self.attention(agent_features, attention_active_mask)
+        #
+        #     # 上边的代码使用了self-attention。这里对max_UAVs_obs_concat求了平均。（不平均的话，其实只取第一个观测，即自己的观测就好。）
+        #     if attention_active_mask is not None:
+        #         # Expand mask to match attended_features shape for broadcasting
+        #         expanded_mask = attention_active_mask.unsqueeze(-1)
+        #         # Compute weighted sum (using mask as weights)
+        #         masked_sum = torch.sum(attended_features * expanded_mask, dim=1)
+        #         valid_agents = torch.sum(attention_active_mask, dim=1, keepdim=True).clamp(min=1.0)  # Avoid division by zero
+        #         aggregated_features = masked_sum / valid_agents
+        #     else:
+        #         # Simple mean if no mask provided
+        #         aggregated_features = attended_features.mean(dim=1)
+        #     # # 不平均，只取自己的观测试一下。
+        #     # aggregated_features = attended_features[:, 0]
+        #
+        #     # Final MLP processing
+        #     features = self.mlp_after_attention(aggregated_features)
+        # else:
+        #     # Single agent processing
+        #     features = self.agent_encoder(cent_obs)
 
         # Value prediction
         values = self.v_out(features)

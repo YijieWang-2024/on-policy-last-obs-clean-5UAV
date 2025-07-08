@@ -27,15 +27,20 @@ class R_MAPPOPolicy:
         self.act_space = act_space
         self.use_atten_actor = args.use_atten_actor
         self.use_atten_critic = args.use_atten_critic
-        self.concat_neighbor_obs = args.concat_neighbor_obs
-        if self.use_atten_actor:
-            assert self.concat_neighbor_obs is True
-            self.actor = R_Actor_Attention(args, self.obs_space, self.act_space, self.device)
-        else:
-            self.actor = R_Actor(args, self.obs_space, self.act_space, self.device)
+        # self.concat_neighbor_obs = args.concat_neighbor_obs
+        self.state_is_k_hops = args.state_is_k_hops
+        self.perform_with_local_state = args.perform_with_local_state
+        # if self.use_atten_actor:
+        #     assert self.concat_neighbor_obs is True
+        #     self.actor = R_Actor_Attention(args, self.obs_space, self.act_space, self.device)
+        # else:
+        #     self.actor = R_Actor(args, self.obs_space, self.act_space, self.device)
+        self.actor = R_Actor(args, self.obs_space, self.act_space, self.device) # actor固定了s_{i,t}。没用atten必要。
 
         if self.use_atten_critic:
-            assert self.concat_neighbor_obs is True
+            # assert self.concat_neighbor_obs is True
+            assert (self.state_is_k_hops is True) or ((self.perform_with_local_state or self.state_is_k_hops) is False)
+            # 利用s_{M_i^k}的信息，才要atten的critic。 或者默认到了全局拼接state，也可以要atten的critic。
             self.critic = R_Critic_Attention(args, self.share_obs_space, self.device)
         else:
             self.critic = R_Critic(args, self.share_obs_space, self.device)
