@@ -101,8 +101,8 @@ class MEC(gym.Env):
             # 与自身距离小于Cover_R的地面用户的数目；
             # 距离由近到远的前self.max_GUs_in_range个地面用户的位置、信道增益和计算任务的信息]
             self.GUs_in_action_dim = self.max_GUs_in_range
-            self.obs_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 + 7*self.max_GUs_in_range
-            self.state_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 + 7*self.max_GUs_in_range
+            self.obs_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 + 8*self.max_GUs_in_range
+            self.state_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 + 8*self.max_GUs_in_range
 
             # # 不要邻居无人机的位置。
             # self.obs_dim = 3 + 2 + 1 + 7 * self.max_GUs_in_range
@@ -110,12 +110,12 @@ class MEC(gym.Env):
         elif self.state_is_k_hops:  # last-obs的k跳。自己的s_{i,t}是包括覆盖范围内的无人机的。
             self.GUs_in_action_dim = self.max_GUs_in_range
             # 包括覆盖范围内d_cov的无人机信息。
-            self.obs_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+7*self.max_GUs_in_range
-            self.state_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+7*self.max_GUs_in_range
+            self.obs_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+8*self.max_GUs_in_range
+            self.state_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+8*self.max_GUs_in_range
         else:
             # self.GUs_in_action_dim = self.n_GUs
             self.GUs_in_action_dim = self.max_GUs_in_range
-            self.obs_dim = 3+2 + 1+2*self.max_UAVs_in_neighbor + 1+7*self.max_GUs_in_range   # 局部obs的dim
+            self.obs_dim = 3+2 + 1+2*self.max_UAVs_in_neighbor + 1+8*self.max_GUs_in_range   # 局部obs的dim
             # 不要邻居无人机的位置。
             # self.obs_dim = 3+2 + 1 + 7*self.max_GUs_in_range   # 局部obs的dim
 
@@ -189,11 +189,14 @@ class MEC(gym.Env):
         self.gu_positions = np.random.uniform(0, self.x_max, (self.n_GUs, 2))
         self.gu_positions = np.hstack((self.gu_positions, self.H_GU * np.ones((self.n_GUs, 1))))
         # Gauss-Markov Model parameters
-        self.alpha_gaussian = 0.95
+        # self.alpha_gaussian = 0.95
+        self.alpha_gaussian = 0.7
         self.std_dev_gaussian = 1
-        self.gu_velocities = np.random.normal(self.mean_velocity, self.std_dev_gaussian, self.n_GUs)
-        self.gu_velocities = np.clip(self.gu_velocities, 0.5* self.mean_velocity, 1.5 * self.mean_velocity)
+        self.gu_velocities = np.random.normal(self.mean_velocity, 0.3*self.std_dev_gaussian, self.n_GUs)
+        self.gu_velocities = np.clip(self.gu_velocities, 0.7* self.mean_velocity, 1.3 * self.mean_velocity)
+        np.random.seed(0)
         self.gu_directions = np.random.uniform(0, 2 * np.pi, self.n_GUs)
+        self.gu_directions_0 = self.gu_directions.copy()
 
         # Initialize ground user tasks
         self.gu_tasks = self.generate_tasks()
@@ -294,11 +297,15 @@ class MEC(gym.Env):
         # np.random.seed(0)
         # Initialize ground user positions with fixed height of 1m
         self.gu_positions = np.random.uniform(0, self.x_max, (self.n_GUs, 2))
+        distances = np.sqrt(np.sum(self.gu_positions ** 2, axis=1))
+        sorted_indices = np.argsort(distances)
+        self.gu_positions = self.gu_positions[sorted_indices]
+
         self.gu_positions = np.hstack((self.gu_positions, self.H_GU * np.ones((self.n_GUs, 1))))
-        self.gu_velocities = np.random.normal(self.mean_velocity, self.std_dev_gaussian, self.n_GUs)
-        self.gu_velocities = np.clip(self.gu_velocities, 0.5* self.mean_velocity, 1.5 * self.mean_velocity)
+        self.gu_velocities = np.random.normal(self.mean_velocity, 0.3*self.std_dev_gaussian, self.n_GUs)
+        self.gu_velocities = np.clip(self.gu_velocities, 0.7* self.mean_velocity, 1.3 * self.mean_velocity)
         self.gu_directions = np.random.uniform(0, 2 * np.pi, self.n_GUs)
-        self.gu_directions_0 = self.gu_directions.copy()
+
         # np.random.seed(None)
         # Initialize tasks for ground users
         self.gu_tasks = self.generate_tasks()
@@ -890,15 +897,6 @@ class MEC(gym.Env):
         self.time_step += 1
         # Ensure action is a numpy array
         assert isinstance(action, (list, tuple, np.ndarray)), "Action must be a list or tuple or numpy array"
-        # Update UAV positions
-        if self.fix_uav_pos:
-            pass
-        else:
-            fly_action = action[:, :2] * np.array([2 * np.pi, self.v_max])  # 方向和速度都是0-1之间的数
-            for i in range(self.n_UAVs):
-                direction, velocity = fly_action[i]
-                self.uav_positions[i, :2] += velocity * self.Delta_t * np.array([np.cos(direction), np.sin(direction)])
-            self.uav_positions[:, :2] = np.clip(self.uav_positions[:, :2], 0, self.x_max)
 
         # 计算local奖励时，先用了动作转换，用到了nearby_gus_of_uavs，但是不用先更新。因为就是用之前的信息，找到对应之前的动作。用来计算奖励。
         if self.not_process_action:
@@ -907,11 +905,20 @@ class MEC(gym.Env):
             rewards = self.calculate_local_reward(action)
         self.cumulative_reward += np.mean(rewards) * np.ones_like(rewards)
 
+        # 更新无人机位置。Update UAV positions
+        if self.fix_uav_pos:
+            pass
+        else:
+            fly_action = action[:, :2] * np.array([2 * np.pi, self.v_max])  # 方向和速度都是0-1之间的数
+            for i in range(self.n_UAVs):
+                direction, velocity = fly_action[i]
+                self.uav_positions[i, :2] += velocity * self.Delta_t * np.array([np.cos(direction), np.sin(direction)])
+            self.uav_positions[:, :2] = np.clip(self.uav_positions[:, :2], 0, self.x_max)
         # 地面用户位置移动（发现总是会走到最左边。）
         # Update ground user velocities and directions using Gauss-Markov Model
-        random_normal_vel = np.random.normal(0, self.std_dev_gaussian, self.n_GUs)
+        random_normal_vel = np.random.normal(0, 0.01*self.std_dev_gaussian, self.n_GUs)
         self.gu_velocities = self.alpha_gaussian * self.gu_velocities + (1 - self.alpha_gaussian) * self.mean_velocity + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_vel
-        random_normal_dir = np.random.normal(0, 0.1*self.std_dev_gaussian, self.n_GUs)
+        random_normal_dir = np.random.normal(0, 0.01*self.std_dev_gaussian, self.n_GUs)
         self.gu_directions = self.alpha_gaussian * self.gu_directions + (1 - self.alpha_gaussian) * self.gu_directions_0 + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_dir
 
         # Update ground user positions
@@ -1547,6 +1554,8 @@ class MEC(gym.Env):
                         # Add task information (3 values)
                         local_obs[i, idx:idx + 3] = self.gu_tasks[gu_idx]
                         idx += 3
+                        local_obs[i, idx:idx + 1] = gu_idx
+                        idx += 1
             # Reset idx for next UAV's observations
             idx = 0
         return local_obs
