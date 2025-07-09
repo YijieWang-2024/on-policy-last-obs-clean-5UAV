@@ -1136,7 +1136,8 @@ class MEC(gym.Env):
                 per_GU_energy_true_others[n] = np.clip(total_energy, 0, 10)
                 # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
                 per_GU_task_reward_others[n] = per_GU_delay_reward_others[n] + per_GU_energy_reward_others[n]
-                self.gu_tasks[n, 3] += 1
+                # self.gu_tasks[n, 3] += 1
+                self.gu_tasks[n, 3] = 1
             else:
                 gu_n_task = self.gu_tasks[n]
                 d_nm_3 = np.linalg.norm(self.uav_positions[m] - self.gu_positions[n])
@@ -1162,7 +1163,8 @@ class MEC(gym.Env):
                     self.gu_tasks[n, 3] = 1
                 else:
                     R_task_delay[m] += (-1 * self.gu_tasks[n, 3] * self.delta_r)
-                    self.gu_tasks[n, 3] += 1
+                    # self.gu_tasks[n, 3] += 1
+                    self.gu_tasks[n, 3] = 1
                 R_task_energy[m] += -1 * self.lambda_r * np.clip(total_energy, 0, 10)  # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
 
                 # 统计系统性能的。
