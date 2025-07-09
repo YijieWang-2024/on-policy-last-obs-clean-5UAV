@@ -262,8 +262,8 @@ class MEC(gym.Env):
                                            [120, 480, self.H_UAV],[300, 480, self.H_UAV], [480, 480, self.H_UAV],
                                            [210,390, self.H_UAV]], dtype=np.float)
         if self.n_UAVs == 4 and self.x_max == 400 and self.n_GUs == 40:
-            self.uav_positions = np.array([[50, 50, self.H_UAV], [350, 50, self.H_UAV], [50, 350, self.H_UAV],
-                                           [350, 350, self.H_UAV]], dtype=np.float)
+            self.uav_positions = np.array([[25, 25, self.H_UAV], [375, 25, self.H_UAV], [25, 375, self.H_UAV],
+                                           [375, 375, self.H_UAV]], dtype=np.float)
         if self.n_UAVs == 9 and self.x_max == 600 and self.n_GUs == 80:
             self.uav_positions = np.array([[50, 500, self.H_UAV], [50, 400, self.H_UAV], [50, 300, self.H_UAV],
                                            [50, 200, self.H_UAV], [50, 100, self.H_UAV], [100, 50, self.H_UAV],
