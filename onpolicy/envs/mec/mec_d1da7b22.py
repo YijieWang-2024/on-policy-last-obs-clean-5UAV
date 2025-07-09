@@ -100,10 +100,10 @@ class MEC(gym.Env):
             # 与自身距离小于neighbor_distance的邻居无人机的数目；
             # 距离由近到远的前max_UAVs_in_neighbor架邻居无人机的位置；
             # 与自身距离小于Cover_R的地面用户的数目；
-            # 距离由近到远的前self.max_GUs_in_range个地面用户的位置、信道增益和计算任务的信息(已经未被服务的时间+id。所以从7变成9)]
+            # 距离由近到远的前self.max_GUs_in_range个地面用户的位置、信道增益和计算任务的信息]
             self.GUs_in_action_dim = self.max_GUs_in_range
-            self.obs_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 +  9*self.max_GUs_in_range
-            self.state_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 +  9*self.max_GUs_in_range
+            self.obs_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 + 8*self.max_GUs_in_range
+            self.state_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 + 8*self.max_GUs_in_range
 
             # # 不要邻居无人机的位置。
             # self.obs_dim = 3 + 2 + 1 + 7 * self.max_GUs_in_range
@@ -111,12 +111,12 @@ class MEC(gym.Env):
         elif self.state_is_k_hops:  # last-obs的k跳。自己的s_{i,t}是包括覆盖范围内的无人机的。
             self.GUs_in_action_dim = self.max_GUs_in_range
             # 包括覆盖范围内d_cov的无人机信息。
-            self.obs_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+ 9*self.max_GUs_in_range
-            self.state_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+ 9*self.max_GUs_in_range
+            self.obs_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+8*self.max_GUs_in_range
+            self.state_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+8*self.max_GUs_in_range
         else:
             # self.GUs_in_action_dim = self.n_GUs
             self.GUs_in_action_dim = self.max_GUs_in_range
-            self.obs_dim = 3+2 + 1+2*self.max_UAVs_in_neighbor + 1+ 9*self.max_GUs_in_range   # 局部obs的dim
+            self.obs_dim = 3+2 + 1+2*self.max_UAVs_in_neighbor + 1+8*self.max_GUs_in_range   # 局部obs的dim
             # 不要邻居无人机的位置。
             # self.obs_dim = 3+2 + 1 + 7*self.max_GUs_in_range   # 局部obs的dim
 
@@ -222,11 +222,10 @@ class MEC(gym.Env):
         self.Metropolis_weights = None      # Metropolis_weights，用来对邻居的Adv进行加权求和。
 
     def generate_tasks(self):
-        tasks = np.zeros((self.n_GUs, 4))
+        tasks = np.zeros((self.n_GUs, 3))
         tasks[:, 0] = np.random.uniform(self.D_min, self.D_max, self.n_GUs)  # Data size
         tasks[:, 1] = np.random.uniform(self.C_min, self.C_max, self.n_GUs)  # compute Resource demand
         tasks[:, 2] = np.random.uniform(self.delay_min, self.delay_max, self.n_GUs)  # Delay requirement
-        tasks[:, 3] = 1 # 几个时刻未被服务了。
         return tasks
 
     def seed(self, seed=None):
@@ -968,8 +967,7 @@ class MEC(gym.Env):
                 self.gu_directions_0[i] = self.gu_directions[i].copy()
 
         # Generate new tasks for ground users
-        gu_tasks = self.generate_tasks()
-        self.gu_tasks[:, :3] = gu_tasks[:, :3]
+        self.gu_tasks = self.generate_tasks()
         self.nearby_gus_of_uavs = self.get_nearby_users_sorted_all()
 
         self.attention_active_mask = np.zeros((self.n_UAVs, self.max_UAVs_obs_concat), dtype=np.float32)
@@ -1136,7 +1134,6 @@ class MEC(gym.Env):
                 per_GU_energy_true_others[n] = np.clip(total_energy, 0, 10)
                 # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
                 per_GU_task_reward_others[n] = per_GU_delay_reward_others[n] + per_GU_energy_reward_others[n]
-                self.gu_tasks[n, 3] += 1
             else:
                 gu_n_task = self.gu_tasks[n]
                 d_nm_3 = np.linalg.norm(self.uav_positions[m] - self.gu_positions[n])
@@ -1157,10 +1154,9 @@ class MEC(gym.Env):
                 total_energy = E_trans + E_exe
                 total_delay = tau_trans + tau_exe
                 # 指服务的无人机有奖励。
-                R_task_delay[m] += self.gu_tasks[n, 3] * self.gamma_r * (gu_n_task[2] - total_delay) if gu_n_task[2] > total_delay else -1 * self.gu_tasks[n, 3] * self.delta_r
-                R_task_energy[m] += -1 * self.gu_tasks[n, 3] * self.lambda_r * np.clip(total_energy, 0, 10)  # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
-                self.gu_tasks[n, 3] = 1
-                # 统计系统性能的。
+                R_task_delay[m] += self.gamma_r * (gu_n_task[2] - total_delay) if gu_n_task[2] > total_delay else -1 * self.delta_r
+                R_task_energy[m] += -1 * self.lambda_r * np.clip(total_energy, 0, 10)  # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
+
                 if self.gu_tasks[n, 2] > total_delay:
                     per_GU_delay_reward[n] = self.gamma_r * (self.gu_tasks[n, 2] - total_delay)
                 else:
@@ -1567,9 +1563,9 @@ class MEC(gym.Env):
                         # Add channel gain (1 value)
                         local_obs[i, idx] = h_nm
                         idx += 1
-                        # Add task information (4 values)
-                        local_obs[i, idx:idx + 4] = self.gu_tasks[gu_idx]
-                        idx += 4
+                        # Add task information (3 values)
+                        local_obs[i, idx:idx + 3] = self.gu_tasks[gu_idx]
+                        idx += 3
                         local_obs[i, idx:idx + 1] = gu_idx
                         idx += 1
             # Reset idx for next UAV's observations

@@ -100,10 +100,10 @@ class MEC(gym.Env):
             # 与自身距离小于neighbor_distance的邻居无人机的数目；
             # 距离由近到远的前max_UAVs_in_neighbor架邻居无人机的位置；
             # 与自身距离小于Cover_R的地面用户的数目；
-            # 距离由近到远的前self.max_GUs_in_range个地面用户的位置、信道增益和计算任务的信息(已经未被服务的时间+id。所以从7变成9)]
+            # 距离由近到远的前self.max_GUs_in_range个地面用户的位置、信道增益和计算任务的信息]
             self.GUs_in_action_dim = self.max_GUs_in_range
-            self.obs_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 +  9*self.max_GUs_in_range
-            self.state_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 +  9*self.max_GUs_in_range
+            self.obs_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 + 7*self.max_GUs_in_range
+            self.state_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 + 7*self.max_GUs_in_range
 
             # # 不要邻居无人机的位置。
             # self.obs_dim = 3 + 2 + 1 + 7 * self.max_GUs_in_range
@@ -111,12 +111,12 @@ class MEC(gym.Env):
         elif self.state_is_k_hops:  # last-obs的k跳。自己的s_{i,t}是包括覆盖范围内的无人机的。
             self.GUs_in_action_dim = self.max_GUs_in_range
             # 包括覆盖范围内d_cov的无人机信息。
-            self.obs_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+ 9*self.max_GUs_in_range
-            self.state_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+ 9*self.max_GUs_in_range
+            self.obs_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+7*self.max_GUs_in_range
+            self.state_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+7*self.max_GUs_in_range
         else:
             # self.GUs_in_action_dim = self.n_GUs
             self.GUs_in_action_dim = self.max_GUs_in_range
-            self.obs_dim = 3+2 + 1+2*self.max_UAVs_in_neighbor + 1+ 9*self.max_GUs_in_range   # 局部obs的dim
+            self.obs_dim = 3+2 + 1+2*self.max_UAVs_in_neighbor + 1+7*self.max_GUs_in_range   # 局部obs的dim
             # 不要邻居无人机的位置。
             # self.obs_dim = 3+2 + 1 + 7*self.max_GUs_in_range   # 局部obs的dim
 
@@ -190,14 +190,11 @@ class MEC(gym.Env):
         self.gu_positions = np.random.uniform(0, self.x_max, (self.n_GUs, 2))
         self.gu_positions = np.hstack((self.gu_positions, self.H_GU * np.ones((self.n_GUs, 1))))
         # Gauss-Markov Model parameters
-        # self.alpha_gaussian = 0.95
-        self.alpha_gaussian = 0.7
+        self.alpha_gaussian = 0.95
         self.std_dev_gaussian = 1
-        self.gu_velocities = np.random.normal(self.mean_velocity, 0.3*self.std_dev_gaussian, self.n_GUs)
-        self.gu_velocities = np.clip(self.gu_velocities, 0.7* self.mean_velocity, 1.3 * self.mean_velocity)
-        np.random.seed(0)
+        self.gu_velocities = np.random.normal(self.mean_velocity, self.std_dev_gaussian, self.n_GUs)
+        self.gu_velocities = np.clip(self.gu_velocities, 0.5* self.mean_velocity, 1.5 * self.mean_velocity)
         self.gu_directions = np.random.uniform(0, 2 * np.pi, self.n_GUs)
-        self.gu_directions_0 = self.gu_directions.copy()
 
         # Initialize ground user tasks
         self.gu_tasks = self.generate_tasks()
@@ -222,11 +219,10 @@ class MEC(gym.Env):
         self.Metropolis_weights = None      # Metropolis_weights，用来对邻居的Adv进行加权求和。
 
     def generate_tasks(self):
-        tasks = np.zeros((self.n_GUs, 4))
+        tasks = np.zeros((self.n_GUs, 3))
         tasks[:, 0] = np.random.uniform(self.D_min, self.D_max, self.n_GUs)  # Data size
         tasks[:, 1] = np.random.uniform(self.C_min, self.C_max, self.n_GUs)  # compute Resource demand
         tasks[:, 2] = np.random.uniform(self.delay_min, self.delay_max, self.n_GUs)  # Delay requirement
-        tasks[:, 3] = 1 # 几个时刻未被服务了。
         return tasks
 
     def seed(self, seed=None):
@@ -261,15 +257,6 @@ class MEC(gym.Env):
                                            [120, 300, self.H_UAV], [300, 300, self.H_UAV], [480, 300, self.H_UAV],
                                            [120, 480, self.H_UAV],[300, 480, self.H_UAV], [480, 480, self.H_UAV],
                                            [210,390, self.H_UAV]], dtype=np.float)
-        if self.n_UAVs == 4 and self.x_max == 400 and self.n_GUs == 40:
-            self.uav_positions = np.array([[50, 50, self.H_UAV], [350, 50, self.H_UAV], [50, 350, self.H_UAV],
-                                           [350, 350, self.H_UAV]], dtype=np.float)
-        if self.n_UAVs == 9 and self.x_max == 600 and self.n_GUs == 80:
-            self.uav_positions = np.array([[50, 500, self.H_UAV], [50, 400, self.H_UAV], [50, 300, self.H_UAV],
-                                           [50, 200, self.H_UAV], [50, 100, self.H_UAV], [100, 50, self.H_UAV],
-                                           [200, 50, self.H_UAV],
-                                           [300, 50, self.H_UAV], [400, 50, self.H_UAV]],
-                                          dtype=np.float)
 
         if self.n_UAVs in [5,10,15,20,25] and self.x_max==1000 and self.n_GUs==220:
             if self.n_UAVs == 5:
@@ -308,15 +295,11 @@ class MEC(gym.Env):
         # np.random.seed(0)
         # Initialize ground user positions with fixed height of 1m
         self.gu_positions = np.random.uniform(0, self.x_max, (self.n_GUs, 2))
-        distances = np.sqrt(np.sum(self.gu_positions ** 2, axis=1))
-        sorted_indices = np.argsort(distances)
-        self.gu_positions = self.gu_positions[sorted_indices]
-
         self.gu_positions = np.hstack((self.gu_positions, self.H_GU * np.ones((self.n_GUs, 1))))
-        self.gu_velocities = np.random.normal(self.mean_velocity, 0.3*self.std_dev_gaussian, self.n_GUs)
-        self.gu_velocities = np.clip(self.gu_velocities, 0.7* self.mean_velocity, 1.3 * self.mean_velocity)
+        self.gu_velocities = np.random.normal(self.mean_velocity, self.std_dev_gaussian, self.n_GUs)
+        self.gu_velocities = np.clip(self.gu_velocities, 0.5* self.mean_velocity, 1.5 * self.mean_velocity)
         self.gu_directions = np.random.uniform(0, 2 * np.pi, self.n_GUs)
-
+        self.gu_directions_0 = self.gu_directions.copy()
         # np.random.seed(None)
         # Initialize tasks for ground users
         self.gu_tasks = self.generate_tasks()
@@ -908,15 +891,7 @@ class MEC(gym.Env):
         self.time_step += 1
         # Ensure action is a numpy array
         assert isinstance(action, (list, tuple, np.ndarray)), "Action must be a list or tuple or numpy array"
-
-        # 计算local奖励时，先用了动作转换，用到了nearby_gus_of_uavs，但是不用先更新。因为就是用之前的信息，找到对应之前的动作。用来计算奖励。
-        if self.not_process_action:
-            rewards = self.calculate_local_reward_raw_action(action)
-        else:
-            rewards = self.calculate_local_reward(action)
-        self.cumulative_reward += np.mean(rewards) * np.ones_like(rewards)
-
-        # 更新无人机位置。Update UAV positions
+        # Update UAV positions
         if self.fix_uav_pos:
             pass
         else:
@@ -925,11 +900,19 @@ class MEC(gym.Env):
                 direction, velocity = fly_action[i]
                 self.uav_positions[i, :2] += velocity * self.Delta_t * np.array([np.cos(direction), np.sin(direction)])
             self.uav_positions[:, :2] = np.clip(self.uav_positions[:, :2], 0, self.x_max)
+
+        # 计算local奖励时，先用了动作转换，用到了nearby_gus_of_uavs，但是不用先更新。因为就是用之前的信息，找到对应之前的动作。用来计算奖励。
+        if self.not_process_action:
+            rewards = self.calculate_local_reward_raw_action(action)
+        else:
+            rewards = self.calculate_local_reward(action)
+        self.cumulative_reward += np.mean(rewards) * np.ones_like(rewards)
+
         # 地面用户位置移动（发现总是会走到最左边。）
         # Update ground user velocities and directions using Gauss-Markov Model
-        random_normal_vel = np.random.normal(0, 0.01*self.std_dev_gaussian, self.n_GUs)
+        random_normal_vel = np.random.normal(0, self.std_dev_gaussian, self.n_GUs)
         self.gu_velocities = self.alpha_gaussian * self.gu_velocities + (1 - self.alpha_gaussian) * self.mean_velocity + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_vel
-        random_normal_dir = np.random.normal(0, 0.01*self.std_dev_gaussian, self.n_GUs)
+        random_normal_dir = np.random.normal(0, 0.1*self.std_dev_gaussian, self.n_GUs)
         self.gu_directions = self.alpha_gaussian * self.gu_directions + (1 - self.alpha_gaussian) * self.gu_directions_0 + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_dir
 
         # Update ground user positions
@@ -968,8 +951,7 @@ class MEC(gym.Env):
                 self.gu_directions_0[i] = self.gu_directions[i].copy()
 
         # Generate new tasks for ground users
-        gu_tasks = self.generate_tasks()
-        self.gu_tasks[:, :3] = gu_tasks[:, :3]
+        self.gu_tasks = self.generate_tasks()
         self.nearby_gus_of_uavs = self.get_nearby_users_sorted_all()
 
         self.attention_active_mask = np.zeros((self.n_UAVs, self.max_UAVs_obs_concat), dtype=np.float32)
@@ -1012,7 +994,7 @@ class MEC(gym.Env):
             self.Metropolis_weights = self.get_Metropolis_weights()
         # if self.time_step % 5 == 0:
         #     transformed_action_components = self.transform_uav_actions(action)
-        #     self.render(timestep=self.time_step, title='6', acts=transformed_action_components[:, 2:2+self.n_GUs])
+        #     self.render(timestep=self.time_step, title='3', acts=transformed_action_components[:, 2:2+self.n_GUs])
         #     time.sleep(0.05)
         if self.time_step >= self.MAX_SIMULATION_TIME:
             dones = 1 - dones
@@ -1136,7 +1118,6 @@ class MEC(gym.Env):
                 per_GU_energy_true_others[n] = np.clip(total_energy, 0, 10)
                 # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
                 per_GU_task_reward_others[n] = per_GU_delay_reward_others[n] + per_GU_energy_reward_others[n]
-                self.gu_tasks[n, 3] += 1
             else:
                 gu_n_task = self.gu_tasks[n]
                 d_nm_3 = np.linalg.norm(self.uav_positions[m] - self.gu_positions[n])
@@ -1157,10 +1138,9 @@ class MEC(gym.Env):
                 total_energy = E_trans + E_exe
                 total_delay = tau_trans + tau_exe
                 # 指服务的无人机有奖励。
-                R_task_delay[m] += self.gu_tasks[n, 3] * self.gamma_r * (gu_n_task[2] - total_delay) if gu_n_task[2] > total_delay else -1 * self.gu_tasks[n, 3] * self.delta_r
-                R_task_energy[m] += -1 * self.gu_tasks[n, 3] * self.lambda_r * np.clip(total_energy, 0, 10)  # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
-                self.gu_tasks[n, 3] = 1
-                # 统计系统性能的。
+                R_task_delay[m] += self.gamma_r * (gu_n_task[2] - total_delay) if gu_n_task[2] > total_delay else -1 * self.delta_r
+                R_task_energy[m] += -1 * self.lambda_r * np.clip(total_energy, 0, 10)  # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
+
                 if self.gu_tasks[n, 2] > total_delay:
                     per_GU_delay_reward[n] = self.gamma_r * (self.gu_tasks[n, 2] - total_delay)
                 else:
@@ -1567,11 +1547,9 @@ class MEC(gym.Env):
                         # Add channel gain (1 value)
                         local_obs[i, idx] = h_nm
                         idx += 1
-                        # Add task information (4 values)
-                        local_obs[i, idx:idx + 4] = self.gu_tasks[gu_idx]
-                        idx += 4
-                        local_obs[i, idx:idx + 1] = gu_idx
-                        idx += 1
+                        # Add task information (3 values)
+                        local_obs[i, idx:idx + 3] = self.gu_tasks[gu_idx]
+                        idx += 3
             # Reset idx for next UAV's observations
             idx = 0
         return local_obs

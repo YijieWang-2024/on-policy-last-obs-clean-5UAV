@@ -146,6 +146,7 @@ if __name__ == "__main__":
         "./scripts/results/mec/mappo/check/run2/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         "./scripts/results/mec/mappo/check/run3/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         "./scripts/results/mec/mappo/check/run5/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run6/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run55/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run56/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run57/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
@@ -362,6 +363,7 @@ if __name__ == "__main__":
         "2",
         "3",
         "5",
+        "6",
         # # 随机种子为2
         # "55proposed",
         # "56ave_resource",
