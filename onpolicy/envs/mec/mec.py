@@ -1212,7 +1212,10 @@ class MEC(gym.Env):
         R_fly_energy = -1 * self.lambda_r * E_fly
         uav_uav_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :], axis=1)
         R_collision = -1 * self.mu_r * (np.sum(uav_uav_distances < self.Dis_min, axis=1) - 1)
-        rewards = R_task_delay + R_task_energy + R_fly_energy + R_collision
+        uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)    #（n_UAVs, n_GUs）
+        coverd_gu = np.any(uav_gu_distances<=self.Cover_R, axis=0)      # (n_GUs,)
+        R_cover = -1 * self.alpha_r * np.sum(coverd_gu) / self.n_GUs
+        rewards = R_cover + R_task_delay + R_task_energy + R_fly_energy + R_collision
         self.cumulative_individual_reward += rewards
         # 无人机角度出发每架无人机自己从服务用户获得的性能。 求和是system_performance。
         self.system_performance += np.sum(R_fly_energy) + np.sum(per_GU_task_reward)
