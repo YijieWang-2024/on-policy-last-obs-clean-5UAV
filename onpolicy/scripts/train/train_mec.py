@@ -121,7 +121,7 @@ def parse_args(args, parser):
     parser.add_argument("--w2", type=float, default=1, help="Weight of energy consumption part in reward calculation")
     parser.add_argument("--p3", type=float, default=500, help="Penalty value for collision avoidance in reward calculation")
     parser.add_argument("--v_max", type=int, default=20, help="Maximum flight speed of UAV in m/s")
-    parser.add_argument("--mean_velocity", type=int, default=5, help="Average moving speed of ground user in m/s")
+    parser.add_argument("--mean_velocity", type=float, default=5, help="Average moving speed of ground user in m/s")
 
     # 占位，从tf代码里搞过来的，先不用这个，所以default改为了False。因为torch代码里有value_norm。
     # 在config.py里有"--use_valuenorm", action='store_false', default=True, help="by default True, use running mean and std to normalize rewards."
