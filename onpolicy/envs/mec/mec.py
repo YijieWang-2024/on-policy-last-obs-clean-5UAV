@@ -5,6 +5,7 @@ import gym.spaces as spaces
 import matplotlib.pyplot as plt
 import random
 from scipy.spatial.distance import cdist
+import time
 
 # 仿真参数
 # 参数来自Joint Task Offloading, Resource Allocation, and Trajectory Design for Multi-UAV Cooperative Edge Computing With Task Priority
@@ -262,6 +263,12 @@ class MEC(gym.Env):
         if self.n_UAVs == 4 and self.x_max == 400 and self.n_GUs == 40:
             self.uav_positions = np.array([[50, 50, self.H_UAV], [350, 50, self.H_UAV], [50, 350, self.H_UAV],
                                            [350, 350, self.H_UAV]], dtype=np.float)
+        if self.n_UAVs == 9 and self.x_max == 600 and self.n_GUs == 80:
+            self.uav_positions = np.array([[50, 500, self.H_UAV], [50, 400, self.H_UAV], [50, 300, self.H_UAV],
+                                           [50, 200, self.H_UAV], [50, 100, self.H_UAV], [100, 50, self.H_UAV],
+                                           [200, 50, self.H_UAV],
+                                           [300, 50, self.H_UAV], [400, 50, self.H_UAV]],
+                                          dtype=np.float)
 
         if self.n_UAVs in [5,10,15,20,25] and self.x_max==1000 and self.n_GUs==220:
             if self.n_UAVs == 5:
@@ -1001,8 +1008,10 @@ class MEC(gym.Env):
             self.Metropolis_weights = self.get_neighbor_weights()
         else:
             self.Metropolis_weights = self.get_Metropolis_weights()
-        # if self.time_step % 10 == 0:
-        #     self.render(timestep=self.time_step, title='25')
+        # if self.time_step % 5 == 0:
+        #     transformed_action_components = self.transform_uav_actions(action)
+        #     self.render(timestep=self.time_step, title='07', acts=transformed_action_components[:, 2:2+self.n_GUs])
+        #     time.sleep(0.05)
         if self.time_step >= self.MAX_SIMULATION_TIME:
             dones = 1 - dones
             info = {'cumulative_reward': self.cumulative_reward, 'n_GUs_per_uav_served': self.n_GUs_per_uav_served/self.MAX_SIMULATION_TIME,
@@ -1725,11 +1734,13 @@ class MEC(gym.Env):
             # annotation_text = f'GU {j}'
             annotation_text = f'{j}'
             if acts is not None:
-                serving_uavs = [i for i in range(self.n_UAVs) if acts[i, j] == 1]
-                if serving_uavs:
-                    # annotation_text += f' (UAV {serving_uavs[0]})'
-                    annotation_text += f'/ {serving_uavs[0]}'
-
+                column = acts[:, j]
+                if np.any(column == 1):  # 检查是否有1
+                    serving_uavs = np.argmax(column == 1)  # 找到第一个1的位置
+                else:
+                    serving_uavs = -1
+                # annotation_text += f'/ {serving_uavs}'
+                annotation_text = f'{serving_uavs}'
             ax.annotate(annotation_text, (self.gu_positions[j, 0], self.gu_positions[j, 1]))
         if title is not None:
             plt.title(title)
