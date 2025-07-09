@@ -1128,7 +1128,7 @@ class MEC(gym.Env):
                 total_delay = self.gu_tasks[n, 1] / self.F_n
 
                 if self.gu_tasks[n, 2] > total_delay:
-                    per_GU_delay_reward_others[n] = self.gamma_r * (self.gu_tasks[n, 2] - total_delay)
+                    per_GU_delay_reward_others[n] = self.gamma_r * (1+self.gu_tasks[n, 2] - total_delay)
                 else:
                     per_GU_delay_reward_others[n] = -1 * self.delta_r
                 per_GU_delay_true_others[n] = total_delay
@@ -1157,12 +1157,17 @@ class MEC(gym.Env):
                 total_energy = E_trans + E_exe
                 total_delay = tau_trans + tau_exe
                 # 指服务的无人机有奖励。
-                R_task_delay[m] += self.gu_tasks[n, 3] * self.gamma_r * (gu_n_task[2] - total_delay) if gu_n_task[2] > total_delay else -1 * self.gu_tasks[n, 3] * self.delta_r
+                if gu_n_task[2] > total_delay:
+                    R_task_delay[m] += self.gu_tasks[n, 3] * self.gamma_r * (1 + gu_n_task[2] - total_delay)
+                    self.gu_tasks[n, 3] = 1
+                else:
+                    R_task_delay[m] += (-1 * self.gu_tasks[n, 3] * self.delta_r)
+                    self.gu_tasks[n, 3] += 1
                 R_task_energy[m] += -1 * self.gu_tasks[n, 3] * self.lambda_r * np.clip(total_energy, 0, 10)  # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
-                self.gu_tasks[n, 3] = 1
+
                 # 统计系统性能的。
                 if self.gu_tasks[n, 2] > total_delay:
-                    per_GU_delay_reward[n] = self.gamma_r * (self.gu_tasks[n, 2] - total_delay)
+                    per_GU_delay_reward[n] = self.gamma_r * (1+self.gu_tasks[n, 2] - total_delay)
                 else:
                     per_GU_delay_reward[n] = -1 * self.delta_r
                 per_GU_delay_true[n] = total_delay
