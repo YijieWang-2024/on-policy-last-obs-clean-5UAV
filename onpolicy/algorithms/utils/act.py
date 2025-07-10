@@ -35,7 +35,7 @@ class ACTLayer(nn.Module):
             if self.action_dim != available_actions.shape[-1]:
                 available_actions = None
             dist = self.action_out(x, available_actions)
-            actions = self.action_out.mode() if deterministic else dist.sample()  # Sample the action according to the probability distribution
+            actions = dist.mode() if deterministic else dist.sample()  # Sample the action according to the probability distribution
             action_log_probs = dist.log_prob(actions)  # The log probability density of the action
             action_log_probs = torch.sum(action_log_probs, -1, keepdim=True)
             # action_log_probs = (action_log_probs * available_actions).sum(-1, keepdim=True) / available_actions.sum(-1, keepdim=True) # 高斯里边用avail_actions计算过logp了
@@ -52,7 +52,7 @@ class ACTLayer(nn.Module):
                     available_action = None
                 dist = action_out(x, available_action)
                 if action_out.__class__.__name__ != "Bernoulli":
-                    action = self.action_out.mode() if deterministic else dist.sample()  # Sample the action according to the probability distribution
+                    action = dist.mode() if deterministic else dist.sample()  # Sample the action according to the probability distribution
                 else:
                     # 伯努利没有.mean()
                     action = dist.sample()
