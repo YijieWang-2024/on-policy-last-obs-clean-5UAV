@@ -52,7 +52,7 @@ class ACTLayer(nn.Module):
                     available_action = None
                 dist = action_out(x, available_action)
                 if action_out.__class__.__name__ != "Bernoulli":
-                    action = self.action_out.mode() if deterministic else dist.sample()  # Sample the action according to the probability distribution
+                    action = dist.mode() if deterministic else dist.sample()  # Sample the action according to the probability distribution
                 else:
                     # 伯努利没有.mean()
                     action = dist.sample()
