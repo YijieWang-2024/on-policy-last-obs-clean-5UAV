@@ -15,9 +15,9 @@ class ACTLayer(nn.Module):
         self.not_process_action = args.not_process_action
         if action_space.__class__.__name__ == "Box":
             self.mujoco_box = True
-            action_dim = action_space.shape[0]
+            self.action_dim = action_space.shape[0]
             # self.action_out = DiagBeta(inputs_dim, action_dim, use_orthogonal, gain)
-            self.action_out = DiagGaussian(inputs_dim, action_dim, use_orthogonal, gain)
+            self.action_out = DiagGaussian(inputs_dim, self.action_dim, use_orthogonal, gain)
         else:  # discrete + continous
             self.mixed_action = True
             self.action_outs = nn.ModuleList()
@@ -32,11 +32,13 @@ class ACTLayer(nn.Module):
     
     def forward(self, x, available_actions=None, deterministic=False):
         if self.mujoco_box:
-            # 使用Beta分布
-            dist = self.action_out.get_dist(x)
-            actions = self.action_out.mean(x) if deterministic else dist.sample()  # Sample the action according to the probability distribution
+            if self.action_dim != available_actions.shape[-1]:
+                available_actions = None
+            dist = self.action_out(x, available_actions)
+            actions = self.action_out.mode() if deterministic else dist.sample()  # Sample the action according to the probability distribution
             action_log_probs = dist.log_prob(actions)  # The log probability density of the action
-            action_log_probs = (action_log_probs * available_actions).sum(-1, keepdim=True) / available_actions.sum(-1, keepdim=True)
+            action_log_probs = torch.sum(action_log_probs, -1, keepdim=True)
+            # action_log_probs = (action_log_probs * available_actions).sum(-1, keepdim=True) / available_actions.sum(-1, keepdim=True) # 高斯里边用avail_actions计算过logp了
         else:   # discrete + continous
             actions = []
             action_log_probs = []
@@ -49,11 +51,15 @@ class ACTLayer(nn.Module):
                 else:
                     available_action = None
                 dist = action_out(x, available_action)
-                action = dist.sample()
-                # 不额外处理动作，这里输出时对动作归一化。这里的if条件也是很固定的。必须i位于后两个带宽资源和计算资源的动作。
-                if self.not_process_action:
-                    if action_out.__class__.__name__ == "DiagGaussian" and i in [len(self.action_dims)-1, len(self.action_dims)-2]:
-                        action = torch.nn.functional.normalize(action, p=1, dim=1)
+                if action_out.__class__.__name__ != "Bernoulli":
+                    action = self.action_out.mode() if deterministic else dist.sample()  # Sample the action according to the probability distribution
+                else:
+                    # 伯努利没有.mean()
+                    action = dist.sample()
+                # # 不额外处理动作，这里输出时对动作归一化。这里的if条件也是很固定的。必须i位于后两个带宽资源和计算资源的动作。     0710这是干嘛的？没懂
+                # if self.not_process_action:
+                #     if action_out.__class__.__name__ == "DiagGaussian" and i in [len(self.action_dims)-1, len(self.action_dims)-2]:
+                #         action = torch.nn.functional.normalize(action, p=1, dim=1)
                 action_log_prob = dist.log_probs(action)
                 actions.append(action)
                 action_log_probs.append(action_log_prob)
@@ -80,15 +86,17 @@ class ACTLayer(nn.Module):
 
     def evaluate_actions(self, x, action, available_actions=None, active_masks=None):
         if self.mujoco_box:
-            # 使用Beta分布
-            dist = self.action_out.get_dist(x)
+            if self.action_dim != available_actions.shape[-1]:
+                available_actions = None
+            dist = self.action_out(x, available_actions)
             action_log_probs = dist.log_prob(action)  # The log probability density of the action
-            action_log_probs = (action_log_probs * available_actions).sum(-1, keepdim=True) / available_actions.sum(-1, keepdim=True)
-
+            action_log_probs = torch.sum(action_log_probs, -1, keepdim=True)
+            # action_log_probs = (action_log_probs * available_actions).sum(-1, keepdim=True) / available_actions.sum(-1, keepdim=True)
+            dist_entropy = dist.entropy()
             if active_masks is not None:
-                dist_entropy = ((dist.entropy() * available_actions).sum(-1) * active_masks.squeeze(-1)).sum() / active_masks.sum()
+                dist_entropy = (dist_entropy * active_masks.squeeze(-1)).sum() / active_masks.sum()
             else:
-                dist_entropy = (dist.entropy() * available_actions).sum(-1).mean()
+                dist_entropy = dist_entropy.mean()
         else:   # discrete + continous
             action = action.split(self.action_dims, dim=-1)
             action_log_probs = [] 
