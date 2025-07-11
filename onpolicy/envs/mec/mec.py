@@ -7,6 +7,8 @@ import random
 from scipy.spatial.distance import cdist
 import time
 
+from torch.cuda.random import seed_all
+
 # 仿真参数
 # 参数来自Joint Task Offloading, Resource Allocation, and Trajectory Design for Multi-UAV Cooperative Edge Computing With Task Priority
 # 通信参数
@@ -95,7 +97,8 @@ class MEC(gym.Env):
             assert self.not_process_action, "只写了怎么计算奖励。只有飞行动作，不需要处理动作。"
         self.mean_velocity = args.mean_velocity
         # Define the UAV flight direction and distance action space (continuous)
-
+        self.not_served_rew_to_ave = args.not_served_rew_to_ave
+        self.not_served_rew_to_nearest = args.not_served_rew_to_nearest
         if self.perform_with_local_state:
             # [总无人机数目、总用户数目、区域总长度、
             # 自身无人机位置；
@@ -1167,6 +1170,18 @@ class MEC(gym.Env):
                 per_GU_energy_true_others[n] = np.clip(total_energy, 0, 10)
                 # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
                 per_GU_task_reward_others[n] = per_GU_delay_reward_others[n] + per_GU_energy_reward_others[n]
+
+                if self.not_served_rew_to_ave:
+                    # 未被服务的用户奖励平分给覆盖的无人机。
+                    if len(uav_indices) > 0:
+                        R_task_delay[uav_indices] += self.gamma_r * (self.gu_tasks[n, 2] - total_delay) / len(uav_indices) if self.gu_tasks[n, 2] > total_delay else -1 * self.delta_r / len(uav_indices)
+                        R_task_energy[uav_indices] += -1 * self.lambda_r * np.clip(total_energy, 0, 10) / len(uav_indices)
+                if self.not_served_rew_to_nearest:
+                    # 未被服务的用户奖励只给距离最近的那个无人机。
+                    if len(uav_indices) > 0:
+                        nearest_uav = np.argmin(uav_gu_distances_2d[:, n])
+                        R_task_delay[nearest_uav] += self.gamma_r * (self.gu_tasks[n, 2] - total_delay) if self.gu_tasks[n, 2] > total_delay else -1 * self.delta_r
+                        R_task_energy[nearest_uav] += -1 * self.lambda_r * np.clip(total_energy, 0, 10)
             else:
                 # 记录自己能不能完成任务。
                 self_total_delay = self.gu_tasks[n, 1] / self.F_n

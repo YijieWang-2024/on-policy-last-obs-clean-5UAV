@@ -145,6 +145,8 @@ def parse_args(args, parser):
     parser.add_argument("--not_process_action", action='store_true', default=False, help="If true, without process_action in env_maker.py and act.py")
     parser.add_argument("--fix_uav_pos", action='store_true', default=False, help="If true, uav's pos is fixed. action_space don't have fly_action")
     parser.add_argument("--ave_resource", action='store_true', default=False, help="If true, allocate the resources of UAV equally to the connected users")
+    parser.add_argument("--not_served_rew_to_ave", action='store_true', default=False, help="If true, Rewards for unserved users are split evenly between covered drones")
+    parser.add_argument("--not_served_rew_to_nearest", action='store_true', default=False, help="If true, Rewards for unserved users are given to the nearest drone that covers them")
 
     parser.add_argument("--average_local_advantage_timely", action='store_true', default=False, help="If true, Execute the average of the local advantage functions every timestep, rather than after sampling B buffer")
     parser.add_argument("--average_local_advantage", action='store_true', default=False, help="If true, Execute the average of the local advantage functions in the mec_runner.py")
