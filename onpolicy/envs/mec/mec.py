@@ -220,6 +220,8 @@ class MEC(gym.Env):
         self.user_average_delay = np.zeros((self.n_UAVs,))  # 每架无人机范围内用户平均时延，再对step求平均
         self.n_GUs_per_uav_served = np.zeros((self.n_UAVs,))  # 每架无人机每个时刻服务的用户数目，再对step求平均
         self.nearby_gus_of_uavs = -np.ones((self.n_UAVs, self.n_GUs))   # process_local_actions里用到了（类似transform_uav_actions的代码。需要处理和反处理）。
+        self.complete_task = np.zeros((self.n_GUs, ))   # 记录当前时刻的动作下，用户是否完成任务。完成为1
+        self.self_complete_task = np.zeros((self.n_GUs, ))   # 当前时刻，如果自己计算能不能完成任务？能的话为1
         # calculate_local_reward里先调用到了transform_uav_actions()。
         # get_local_obs()里边，是重新挨个计算的距离。
         self.average_neighbor_advantage = args.average_neighbor_advantage
@@ -911,8 +913,11 @@ class MEC(gym.Env):
         self.time_step += 1
         # Ensure action is a numpy array
         assert isinstance(action, (list, tuple, np.ndarray)), "Action must be a list or tuple or numpy array"
+        self.complete_task = np.zeros((self.n_GUs,))
+        self.self_complete_task = np.zeros((self.n_GUs,))
 
         # 计算local奖励时，先用了动作转换，用到了nearby_gus_of_uavs，但是不用先更新。因为就是用之前的信息，找到对应之前的动作。用来计算奖励。
+        # 在计算奖励时也修改了self.complete_task标记。供可视化画图。
         if self.not_process_action:
             rewards = self.calculate_local_reward_raw_action(action)
         else:
@@ -1013,8 +1018,13 @@ class MEC(gym.Env):
         else:
             self.Metropolis_weights = self.get_Metropolis_weights()
         # if self.time_step % 5 == 0:
-        #     transformed_action_components = self.transform_uav_actions(action)
-        #     self.render(timestep=self.time_step, title='18', acts=transformed_action_components[:, 2:2+self.n_GUs])
+        #     if self.not_process_action:
+        #         transformed_action_components = self.transform_uav_actions(action)
+        #         processed_actions = self.process_actions(transformed_action_components)
+        #     else:
+        #         processed_actions = self.transform_uav_actions(action)
+        #     self.render(timestep=self.time_step, title='37', acts=processed_actions[:, 2:2+self.n_GUs])
+        #     # # # # # # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
         #     time.sleep(0.05)
         if self.time_step >= self.MAX_SIMULATION_TIME:
             dones = 1 - dones
@@ -1146,14 +1156,25 @@ class MEC(gym.Env):
 
                 if self.gu_tasks[n, 2] > total_delay:
                     per_GU_delay_reward_others[n] = self.gamma_r * (self.gu_tasks[n, 2] - total_delay)
+                    self.complete_task[n] = 1
+                    self.self_complete_task[n] = 1
                 else:
                     per_GU_delay_reward_others[n] = -1 * self.delta_r
+                    self.complete_task[n] = 0
+                    self.self_complete_task[n] = 0
                 per_GU_delay_true_others[n] = total_delay
                 per_GU_energy_reward_others[n] = -1 * self.lambda_r * np.clip(total_energy, 0, 10)
                 per_GU_energy_true_others[n] = np.clip(total_energy, 0, 10)
                 # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
                 per_GU_task_reward_others[n] = per_GU_delay_reward_others[n] + per_GU_energy_reward_others[n]
             else:
+                # 记录自己能不能完成任务。
+                self_total_delay = self.gu_tasks[n, 1] / self.F_n
+                if self.gu_tasks[n, 2] > self_total_delay:
+                    self.self_complete_task[n] = 1
+                else:
+                    self.self_complete_task[n] = 0
+
                 gu_n_task = self.gu_tasks[n]
                 d_nm_3 = np.linalg.norm(self.uav_positions[m] - self.gu_positions[n])
                 theta_nm = 180 / np.pi * np.arcsin((self.H_UAV - self.H_GU) / d_nm_3)
@@ -1178,8 +1199,10 @@ class MEC(gym.Env):
 
                 if self.gu_tasks[n, 2] > total_delay:
                     per_GU_delay_reward[n] = self.gamma_r * (self.gu_tasks[n, 2] - total_delay)
+                    self.complete_task[n] = 1
                 else:
                     per_GU_delay_reward[n] = -1 * self.delta_r
+                    self.complete_task[n] = 0
                 per_GU_delay_true[n] = total_delay
                 per_GU_energy_reward[n] = -1 * self.lambda_r * np.clip(total_energy, 0, 10)
                 per_GU_energy_true[n] = np.clip(total_energy, 0, 10)
@@ -1224,8 +1247,8 @@ class MEC(gym.Env):
         R_collision = -1 * self.mu_r * (np.sum(uav_uav_distances < self.Dis_min, axis=1) - 1)
         uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)    #（n_UAVs, n_GUs）
         coverd_gu = np.any(uav_gu_distances<=self.Cover_R, axis=0)      # (n_GUs,)
-        R_cover = -1 * self.alpha_r * (self.n_GUs - np.sum(coverd_gu)) / self.n_GUs
-        rewards = R_cover + R_task_delay + R_task_energy + R_fly_energy + R_collision
+        R_cover_all = -1 * self.alpha_r * (self.n_GUs - np.sum(coverd_gu)) / self.n_GUs
+        rewards = R_cover_all + R_task_delay + R_task_energy + R_fly_energy + R_collision
         self.cumulative_individual_reward += rewards
         # 无人机角度出发每架无人机自己从服务用户获得的性能。 求和是system_performance。
         self.system_performance += np.sum(R_fly_energy) + np.sum(per_GU_task_reward)
@@ -1751,19 +1774,24 @@ class MEC(gym.Env):
 
         # Plot GUs and annotate their IDs
         for j in range(self.n_GUs):
-            ax.scatter(self.gu_positions[j, 0], self.gu_positions[j, 1], c='b', label='GU' if j == 0 else "")
-            # Basic annotation
-            # annotation_text = f'GU {j}'
-            annotation_text = f'{j}'
             if acts is not None:
+                if self.complete_task[j] == 1:
+                    ax.scatter(self.gu_positions[j, 0], self.gu_positions[j, 1], c='b', label='GU' if j == 0 else "")
+                else:
+                    ax.scatter(self.gu_positions[j, 0], self.gu_positions[j, 1], c='k', label='GU' if j == 0 else "")
+
                 column = acts[:, j]
                 if np.any(column == 1):  # 检查是否有1
+                    # 如果是无人机帮忙卸载的任务。 记录无人机的id。
                     serving_uavs = np.argmax(column == 1)  # 找到第一个1的位置
-                else:
-                    serving_uavs = -1
-                # annotation_text += f'/ {serving_uavs}'
-                annotation_text = f'{serving_uavs}'
-            ax.annotate(annotation_text, (self.gu_positions[j, 0], self.gu_positions[j, 1]))
+                    annotation_text = f'{serving_uavs}'
+                    if self.self_complete_task[j] == 0: # 如果是本来不能完成任务的。这样就太好了
+                        annotation_text += f'!'
+                    ax.annotate(annotation_text, (self.gu_positions[j, 0], self.gu_positions[j, 1]))
+            else:
+                ax.scatter(self.gu_positions[j, 0], self.gu_positions[j, 1], c='b', label='GU' if j == 0 else "")
+                annotation_text = f'{j}'
+                ax.annotate(annotation_text, (self.gu_positions[j, 0], self.gu_positions[j, 1]))
         if title is not None:
             plt.title(title)
 
