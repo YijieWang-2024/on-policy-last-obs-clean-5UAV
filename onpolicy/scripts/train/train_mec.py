@@ -68,7 +68,8 @@ def make_eval_env(all_args):
 def parse_args(args, parser):
     parser.add_argument('--n_UAVs', type=int, default=3, help="total number of uav-servers")
     parser.add_argument('--max_UAVs_in_neighbor', type=int, default=3, help="max number of UAVs in neighbor, in own obs' info")
-    parser.add_argument('--neighbor_distance', type=float, default=240, help="(240+30)*k=270,540,810,1080(m), the neighbor distance of UAVs in meters")
+    parser.add_argument('--neighbor_distance', type=float, default=260, help="(240+20)*k=260,520,780,1040(m), the neighbor distance of UAVs in meters")
+    parser.add_argument("--neighbor_R", type=int, default=260, help="1-hop distance, Use to one-hop range drone position sharing")
     parser.add_argument('--d_optimal', type=float, default=210, help="(m), Distance between desired drones based on area size and number of drones")
     parser.add_argument('--n_GUs', type=int, default=20, help="total number of groud users")
     parser.add_argument('--max_GUs_in_range', type=int, default=20, help="max number of groud users in per UAV's range")
@@ -77,7 +78,7 @@ def parse_args(args, parser):
     parser.add_argument("--H_UAV", type=int, default=120, help="UAV server fixed flight height in meters")
     parser.add_argument("--H_GU", type=int, default=1, help="Ground user height in meters")
 
-    parser.add_argument("--alpha_r", type=float, default=1, help="Weight of coverage")      # When 1，覆盖用户数目的奖励。 正常0到10的数字。
+    parser.add_argument("--alpha_r", type=float, default=0.0, help="Weight of coverage")      # When 1，覆盖用户数目的奖励。 正常0到10的数字。
     parser.add_argument("--beta_r", type=float, default=0.5, help="Weight of overlapping")  # When 1， 再减去0.5*重复用户数目的惩罚。
     parser.add_argument("--q1", type=float, default=1, help="Weight of R_coverage")
 
@@ -85,7 +86,7 @@ def parse_args(args, parser):
     parser.add_argument("--delta_r", type=float, default=1, help="Weight of over delta")    # When 1， 每个用户 超时-1的惩罚。
     parser.add_argument("--q2", type=float, default=1, help="Weight of R_task")
 
-    parser.add_argument("--epsilon_r", type=float, default=1, help="Weight of optimal distance. When 1, Mean/optimal distance. Only -1 to 0 penalty")
+    parser.add_argument("--epsilon_r", type=float, default=0.0, help="Weight of optimal distance. When 1, Mean/optimal distance. Only -1 to 0 penalty")
     parser.add_argument("--q3", type=float, default=1, help="Weight of R_distribution")     # When 1，邻居到最优距离的均值/最优距离。仅仅-1到0的惩罚。
 
     parser.add_argument("--lambda_r", type=float, default=0.01, help="Weight of energy. When 0.01, cai scale to [0.63, 0.9]")
@@ -155,6 +156,8 @@ def parse_args(args, parser):
     parser.add_argument("--whether_average_network_parameters", action='store_true', default=False, help="If true, Execute the average of all network's parameters in the mec_runner.py")
     parser.add_argument("--average_network_parameters_interval", type=int, default=10, help="interval of average_network_parameters, /episodes")
 
+    default_parser = parser.parse_args([])
+    assert default_parser.alpha_r==0 and default_parser.epsilon_r==0, "这两个参数要默认为0。哪个输入了新的值，不为零，就是考虑了对应的惩罚。"
     all_args = parser.parse_known_args(args)[0]
     return all_args
 
