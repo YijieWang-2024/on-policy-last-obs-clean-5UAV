@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 import random
 from scipy.spatial.distance import cdist
 import time
+from typing import Dict, Tuple, List, Optional
+from shapely.geometry import Point, Polygon
+from shapely.ops import unary_union
+import warnings
 
 from torch.cuda.random import seed_all
 
@@ -32,6 +36,116 @@ A = 0.503  # (m^2)Rotor disc area
 # 计算消耗能量参数来自Task Offloading and Resource Allocation Strategies Among Multiple Edge Servers
 k_local = 1e-27  # J/(Hz^2 * cycle)Placeholder value
 k_server = 1e-29  # J/(Hz^2 * cycle)Placeholder value
+
+class DroneInfo:
+    def __init__(self, drone_id: int):
+        self.drone_id = drone_id
+        # {other_drone_id: (position, timestamp, hops)}
+        self.known_positions: Dict[int, Tuple[np.ndarray, int, int]] = {}
+
+    def update_info(self, other_id: int, position: np.ndarray, timestamp: int, hops: int):
+        """更新其他无人机的位置信息"""
+        if other_id not in self.known_positions:
+            self.known_positions[other_id] = (position.copy(), timestamp, hops)
+        else:
+            _, old_timestamp, old_hops = self.known_positions[other_id]
+            # 优先选择更新的信息，如果时间相同则选择跳数更少的
+            if (timestamp > old_timestamp or
+                    (timestamp == old_timestamp and hops < old_hops)):
+                self.known_positions[other_id] = (position.copy(), timestamp, hops)
+
+def calculate_coverage_area(R_cover: float, area_size: float,
+                            known_positions: Optional[Dict[int, Tuple[np.ndarray, int, int]]]=None,
+                            true_positions: Optional[np.ndarray]=None) -> float:
+    """
+    计算基于已知位置或者真实位置信息的总覆盖面积
+    Args:
+        R_cover: 覆盖半径
+        area_size: 区域大小 (正方形边长)
+        known_positions: 已知的无人机位置信息
+        true_positions: 真实位置信息
+    Returns:
+        覆盖面积占总面积的比例
+    """
+    # 创建区域边界
+    area_boundary = Polygon([(0, 0), (area_size, 0), (area_size, area_size), (0, area_size)])
+    # 创建所有无人机的覆盖圆
+    circles = []
+    if known_positions is not None:
+        for drone_id, (position, _, _) in known_positions.items():
+            x, y = position[0], position[1]
+            circle = Point(x, y).buffer(R_cover)
+            # 只考虑在区域内的部分
+            circle_in_area = circle.intersection(area_boundary)
+            if not circle_in_area.is_empty:
+                circles.append(circle_in_area)
+    elif true_positions is not None:
+        for position in true_positions:
+            x, y = position[0], position[1]
+            circle = Point(x, y).buffer(R_cover)
+            # 只考虑在区域内的部分
+            circle_in_area = circle.intersection(area_boundary)
+            if not circle_in_area.is_empty:
+                circles.append(circle_in_area)
+    else:
+        return 0.0
+    if not circles:
+        return 0.0
+    # 计算总覆盖面积（去除重叠）
+    try:
+        total_coverage = unary_union(circles)
+        coverage_area = total_coverage.area
+        return coverage_area
+    except:
+        warnings.warn(f"注意：覆盖面积计算失败")
+        # 如果计算失败，返回0
+        return 0.0
+
+def update_drone_knowledge(drones: List[DroneInfo], positions: np.ndarray,
+                           current_time: int, k: float):
+    """
+    更新所有无人机的位置知识
+    """
+    m = len(drones)
+
+    # 计算距离矩阵
+    distance_matrix = np.linalg.norm(positions[:, :2, np.newaxis] - positions[:, :2].T[np.newaxis, :], axis=1)
+    # 确定一跳邻居
+    one_hop_neighbors = {}
+    for i in range(m):
+        neighbor_mask = (distance_matrix[i] <= k) & (np.arange(m) != i)
+        neighbors = np.where(neighbor_mask)[0]
+        one_hop_neighbors[i] = neighbors
+    # 每个无人机先更新自己的位置信息
+    for i, drone in enumerate(drones):
+        drone.known_positions[i] = (positions[i].copy(), current_time, 0)
+    # 创建临时存储，避免同时读写问题
+    temp_updates = {i: {} for i in range(m)}
+    # 收集要发送的信息
+    for i, drone in enumerate(drones):
+        # 向一跳邻居发送自己已知的所有信息
+        for neighbor_id in one_hop_neighbors[i]:
+            for other_id, (pos, timestamp, hops) in drone.known_positions.items():
+                if other_id == neighbor_id:
+                    # 邻居的当前位置，跳数为1
+                    new_entry = (positions[neighbor_id].copy(), current_time, 1)
+                else:
+                    # 其他信息，跳数+1
+                    new_entry = (pos.copy(), timestamp, hops + 1)
+
+                if neighbor_id not in temp_updates:
+                    temp_updates[neighbor_id] = {}
+                if other_id not in temp_updates[neighbor_id]:
+                    temp_updates[neighbor_id][other_id] = []
+                temp_updates[neighbor_id][other_id].append(new_entry)
+    # 应用更新
+    for i, drone in enumerate(drones):
+        if i in temp_updates:
+            for other_id, updates in temp_updates[i].items():
+                if other_id != i:  # 不更新自己
+                    # 选择最好的更新
+                    best_update = min(updates, key=lambda x: (current_time - x[1], x[2]))
+                    drone.update_info(other_id, best_update[0], best_update[1], best_update[2])
 
 class MEC(gym.Env):
     def __init__(self, args=None):
@@ -192,6 +306,11 @@ class MEC(gym.Env):
         # Initialize UAV positions randomly within the area
         self.uav_positions = np.random.uniform(0, self.x_max, (self.n_UAVs, 2))
         self.uav_positions = np.hstack((self.uav_positions, self.H_UAV * np.ones((self.n_UAVs, 1))))
+        self.drones = [DroneInfo(i) for i in range(self.n_UAVs)]
+        # 修改1: 初始化时每个无人机知道所有其他无人机的初始位置
+        for i, drone in enumerate(self.drones):
+            for j in range(self.n_UAVs):
+                drone.known_positions[j] = (self.uav_positions[j][:2].copy(), 0, 0 if i == j else 1)
 
         # Initialize ground user positions with fixed height of 1m
         self.gu_positions = np.random.uniform(0, self.x_max, (self.n_GUs, 2))
@@ -312,6 +431,12 @@ class MEC(gym.Env):
 
         # self.uav_positions = np.array([[120, 120, self.H_UAV], [480, 120, self.H_UAV], [120, 480, self.H_UAV],[480, 480, self.H_UAV]], dtype=np.float32)
         # assert self.uav_positions.shape[0] == self.n_UAVs
+
+        self.drones = [DroneInfo(i) for i in range(self.n_UAVs)]
+        # 初始化时每个无人机知道所有其他无人机的初始位置
+        for i, drone in enumerate(self.drones):
+            for j in range(self.n_UAVs):
+                drone.known_positions[j] = (self.uav_positions[j][:2].copy(), 0, 0 if i == j else 1)
 
         # np.random.seed(0)
         # Initialize ground user positions with fixed height of 1m
@@ -927,56 +1052,9 @@ class MEC(gym.Env):
             rewards = self.calculate_local_reward(action)
         self.cumulative_reward += np.mean(rewards) * np.ones_like(rewards)
 
-        # 更新无人机位置。Update UAV positions
-        if self.fix_uav_pos:
-            pass
-        else:
-            fly_action = action[:, :2] * np.array([2 * np.pi, self.v_max])  # 方向和速度都是0-1之间的数
-            for i in range(self.n_UAVs):
-                direction, velocity = fly_action[i]
-                self.uav_positions[i, :2] += velocity * self.Delta_t * np.array([np.cos(direction), np.sin(direction)])
-            self.uav_positions[:, :2] = np.clip(self.uav_positions[:, :2], 0, self.x_max)
-        # 地面用户位置移动（发现总是会走到最左边。）
-        # Update ground user velocities and directions using Gauss-Markov Model
-        random_normal_vel = np.random.normal(0, 0.01*self.std_dev_gaussian, self.n_GUs)
-        self.gu_velocities = self.alpha_gaussian * self.gu_velocities + (1 - self.alpha_gaussian) * self.mean_velocity + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_vel
-        random_normal_dir = np.random.normal(0, 0.01*self.std_dev_gaussian, self.n_GUs)
-        self.gu_directions = self.alpha_gaussian * self.gu_directions + (1 - self.alpha_gaussian) * self.gu_directions_0 + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_dir
+        # 更新无人机位置放到了calculate_reward()里边
 
-        # Update ground user positions
-        self.gu_positions[:, 0] += self.gu_velocities * np.cos(self.gu_directions) * self.Delta_t
-        self.gu_positions[:, 1] += self.gu_velocities * np.sin(self.gu_directions) * self.Delta_t
-        # With this bouncing implementation:
-        for i in range(self.n_GUs):
-            hit_vertical = False
-            hit_horizontal = False
-            # Check for x boundary collisions
-            if self.gu_positions[i, 0] < 0:
-                hit_vertical = True
-                self.gu_positions[i, 0] = -self.gu_positions[i, 0]  # Reflect position
-            elif self.gu_positions[i, 0] > self.x_max:
-                hit_vertical = True
-                self.gu_positions[i, 0] = 2 * self.x_max - self.gu_positions[i, 0]  # Reflect position
-            # Check for y boundary collisions
-            if self.gu_positions[i, 1] < 0:
-                hit_horizontal = True
-                self.gu_positions[i, 1] = -self.gu_positions[i, 1]  # Reflect position
-            elif self.gu_positions[i, 1] > self.x_max:
-                hit_horizontal = True
-                self.gu_positions[i, 1] = 2 * self.x_max - self.gu_positions[i, 1]  # Reflect position
-
-            if hit_vertical and hit_horizontal:
-                # 碰到角落 - 两个方向都反射（旋转180°）
-                self.gu_directions[i] = (self.gu_directions[i] + np.pi) % (2 * np.pi)
-                self.gu_directions_0[i] = self.gu_directions[i].copy()
-            elif hit_vertical:
-                # 碰到垂直墙壁 - 水平反射
-                self.gu_directions[i] = (np.pi - self.gu_directions[i]) % (2 * np.pi)
-                self.gu_directions_0[i] = self.gu_directions[i].copy()
-            elif hit_horizontal:
-                # 碰到水平墙壁 - 垂直反射
-                self.gu_directions[i] = (2 * np.pi - self.gu_directions[i]) % (2 * np.pi)
-                self.gu_directions_0[i] = self.gu_directions[i].copy()
+        # 更新地面用户位置，放到了calculate_reward()里边
 
         # Generate new tasks for ground users
         self.gu_tasks = self.generate_tasks()
@@ -1258,12 +1336,76 @@ class MEC(gym.Env):
             1 + velocity ** 4 / (4 * v0 ** 4)) - velocity ** 2 / (2 * v0 ** 2)) ** 0.5 + 0.5 * d0 * rho * g * A * velocity ** 3
         E_fly = P_fly * self.Delta_t  # 速度0到20，能量63到90
         R_fly_energy = -1 * self.lambda_r * E_fly
+
+        # 更新无人机位置。Update UAV positions
+        if self.fix_uav_pos:
+            pass
+        else:
+            fly_action = action[:, :2] * np.array([2 * np.pi, self.v_max])  # 方向和速度都是0-1之间的数
+            for i in range(self.n_UAVs):
+                direction, velocity = fly_action[i]
+                self.uav_positions[i, :2] += velocity * self.Delta_t * np.array([np.cos(direction), np.sin(direction)])
+            self.uav_positions[:, :2] = np.clip(self.uav_positions[:, :2], 0, self.x_max)
+        # 更新用户位置。 Update GU positions
+        # Update ground user velocities and directions using Gauss-Markov Model
+        random_normal_vel = np.random.normal(0, 0.01 * self.std_dev_gaussian, self.n_GUs)
+        self.gu_velocities = self.alpha_gaussian * self.gu_velocities + (1 - self.alpha_gaussian) * self.mean_velocity + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_vel
+        random_normal_dir = np.random.normal(0, 0.01 * self.std_dev_gaussian, self.n_GUs)
+        self.gu_directions = self.alpha_gaussian * self.gu_directions + (1 - self.alpha_gaussian) * self.gu_directions_0 + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_dir
+        # Update ground user positions
+        self.gu_positions[:, 0] += self.gu_velocities * np.cos(self.gu_directions) * self.Delta_t
+        self.gu_positions[:, 1] += self.gu_velocities * np.sin(self.gu_directions) * self.Delta_t
+        # With this bouncing implementation:
+        for i in range(self.n_GUs):
+            hit_vertical = False
+            hit_horizontal = False
+            # Check for x boundary collisions
+            if self.gu_positions[i, 0] < 0:
+                hit_vertical = True
+                self.gu_positions[i, 0] = -self.gu_positions[i, 0]  # Reflect position
+            elif self.gu_positions[i, 0] > self.x_max:
+                hit_vertical = True
+                self.gu_positions[i, 0] = 2 * self.x_max - self.gu_positions[i, 0]  # Reflect position
+            # Check for y boundary collisions
+            if self.gu_positions[i, 1] < 0:
+                hit_horizontal = True
+                self.gu_positions[i, 1] = -self.gu_positions[i, 1]  # Reflect position
+            elif self.gu_positions[i, 1] > self.x_max:
+                hit_horizontal = True
+                self.gu_positions[i, 1] = 2 * self.x_max - self.gu_positions[i, 1]  # Reflect position
+            if hit_vertical and hit_horizontal:
+                # 碰到角落 - 两个方向都反射（旋转180°）
+                self.gu_directions[i] = (self.gu_directions[i] + np.pi) % (2 * np.pi)
+                self.gu_directions_0[i] = self.gu_directions[i].copy()
+            elif hit_vertical:
+                # 碰到垂直墙壁 - 水平反射
+                self.gu_directions[i] = (np.pi - self.gu_directions[i]) % (2 * np.pi)
+                self.gu_directions_0[i] = self.gu_directions[i].copy()
+            elif hit_horizontal:
+                # 碰到水平墙壁 - 垂直反射
+                self.gu_directions[i] = (2 * np.pi - self.gu_directions[i]) % (2 * np.pi)
+                self.gu_directions_0[i] = self.gu_directions[i].copy()
+
         uav_uav_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :], axis=1)
         R_collision = -1 * self.mu_r * (np.sum(uav_uav_distances < self.Dis_min, axis=1) - 1)
-        uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)    #（n_UAVs, n_GUs）
-        coverd_gu = np.any(uav_gu_distances<=self.Cover_R, axis=0)      # (n_GUs,)
-        R_cover_all = -1 * self.alpha_r * (self.n_GUs - np.sum(coverd_gu)) / self.n_GUs
-        rewards = R_cover_all + R_task_delay + R_task_energy + R_fly_energy + R_collision
+
+        # # 一、加上未覆盖用户的惩罚。
+        # uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)    #（n_UAVs, n_GUs）
+        # coverd_gu = np.any(uav_gu_distances<=self.Cover_R, axis=0)      # (n_GUs,)
+        # R_cover_all = -1 * self.alpha_r * (self.n_GUs - np.sum(coverd_gu)) / self.n_GUs
+        # rewards = R_cover_all + R_task_delay + R_task_energy + R_fly_energy + R_collision
+
+        # 二、加上覆盖面积的惩罚
+        # 二、1 利用真实位置计算奖励
+        R_cover_areas = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, true_positions = self.uav_positions[:, :2])) / (self.x_max**2)
+        rewards = R_cover_areas + R_task_delay + R_task_energy + R_fly_energy + R_collision
+        # 二、2 根据邻居之间通信，利用延迟的位置计算奖励。
+        # update_drone_knowledge(self.drones, self.uav_positions[:, :2], self.time_step, self.neighbor_distance)
+        # R_cover_areas = np.zeros(self.n_UAVs)
+        # for i in range(self.n_UAVs):
+        #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, known_positions = self.drones[i].known_positions)) / (self.x_max**2)
+        # rewards = R_cover_areas + R_task_delay + R_task_energy + R_fly_energy + R_collision
+
         self.cumulative_individual_reward += rewards
         # 无人机角度出发每架无人机自己从服务用户获得的性能。 求和是system_performance。
         self.system_performance += np.sum(R_fly_energy) + np.sum(per_GU_task_reward)

@@ -68,7 +68,7 @@ def make_eval_env(all_args):
 def parse_args(args, parser):
     parser.add_argument('--n_UAVs', type=int, default=3, help="total number of uav-servers")
     parser.add_argument('--max_UAVs_in_neighbor', type=int, default=3, help="max number of UAVs in neighbor, in own obs' info")
-    parser.add_argument('--neighbor_distance', type=float, default=240, help="(m), the neighbor distance of UAVs in meters")
+    parser.add_argument('--neighbor_distance', type=float, default=240, help="(240+30)*k=270,540,810,1080(m), the neighbor distance of UAVs in meters")
     parser.add_argument('--d_optimal', type=float, default=210, help="(m), Distance between desired drones based on area size and number of drones")
     parser.add_argument('--n_GUs', type=int, default=20, help="total number of groud users")
     parser.add_argument('--max_GUs_in_range', type=int, default=20, help="max number of groud users in per UAV's range")
