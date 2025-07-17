@@ -1446,11 +1446,11 @@ class MEC(gym.Env):
                 num_knowledge_id_i = len(knowledge_id_i)
                 if num_knowledge_id_i <= 1:
                     # 如果就没有一跳邻居。
-                    R_cover_all[i] = -1 * self.epsilon_r
+                    R_cover_all[i] = -1 * self.alpha_r
                 else:
                     coverd_gu_i = np.any(uav_gu_distances[knowledge_id_i]<=self.Cover_R, axis=0)      # 邻居几个无人机真正覆盖的用户数目
                     coverd_gu_estimated_i = min(np.sum(coverd_gu_i)*self.n_UAVs/num_knowledge_id_i, self.n_GUs)
-                    R_cover_all[i] = -1 * self.epsilon_r * (self.n_GUs - coverd_gu_estimated_i) / self.n_GUs
+                    R_cover_all[i] = -1 * self.alpha_r * (self.n_GUs - coverd_gu_estimated_i) / self.n_GUs
             rewards += R_cover_all
 
         # 二、加上覆盖面积的惩罚
