@@ -1082,8 +1082,6 @@ class MEC(gym.Env):
         self.complete_task = np.zeros((self.n_GUs,))
         self.self_complete_task = np.zeros((self.n_GUs,))
 
-        self.render()
-
         # 计算local奖励时，先用了动作转换，用到了nearby_gus_of_uavs，但是不用先更新。因为就是用之前的信息，找到对应之前的动作。用来计算奖励。
         # 在计算奖励时也修改了self.complete_task标记。供可视化画图。
         if self.not_process_action:

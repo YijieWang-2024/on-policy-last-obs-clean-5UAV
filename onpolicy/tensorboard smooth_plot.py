@@ -191,8 +191,20 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run63/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run64/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run65/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        # "./scripts/results/mec/mappo/check/run68/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run66/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run66/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run67/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run68/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run69/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run70/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run71/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run72/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run73/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run74/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run75/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run76/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run77/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run78/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run79/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
 
         # "./scripts/results/mec/mappo/check/run19/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run20/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
@@ -289,8 +301,24 @@ if __name__ == "__main__":
         # "63",
         # "64",
         # "65",
-        # "68",
-        "66",
+        # 全局计算未被覆盖区域
+        # "66epsilon_0.5",
+        # "67epsilon_1",
+        "68epsilon_2",
+        "69epsilon_4",
+        # 全局计算未被覆盖用户个数
+        # "70alpha_0.5",
+        # "71alpha_1",
+        "72alpha_2",
+        "73alpha_4",
+        # 分布式估计未被覆盖区域
+        # "74epsilon_0.5",
+        # "75epsilon_1",
+        # "76epsilon_2",
+        # "77epsilon_4",
+        # 分布式估计未被覆盖用户个数
+        # "78alpha_2",
+        # "79alpha_4",
     ]
 
     # 绘制平滑对比图，指定中文字体
