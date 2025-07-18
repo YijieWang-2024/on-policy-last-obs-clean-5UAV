@@ -1,6 +1,8 @@
 from .distributions import Bernoulli, DiagGaussian, DiagBeta
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
 
 
 class ACTLayer(nn.Module):
@@ -13,6 +15,7 @@ class ACTLayer(nn.Module):
         # self.continuous_associate = args.continuous_associate
         # self.nearest_associate = args.nearest_associate
         self.not_process_action = args.not_process_action
+        self.tanh_gaussian = args.tanh_gaussian
         if action_space.__class__.__name__ == "Box":
             self.mujoco_box = True
             self.action_dim = action_space.shape[0]
@@ -60,7 +63,16 @@ class ACTLayer(nn.Module):
                 # if self.not_process_action:
                 #     if action_out.__class__.__name__ == "DiagGaussian" and i in [len(self.action_dims)-1, len(self.action_dims)-2]:
                 #         action = torch.nn.functional.normalize(action, p=1, dim=1)
+
                 action_log_prob = dist.log_probs(action)
+                if self.tanh_gaussian:
+                    if dist.avail_actions is None:
+                        action_log_prob -= (2 * (np.log(2) - action - F.softplus(-2 * action)) - np.log(2)).sum(-1, keepdim=True)
+                        action = (torch.tanh(action) + 1) / 2
+                    else:
+                        rect = (2 * (np.log(2) - action - F.softplus(-2 * action)) - np.log(2)) * (dist.avail_actions > 0).float()
+                        action_log_prob -= rect.sum(-1, keepdim=True)
+                        action = (torch.tanh(action)+1)/2 * dist.avail_actions
                 actions.append(action)
                 action_log_probs.append(action_log_prob)
                 # 这个是用来修改分配B和F_m的avail_actions的。所以分配B和F_m的动作一定要在allocation link之后。
@@ -107,8 +119,20 @@ class ACTLayer(nn.Module):
                 else:
                     available_action = available_actions
                 dist = action_out(x, available_action)
-                action_log_probs.append(dist.log_probs(action[i]))
-                dist_entropy.append(dist.entropy())
+                log_prob = dist.log_probs(action[i])
+                entropy = dist.entropy()
+                if self.tanh_gaussian:
+                    if dist.avail_actions is None:
+                        log_prob -= (torch.log(1 - action[i] ** 2) - np.log(2)).sum(-1, keepdim=True)
+                        jacobian_log = (torch.log(1 - action[i] ** 2) - np.log(2)).sum(-1, keepdim=True)
+                        entropy += jacobian_log
+                    else:
+                        rect = (torch.log(1 - action[i] ** 2) - np.log(2)) * (dist.avail_actions > 0).float()
+                        log_prob -= rect.sum(-1, keepdim=True)
+                        jacobian_log = (torch.log(1 - action[i] ** 2) - np.log(2)) * (dist.avail_actions > 0).float()
+                        entropy += jacobian_log.sum(-1, keepdim=True)
+                action_log_probs.append(log_prob)
+                dist_entropy.append(entropy)
                 # 这个是用来修改分配B和F_m的avail_actions的。所以分配B和F_m的动作一定要在allocation link之后。
                 if action_out.__class__.__name__=="Bernoulli":
                     available_actions = available_actions * action[i]

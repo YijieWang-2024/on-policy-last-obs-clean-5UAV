@@ -383,6 +383,7 @@ class MEC(gym.Env):
         self.nearby_gus_of_uavs = -np.ones((self.n_UAVs, self.n_GUs))   # process_local_actions里用到了（类似transform_uav_actions的代码。需要处理和反处理）。
         self.complete_task = np.zeros((self.n_GUs, ))   # 记录当前时刻的动作下，用户是否完成任务。完成为1
         self.self_complete_task = np.zeros((self.n_GUs, ))   # 当前时刻，如果自己计算能不能完成任务？能的话为1
+        self.complete_task_ratio = 0  # 统计整个episode完成任务的比率
         # calculate_local_reward里先调用到了transform_uav_actions()。
         # get_local_obs()里边，是重新挨个计算的距离。
         self.average_neighbor_advantage = args.average_neighbor_advantage
@@ -554,6 +555,7 @@ class MEC(gym.Env):
         self.energy_true_all_GUs = np.zeros((self.n_agents,))
         self.energy_all_GUs_UAVs = np.zeros((self.n_agents,))
         self.n_GUs_by_coverd = 0
+        self.complete_task_ratio = 0
         self.cumulative_individual_reward = np.zeros((self.n_agents,))
         self.uav_energy_consumption = np.zeros((self.n_UAVs,))  # 无人机及其范围内用户每时刻能耗和，再对step求和
         self.user_average_delay = np.zeros((self.n_UAVs,))  # 每架无人机范围内用户平均时延，再对step求平均
@@ -1167,7 +1169,7 @@ class MEC(gym.Env):
         #         processed_actions = self.process_actions(transformed_action_components)
         #     else:
         #         processed_actions = self.transform_uav_actions(action)
-        #     self.render(timestep=self.time_step, title='72', acts=processed_actions[:, 2:2+self.n_GUs])
+        #     self.render(timestep=self.time_step, title='83', acts=processed_actions[:, 2:2+self.n_GUs])
         #     # # # # # # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
         #     time.sleep(0.05)
         if self.time_step >= self.MAX_SIMULATION_TIME:
@@ -1182,7 +1184,9 @@ class MEC(gym.Env):
                     'energy_true_all_GUs':self.energy_true_all_GUs/self.MAX_SIMULATION_TIME,
                     'energy_all_GUs_UAVs':self.energy_all_GUs_UAVs/self.MAX_SIMULATION_TIME,
                     'system_performance_coverd_GUs': self.system_performance_coverd_GUs,
-                    'n_GUs_by_coverd':self.n_GUs_by_coverd/(self.MAX_SIMULATION_TIME/2)}
+                    'n_GUs_by_coverd':self.n_GUs_by_coverd/(self.MAX_SIMULATION_TIME/2),
+                    'complete_task_ratio':self.complete_task_ratio/self.MAX_SIMULATION_TIME
+                    }
         return self.obs, rewards, dones, self.state, self.avail_actions, info, self.Metropolis_weights, self.attention_active_mask
 
     def calculate_local_reward_raw_action(self, action):
@@ -1512,6 +1516,7 @@ class MEC(gym.Env):
         self.delay_true_coverd_GUs += np.sum(per_GU_delay_true)/np.sum(per_GU_delay_true != 0)
         self.energy_true_all_GUs += np.sum(per_GU_energy_true) + np.sum(per_GU_energy_true_others)
         self.energy_all_GUs_UAVs += np.sum(per_GU_energy_true) + np.sum(per_GU_energy_true_others) + np.sum(E_fly)
+        self.complete_task_ratio += np.sum(self.complete_task) / self.n_GUs
         if self.time_step >= (self.MAX_SIMULATION_TIME / 2):
             uav_count_per_user = np.sum(coverage_mask, axis=0)
             self.n_GUs_by_coverd += np.sum(uav_count_per_user > 0)

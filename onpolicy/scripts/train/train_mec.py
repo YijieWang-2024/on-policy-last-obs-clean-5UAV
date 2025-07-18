@@ -156,6 +156,8 @@ def parse_args(args, parser):
     parser.add_argument("--average_neighbor_advantage", action='store_true', default=False, help="If true, Execute the average of all neighbor's Advantage in the mec_runner.py with neighbor_weights")
     parser.add_argument("--n_iterations", type=int, default=50, help="Number of iterations for weighted summation when finding the global advantage function")
     parser.add_argument("--whether_average_network_parameters", action='store_true', default=False, help="If true, Execute the average of all network's parameters in the mec_runner.py")
+    # 测试使用tanh来处理下动作会不会有影响。
+    parser.add_argument("--tanh_gaussian", action='store_true', default=False, help="If true, act.py use (tanh(u)+1)/2 to process action")
     parser.add_argument("--average_network_parameters_interval", type=int, default=10, help="interval of average_network_parameters, /episodes")
 
     default_parser = parser.parse_args([])
