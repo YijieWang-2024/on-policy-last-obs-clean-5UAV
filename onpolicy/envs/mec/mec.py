@@ -193,9 +193,13 @@ class MEC(gym.Env):
         self.d_optimal = args.d_optimal
         self.perform_with_local_state = args.perform_with_local_state
         self.state_is_k_hops = args.state_is_k_hops
+        self.all_uav_k_hops = args.all_uav_k_hops   # 如果这个为True，就是k跳邻居的状态不再是由近到远排列。直接按所有id排列，邻居的信息补进去。
+
         assert not (self.perform_with_local_state and self.state_is_k_hops), "不能同时使用和obs一样的local_state，和k_hops state"
         # self.concat_neighbor_obs = args.concat_neighbor_obs
         self.max_UAVs_obs_concat = args.max_UAVs_obs_concat # 这个是s_{M_i^k}跳要拼接的无人机s_{i,t}的数目。 放在之前就是构造一跳观测的s_{M_i^1}拼接数目。
+        if self.all_uav_k_hops:
+            assert self.max_UAVs_obs_concat == self.n_UAVs, "固定形式的state，那么state中拼接的obs的个数max_UAVs，得直接等于所有无人机个数。"
         # self.max_UAVs_obs_concat = args.n_UAVs # 这个是s_{M_i^k}跳要拼接的无人机s_{i,t}的数目。 放在之前就是构造一跳观测的s_{M_i^1}拼接数目。
         self.local_reward = args.local_reward
         self.n_agents = self.n_UAVs                 # 100架飞机。
@@ -505,18 +509,28 @@ class MEC(gym.Env):
             uav_uav_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :], axis=1)
             single_state_dim = self.state_dim // self.max_UAVs_obs_concat
             final_state = np.zeros((self.n_UAVs, self.state_dim))
-            final_state[:, :single_state_dim] = local_obs
-            for i in range(self.n_UAVs):
-                neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
-                neighbors = np.where(neighbor_mask)[0]
-                if len(neighbors) > 0:
-                    sorted_neighbors = neighbors[np.argsort(uav_uav_distances[i, neighbors])]
-                    closest = sorted_neighbors[:self.max_UAVs_obs_concat - 1]
-                    for j, neighbor_idx in enumerate(closest):
-                        start_pos = (j + 1) * single_state_dim
-                        end_pos = (j + 2) * single_state_dim
+            if self.all_uav_k_hops:
+                for i in range(self.n_UAVs):
+                    neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance)    # 包括自己。
+                    neighbors = np.where(neighbor_mask)[0]
+                    for neighbor_idx in neighbors:
+                        start_pos = neighbor_idx * single_state_dim
+                        end_pos = (neighbor_idx + 1) * single_state_dim
                         final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
-                self.attention_active_mask[i, :min(len(neighbors)+1, self.max_UAVs_obs_concat)] = 1
+                        self.attention_active_mask[i, neighbor_idx] = 1
+            else:
+                final_state[:, :single_state_dim] = local_obs
+                for i in range(self.n_UAVs):
+                    neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
+                    neighbors = np.where(neighbor_mask)[0]
+                    if len(neighbors) > 0:
+                        sorted_neighbors = neighbors[np.argsort(uav_uav_distances[i, neighbors])]
+                        closest = sorted_neighbors[:self.max_UAVs_obs_concat - 1]
+                        for j, neighbor_idx in enumerate(closest):
+                            start_pos = (j + 1) * single_state_dim
+                            end_pos = (j + 2) * single_state_dim
+                            final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
+                    self.attention_active_mask[i, :min(len(neighbors)+1, self.max_UAVs_obs_concat)] = 1
             self.state = final_state
         else:
             # self.state = self.get_state()
@@ -791,6 +805,7 @@ class MEC(gym.Env):
                         actions[2][m] = actions[2][m] / total
             else:
                 if self.ave_resource:
+                    actions[1] = np.where(actions[1]>=0.5, actions[1], 0)   # 添加了卸载的阈值为0.5。
                     col_max = np.max(actions[1], axis=0)
                     # 为了防止最大值为0的存在，导致取到多个不存在的无人机。
                     col_max = np.where(col_max, col_max, 99.0)
@@ -1109,18 +1124,28 @@ class MEC(gym.Env):
             uav_uav_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :], axis=1)
             single_state_dim = self.state_dim // self.max_UAVs_obs_concat
             final_state = np.zeros((self.n_UAVs, self.state_dim))
-            final_state[:, :single_state_dim] = local_obs
-            for i in range(self.n_UAVs):
-                neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
-                neighbors = np.where(neighbor_mask)[0]
-                if len(neighbors) > 0:
-                    sorted_neighbors = neighbors[np.argsort(uav_uav_distances[i, neighbors])]
-                    closest = sorted_neighbors[:self.max_UAVs_obs_concat - 1]
-                    for j, neighbor_idx in enumerate(closest):
-                        start_pos = (j + 1) * single_state_dim
-                        end_pos = (j + 2) * single_state_dim
+            if self.all_uav_k_hops:
+                for i in range(self.n_UAVs):
+                    neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance)    # 包括自己。
+                    neighbors = np.where(neighbor_mask)[0]
+                    for neighbor_idx in neighbors:
+                        start_pos = neighbor_idx * single_state_dim
+                        end_pos = (neighbor_idx + 1) * single_state_dim
                         final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
-                self.attention_active_mask[i, :min(len(neighbors) + 1, self.max_UAVs_obs_concat)] = 1
+                        self.attention_active_mask[i, neighbor_idx] = 1
+            else:
+                final_state[:, :single_state_dim] = local_obs
+                for i in range(self.n_UAVs):
+                    neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
+                    neighbors = np.where(neighbor_mask)[0]
+                    if len(neighbors) > 0:
+                        sorted_neighbors = neighbors[np.argsort(uav_uav_distances[i, neighbors])]
+                        closest = sorted_neighbors[:self.max_UAVs_obs_concat - 1]
+                        for j, neighbor_idx in enumerate(closest):
+                            start_pos = (j + 1) * single_state_dim
+                            end_pos = (j + 2) * single_state_dim
+                            final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
+                    self.attention_active_mask[i, :min(len(neighbors)+1, self.max_UAVs_obs_concat)] = 1
             self.state = final_state
         else:
             # self.state = self.get_state()
@@ -1142,7 +1167,7 @@ class MEC(gym.Env):
         #         processed_actions = self.process_actions(transformed_action_components)
         #     else:
         #         processed_actions = self.transform_uav_actions(action)
-        #     self.render(timestep=self.time_step, title='37', acts=processed_actions[:, 2:2+self.n_GUs])
+        #     self.render(timestep=self.time_step, title='72', acts=processed_actions[:, 2:2+self.n_GUs])
         #     # # # # # # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
         #     time.sleep(0.05)
         if self.time_step >= self.MAX_SIMULATION_TIME:
@@ -1430,51 +1455,51 @@ class MEC(gym.Env):
 
         # 一、加上未覆盖用户的惩罚。
         if self.alpha_r != 0:
-            # # # 一、1 利用所有无人机、用户的真实位置计算奖励
-            # uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)    #（n_UAVs, n_GUs）
-            # coverd_gu = np.any(uav_gu_distances<=self.Cover_R, axis=0)      # (n_GUs,)
-            # R_cover_all = -1 * self.alpha_r * (self.n_GUs - np.sum(coverd_gu)) / self.n_GUs
-            # rewards += R_cover_all
-            # # 一、2 根据{M_i^1}邻居之间通信，利用1跳无人机的s_{i,t} 估计覆盖的总用户数目
-            uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)  # （n_UAVs, n_GUs）
-            update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_R)
-            R_cover_all = np.zeros(self.n_UAVs)
-            for i in range(self.n_UAVs):
-                knowledge_id_i = np.array(list(self.drones[i].drone_knowledge))
-                num_knowledge_id_i = len(knowledge_id_i)
-                if num_knowledge_id_i <= 1:
-                    # 如果就没有一跳邻居。
-                    R_cover_all[i] = -1 * self.alpha_r
-                else:
-                    coverd_gu_i = np.any(uav_gu_distances[knowledge_id_i]<=self.Cover_R, axis=0)      # 邻居几个无人机真正覆盖的用户数目
-                    coverd_gu_estimated_i = min(np.sum(coverd_gu_i)*self.n_UAVs/num_knowledge_id_i, self.n_GUs)
-                    R_cover_all[i] = -1 * self.alpha_r * (self.n_GUs - coverd_gu_estimated_i) / self.n_GUs
+            # 一、1 利用所有无人机、用户的真实位置计算奖励
+            uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)    #（n_UAVs, n_GUs）
+            coverd_gu = np.any(uav_gu_distances<=self.Cover_R, axis=0)      # (n_GUs,)
+            R_cover_all = -1 * self.alpha_r * (self.n_GUs - np.sum(coverd_gu)) / self.n_GUs
             rewards += R_cover_all
+            # # 一、2 根据{M_i^1}邻居之间通信，利用1跳无人机的s_{i,t} 估计覆盖的总用户数目
+            # uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)  # （n_UAVs, n_GUs）
+            # update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_R)
+            # R_cover_all = np.zeros(self.n_UAVs)
+            # for i in range(self.n_UAVs):
+            #     knowledge_id_i = np.array(list(self.drones[i].drone_knowledge))
+            #     num_knowledge_id_i = len(knowledge_id_i)
+            #     if num_knowledge_id_i <= 1:
+            #         # 如果就没有一跳邻居。
+            #         R_cover_all[i] = -1 * self.alpha_r
+            #     else:
+            #         coverd_gu_i = np.any(uav_gu_distances[knowledge_id_i]<=self.Cover_R, axis=0)      # 邻居几个无人机真正覆盖的用户数目
+            #         coverd_gu_estimated_i = min(np.sum(coverd_gu_i)*self.n_UAVs/num_knowledge_id_i, self.n_GUs)
+            #         R_cover_all[i] = -1 * self.alpha_r * (self.n_GUs - coverd_gu_estimated_i) / self.n_GUs
+            # rewards += R_cover_all
 
         # 二、加上覆盖面积的惩罚
         if self.epsilon_r != 0:
-            # # 二、1 利用真实位置计算奖励
-            # R_cover_areas = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, true_positions = self.uav_positions[:, :2])) / (self.x_max**2)
-            # rewards += R_cover_areas
+            # 二、1 利用真实位置计算奖励
+            R_cover_areas = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, true_positions = self.uav_positions[:, :2])) / (self.x_max**2)
+            rewards += R_cover_areas
             # # 二、2 根据邻居之间通信，利用延迟的位置计算奖励。     （这些都不符合R(s_{M_i^1}, a_{M_i^1})或者不符合p(s_{i,t+1} | s_{M_i^1}, a_{M_i^1})）
             # update_drone_knowledge(self.drones, self.uav_positions[:, :2], self.time_step, self.neighbor_distance)
             # R_cover_areas = np.zeros(self.n_UAVs)
             # for i in range(self.n_UAVs):
             #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, known_positions = self.drones[i].known_positions)) / (self.x_max**2)
             # rewards += R_cover_areas
-            # 二、3 根据{M_i^1}邻居之间通信，根据1跳邻居所知道的无人机位置 估计覆盖的总面积。
-            update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_R)
-            R_cover_areas = np.zeros(self.n_UAVs)
-            for i in range(self.n_UAVs):
-                knowledge_position_i = self.uav_positions[np.array(list(self.drones[i].drone_knowledge)), :2]
-                num_knwoledge_i = len(knowledge_position_i)
-                if num_knwoledge_i <= 1:
-                    # 如果就没有一跳邻居。
-                    R_cover_areas[i] = -1 * self.epsilon_r
-                else:
-                    coverage_area_estimated = min(calculate_coverage_area(self.Cover_R, self.x_max, true_positions = knowledge_position_i) * self.n_UAVs / num_knwoledge_i, self.x_max**2)
-                    R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max**2 - coverage_area_estimated) / (self.x_max**2)
-            rewards += R_cover_areas
+            # # 二、3 根据{M_i^1}邻居之间通信，根据1跳邻居所知道的无人机位置 估计覆盖的总面积。
+            # update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_R)
+            # R_cover_areas = np.zeros(self.n_UAVs)
+            # for i in range(self.n_UAVs):
+            #     knowledge_position_i = self.uav_positions[np.array(list(self.drones[i].drone_knowledge)), :2]
+            #     num_knwoledge_i = len(knowledge_position_i)
+            #     if num_knwoledge_i <= 1:
+            #         # 如果就没有一跳邻居。
+            #         R_cover_areas[i] = -1 * self.epsilon_r
+            #     else:
+            #         coverage_area_estimated = min(calculate_coverage_area(self.Cover_R, self.x_max, true_positions = knowledge_position_i) * self.n_UAVs / num_knwoledge_i, self.x_max**2)
+            #         R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max**2 - coverage_area_estimated) / (self.x_max**2)
+            # rewards += R_cover_areas
 
         self.cumulative_individual_reward += rewards
         # 无人机角度出发每架无人机自己从服务用户获得的性能。 求和是system_performance。
