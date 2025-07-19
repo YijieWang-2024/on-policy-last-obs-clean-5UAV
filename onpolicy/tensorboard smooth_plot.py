@@ -35,8 +35,8 @@ def load_tensorboard_data(log_dir, tag='system_performance'):
     values = [event.value for event in events]
     if tag.split('/')[-1] == 'delay_true_all_GUs':
         print(log_dir, np.mean(values[-200:]) * 1000)
-        steps = steps[-200:]
-        values = values[-200:]
+        # steps = steps[-200:]
+        # values = values[-200:]
     else:
         # print(log_dir, np.mean(values[-30:])) # UAVs
         print(log_dir, np.mean(values[-200:])) # 带宽
@@ -88,24 +88,26 @@ def plot_smooth_comparison(log_dirs, experiment_names=None, tag='system_performa
         steps, values = load_tensorboard_data(log_dir, tag)
         if not steps or not values:
             continue
-        if tag == 'delay_true_all_GUs':
-            steps = np.array(steps)
-            steps = steps.reshape(-1, 5).mean(axis=1)
-            values = np.array(values) * 1000
-            values = values.reshape(-1, 5).mean(axis=1)
+        # if tag == 'delay_true_all_GUs':
+        #     steps = np.array(steps)
+        #     steps = steps.reshape(-1, 5).mean(axis=1)
+        #     values = np.array(values) * 1000
+        #     values = values.reshape(-1, 5).mean(axis=1)
         all_values.extend(values)
         # 随机选择不同的颜色
         color = plt.cm.tab10(i % 10)
-        if tag == 'delay_true_all_GUs':
-            plt.plot(values, 'o', color=color, alpha=0.2, markersize=3)  # 绘制原始数据点(半透明)
-        else:
-            plt.plot(steps, values, 'o', color=color, alpha=0.2, markersize=3)      # 绘制原始数据点(半透明)
+        # if tag == 'delay_true_all_GUs':
+        #     plt.plot(values, 'o', color=color, alpha=0.2, markersize=3)  # 绘制原始数据点(半透明)
+        # else:
+        #     plt.plot(steps, values, 'o', color=color, alpha=0.2, markersize=3)      # 绘制原始数据点(半透明)
+        plt.plot(steps, values, 'o', color=color, alpha=0.2, markersize=3)      # 绘制原始数据点(半透明)
         smoothed_values = smooth_data(values, method=smooth_method)     # 添加平滑曲线
         current_linestyle = linestyles[i % len(linestyles)]
-        if tag == 'delay_true_all_GUs':
-            plt.plot(smoothed_values,linestyle=current_linestyle, color=color, linewidth=2.5, label=exp_name)
-        else:
-            plt.plot(steps, smoothed_values,linestyle=current_linestyle, color=color, linewidth=2.5, label=exp_name)
+        # if tag == 'delay_true_all_GUs':
+        #     plt.plot(smoothed_values,linestyle=current_linestyle, color=color, linewidth=2.5, label=exp_name)
+        # else:
+        #     plt.plot(steps, smoothed_values,linestyle=current_linestyle, color=color, linewidth=2.5, label=exp_name)
+        plt.plot(steps, smoothed_values,linestyle=current_linestyle, color=color, linewidth=2.5, label=exp_name)
 
     # 设置图表样式
     plt.title(title, fontsize=16, fontproperties=cn_font)
@@ -211,12 +213,32 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run83/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run84/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run85/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run86/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run87/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run88/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run89/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run90/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run91/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run92/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run93/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run94/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run95/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run96/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run97/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
 
         # "./scripts/results/mec/mappo/check/run19/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run20/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run21/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run22/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run23/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run86/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run87/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run88/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run89/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run94/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run95/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run96/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run97/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
 
         # "./scripts/results/mec/mappo/check/run69/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
         # "./scripts/results/mec/mappo/check/run73/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
@@ -244,10 +266,35 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run79/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
         # "./scripts/results/mec/mappo/check/run80/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
         # "./scripts/results/mec/mappo/check/run81/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
-        "./scripts/results/mec/mappo/check/run82/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
-        "./scripts/results/mec/mappo/check/run83/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
-        "./scripts/results/mec/mappo/check/run84/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
-        "./scripts/results/mec/mappo/check/run85/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run82/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run83/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run84/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run85/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run86/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run87/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run88/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run89/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run90/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run91/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run92/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run93/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run94/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run95/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run96/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+        # "./scripts/results/mec/mappo/check/run97/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
+
+        # "./scripts/results/mec/mappo/check/run86/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run87/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run88/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run89/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run94/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run95/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run96/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run97/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run86/logs/agent0/energy_true_all_GUs/agent0/energy_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run87/logs/agent0/energy_true_all_GUs/agent0/energy_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run88/logs/agent0/energy_true_all_GUs/agent0/energy_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run89/logs/agent0/energy_true_all_GUs/agent0/energy_true_all_GUs",
 
         # "./scripts/results/mec/mappo/check/run17/logs/agent0/cumulative_reward/agent0/cumulative_reward",
         # "./scripts/results/mec/mappo/check/run18/logs/agent0/cumulative_reward/agent0/cumulative_reward",
@@ -348,10 +395,25 @@ if __name__ == "__main__":
         # "80alpha_2",
         # "81alpha_4",
         # 从头开始简单。平均资源，全局未覆盖面积。
-        "82epsilon_32",
-        "83epsilon_64",
-        "84epsilon_128",
-        "85epsilon_200",
+        # "82epsilon_32",
+        # "83epsilon_64",
+        # "84epsilon_128",
+        # "85epsilon_200",
+        # epsilon_32就很好。然后调整delta值。全局未覆盖面积的惩罚
+        # "86delta_1",
+        # "87delta_2",
+        # "88delta_4",
+        # "89delta_6",
+        # 和上边一样，加了tanh-gaussian
+        "90delta_1",
+        "91delta_2",
+        "92delta_4",
+        "93delta_6",
+        # epsilon_32就很好。然后调整delta值。全局未覆盖用户的惩罚
+        # "94delta_1",
+        # "95delta_2",
+        # "96delta_4",
+        # "97delta_6",
     ]
 
     # 绘制平滑对比图，指定中文字体

@@ -79,22 +79,25 @@ class MECRunner(Runner):
 
                 if self.env_name == 'mec':
                     for agent_id in range(self.num_agents):
-                        train_infos[agent_id].update({'cumulative_reward': np.mean(np.mean([info['cumulative_reward'] for info in infos], axis=0)).round(1)})
-                        train_infos[agent_id].update({'system_performance': np.mean(np.mean([info['system_performance'] for info in infos], axis=0)).round(1)})
-                        train_infos[agent_id].update({'system_performance_true_all_GUs': np.mean(np.mean([info['system_performance_true_all_GUs'] for info in infos], axis=0)).round(1)})
-                        train_infos[agent_id].update({'system_performance_individual': np.mean([info['system_performance_individual'] for info in infos], axis=0)[agent_id].round(1)})
-                        train_infos[agent_id].update({'cumulative_individual_reward': np.mean([info['cumulative_individual_reward'] for info in infos], axis=0)[agent_id].round(1)})
-                        train_infos[agent_id].update({'delay_true_all_GUs': np.mean([info['delay_true_all_GUs'] for info in infos], axis=0)[agent_id].round(1)})
-                        train_infos[agent_id].update({'delay_true_coverd_GUs': np.mean([info['delay_true_coverd_GUs'] for info in infos], axis=0)[agent_id].round(1)})
-                        train_infos[agent_id].update({'energy_true_all_GUs': np.mean([info['energy_true_all_GUs'] for info in infos], axis=0)[agent_id].round(1)})
-                        train_infos[agent_id].update({'energy_all_GUs_UAVs': np.mean([info['energy_all_GUs_UAVs'] for info in infos], axis=0)[agent_id].round(1)})
-                        train_infos[agent_id].update({'n_GUs_by_coverd': np.mean([info['n_GUs_by_coverd'] for info in infos]).round(1)})
+                        train_infos[agent_id].update({'cumulative_reward': np.mean(np.mean([info['cumulative_reward'] for info in infos], axis=0)).round(5)})
+                        train_infos[agent_id].update({'system_performance': np.mean(np.mean([info['system_performance'] for info in infos], axis=0)).round(5)})
+                        train_infos[agent_id].update({'system_performance_true_all_GUs': np.mean(np.mean([info['system_performance_true_all_GUs'] for info in infos], axis=0)).round(5)})
+                        train_infos[agent_id].update({'system_performance_individual': np.mean([info['system_performance_individual'] for info in infos], axis=0)[agent_id].round(5)})
+                        train_infos[agent_id].update({'cumulative_individual_reward': np.mean([info['cumulative_individual_reward'] for info in infos], axis=0)[agent_id].round(5)})
+                        train_infos[agent_id].update({'delay_true_all_GUs': np.mean([info['delay_true_all_GUs'] for info in infos], axis=0)[agent_id].round(5)})
+                        train_infos[agent_id].update({'delay_true_coverd_GUs': np.mean([info['delay_true_coverd_GUs'] for info in infos], axis=0)[agent_id].round(5)})
+                        train_infos[agent_id].update({'energy_true_all_GUs': np.mean([info['energy_true_all_GUs'] for info in infos], axis=0)[agent_id].round(5)})
+                        train_infos[agent_id].update({'energy_all_GUs_UAVs': np.mean([info['energy_all_GUs_UAVs'] for info in infos], axis=0)[agent_id].round(5)})
+                        train_infos[agent_id].update({'n_GUs_by_coverd': np.mean([info['n_GUs_by_coverd'] for info in infos]).round(5)})
+                        train_infos[agent_id].update({'complete_task_ratio': np.mean([info['complete_task_ratio'] for info in infos]).round(5)})
 
-                print('cumulative_reward is ', np.mean([info['cumulative_reward'] for info in infos], axis=0).round(1))
-                print('system_performance is ', np.mean([info['system_performance'] for info in infos], axis=0).round(1))
-                print('system_performance_true_all_GUs is ', np.mean([info['system_performance_true_all_GUs'] for info in infos], axis=0).round(1))
-                print('system_performance_individual is ', np.mean([info['system_performance_individual'] for info in infos], axis=0).round(1))
-                print('cumulative_individual_reward is ', np.mean([info['cumulative_individual_reward'] for info in infos], axis=0).round(1))
+                print('cumulative_reward is ', np.mean([info['cumulative_reward'] for info in infos], axis=0).round(5))
+                print('system_performance is ', np.mean([info['system_performance'] for info in infos], axis=0).round(5))
+                print('system_performance_true_all_GUs is ', np.mean([info['system_performance_true_all_GUs'] for info in infos], axis=0).round(5))
+                print('system_performance_individual is ', np.mean([info['system_performance_individual'] for info in infos], axis=0).round(5))
+                print('cumulative_individual_reward is ', np.mean([info['cumulative_individual_reward'] for info in infos], axis=0).round(5))
+                print('complete_task_ratio is ', np.mean([info['complete_task_ratio'] for info in infos], axis=0).round(5))
+                print('delay_true_all_GUs is ', np.mean([info['delay_true_all_GUs'] for info in infos], axis=0).round(5))
                 print('UAV 0 value_loss is {}, policy_loss is {}, dist_entropy is {}, actor_grad_norm is {}, critic_grad_norm is {}, ratio is {}'.format(train_infos[0]['value_loss'],
                                                                                                                                                 train_infos[0]['policy_loss'],
                                                                                                                                                 train_infos[0]['dist_entropy'],

@@ -67,11 +67,11 @@ class ACTLayer(nn.Module):
                 action_log_prob = dist.log_probs(action)
                 if self.tanh_gaussian:
                     if dist.avail_actions is None:
-                        action_log_prob -= (2 * (np.log(2) - action - F.softplus(-2 * action)) - np.log(2)).sum(-1, keepdim=True)
+                        # action_log_prob -= (2 * (np.log(2) - action - F.softplus(-2 * action)) - np.log(2)).sum(-1, keepdim=True)
                         action = (torch.tanh(action) + 1) / 2
                     else:
-                        rect = (2 * (np.log(2) - action - F.softplus(-2 * action)) - np.log(2)) * (dist.avail_actions > 0).float()
-                        action_log_prob -= rect.sum(-1, keepdim=True)
+                        # rect = (2 * (np.log(2) - action - F.softplus(-2 * action)) - np.log(2)) * (dist.avail_actions > 0).float()
+                        # action_log_prob -= rect.sum(-1, keepdim=True)
                         action = (torch.tanh(action)+1)/2 * dist.avail_actions
                 actions.append(action)
                 action_log_probs.append(action_log_prob)
@@ -121,16 +121,16 @@ class ACTLayer(nn.Module):
                 dist = action_out(x, available_action)
                 log_prob = dist.log_probs(action[i])
                 entropy = dist.entropy()
-                if self.tanh_gaussian:
-                    if dist.avail_actions is None:
-                        log_prob -= (torch.log(1 - action[i] ** 2) - np.log(2)).sum(-1, keepdim=True)
-                        jacobian_log = (torch.log(1 - action[i] ** 2) - np.log(2)).sum(-1, keepdim=True)
-                        entropy += jacobian_log
-                    else:
-                        rect = (torch.log(1 - action[i] ** 2) - np.log(2)) * (dist.avail_actions > 0).float()
-                        log_prob -= rect.sum(-1, keepdim=True)
-                        jacobian_log = (torch.log(1 - action[i] ** 2) - np.log(2)) * (dist.avail_actions > 0).float()
-                        entropy += jacobian_log.sum(-1, keepdim=True)
+                # if self.tanh_gaussian:
+                #     if dist.avail_actions is None:
+                #         log_prob -= (torch.log(1 - action[i] ** 2) - np.log(2)).sum(-1, keepdim=True)
+                #         jacobian_log = (torch.log(1 - action[i] ** 2) - np.log(2)).sum(-1, keepdim=True)
+                #         entropy += jacobian_log
+                #     else:
+                #         rect = (torch.log(1 - action[i] ** 2) - np.log(2)) * (dist.avail_actions > 0).float()
+                #         log_prob -= rect.sum(-1, keepdim=True)
+                #         jacobian_log = (torch.log(1 - action[i] ** 2) - np.log(2)) * (dist.avail_actions > 0).float()
+                #         entropy += jacobian_log.sum(-1, keepdim=True)
                 action_log_probs.append(log_prob)
                 dist_entropy.append(entropy)
                 # 这个是用来修改分配B和F_m的avail_actions的。所以分配B和F_m的动作一定要在allocation link之后。
