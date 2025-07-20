@@ -148,6 +148,7 @@ def parse_args(args, parser):
     parser.add_argument("--not_process_action", action='store_true', default=False, help="If true, without process_action in env_maker.py and act.py")
     parser.add_argument("--fix_uav_pos", action='store_true', default=False, help="If true, uav's pos is fixed. action_space don't have fly_action")
     parser.add_argument("--ave_resource", action='store_true', default=False, help="If true, allocate the resources of UAV equally to the connected users")
+    parser.add_argument("--ave_bandwidth", action='store_true', default=False, help="If true, allocate the bandwidth resources only of UAV equally to the connected users")
     parser.add_argument("--not_served_rew_to_ave", action='store_true', default=False, help="If true, Rewards for unserved users are split evenly between covered drones")
     parser.add_argument("--not_served_rew_to_nearest", action='store_true', default=False, help="If true, Rewards for unserved users are given to the nearest drone that covers them")
 
