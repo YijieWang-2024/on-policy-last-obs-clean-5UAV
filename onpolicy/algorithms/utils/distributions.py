@@ -3,6 +3,7 @@ import torch.nn as nn
 from .util import init
 import torch.nn.functional as F
 import numpy as np
+import warnings
 
 
 class FixedNormal(torch.distributions.Normal):
@@ -42,6 +43,127 @@ class FixedNormal(torch.distributions.Normal):
             # 对不可用的动作，将采样值设为0
             samples = samples * self.avail_actions
         return samples
+
+
+class FixedDirichlet(torch.distributions.Dirichlet):
+    def __init__(self, concentration, avail_actions=None):
+        """
+        Args:
+            concentration: Tensor of shape (..., num_actions)
+            avail_actions: Tensor of shape (..., num_actions), binary mask (1=available, 0=unavailable)
+        """
+        super().__init__(concentration)
+        self.concentration_full = concentration  # Save the full concentration
+        self.avail_actions = avail_actions
+        if avail_actions is not None:
+            # Indices of available actions for each batch
+            self._avail_idx = avail_actions.bool()
+        else:
+            self._avail_idx = None
+
+    def _get_avail(self, tensor):
+        # Returns only available actions from tensor
+        if self.avail_actions is None:
+            return tensor
+        return tensor[..., self._avail_idx]
+
+    def log_probs(self, actions):
+        """
+        Computes log probabilities, considering only available actions.
+        Args:
+            actions: Tensor of shape (..., num_actions)
+        Returns:
+            log_prob: Tensor of shape (..., 1)
+        """
+        if self.avail_actions is None:
+            log_prob = super().log_prob(actions)
+            return log_prob.unsqueeze(-1)
+
+        batch_size, K = actions.shape
+        log_probs = torch.zeros((batch_size, 1), device=actions.device)
+        for i in range(batch_size):
+            if torch.sum(self.avail_actions[i]) < 2:
+                log_probs[i] = -999
+                continue
+            valid_idx = self.avail_actions[i].bool()
+            valid_actions = actions[i][valid_idx]
+            valid_alpha = self.concentration[i][valid_idx]
+            valid_dist = torch.distributions.Dirichlet(valid_alpha, validate_args=True)
+            log_prob = valid_dist.log_prob(valid_actions)
+            log_probs[i] = log_prob
+            if torch.isnan(log_probs).any() or torch.isinf(log_probs).any():
+                warnings.warn(f"检测到log_probs中有NaN或Inf值，已裁剪到")   # [-{self.log_ratio_clip:.4f}, {self.log_ratio_clip:.4f}]范围内
+        return log_probs
+
+    def entropy(self):
+        """
+        Computes entropy, considering only available actions.
+        Returns:
+            entropy: Tensor of shape (..., 1)
+        """
+        if self.avail_actions is None:
+            entropy = super().entropy()
+            return entropy.unsqueeze(-1)
+
+        batch_size, K = self.avail_actions.shape
+        entropys = torch.zeros((batch_size, 1), device=self.avail_actions.device)
+        for i in range(batch_size):
+            if torch.sum(self.avail_actions[i]) < 2:
+                entropys[i] = -999
+                continue
+            valid_idx = self.avail_actions[i].bool()
+            valid_alpha = self.concentration[i][valid_idx]
+            valid_dist = torch.distributions.Dirichlet(valid_alpha, validate_args=True)
+            entropy = valid_dist.entropy()
+            entropys[i] = entropy
+        return entropys
+
+    def mode(self):
+        """
+        Returns the mode of the Dirichlet, considering only available actions,
+        then fills unavailable actions with zero.
+        Returns:
+            mode: Tensor of shape (..., num_actions)
+        """
+        if self.avail_actions is None:
+            alpha = self.concentration_full
+            if torch.all(alpha > 1):
+                return (alpha - 1) / (alpha.sum(dim=-1, keepdim=True) - alpha.shape[-1])
+            else:
+                return alpha / alpha.sum(dim=-1, keepdim=True)
+
+        avail_idx = self.avail_actions.bool()
+        concentration_avail = self.concentration_full[..., avail_idx]
+        # Mode for available actions
+        if torch.all(concentration_avail > 1):
+            mode_avail = (concentration_avail - 1) / (concentration_avail.sum(dim=-1, keepdim=True) - concentration_avail.shape[-1])
+        else:
+            mode_avail = concentration_avail / concentration_avail.sum(dim=-1, keepdim=True)
+        # Fill unavailable actions with 0
+        mode_full = torch.zeros_like(self.concentration_full)
+        mode_full[..., avail_idx] = mode_avail
+        return mode_full
+
+    def sample(self):
+        """
+        Samples from the Dirichlet, considering only available actions,
+        then fills unavailable actions with zero.
+        Returns:
+            sample: Tensor of shape (..., num_actions)
+        """
+        if self.avail_actions is None:
+            return super().sample()
+
+        batch_size, K = self.avail_actions.shape
+        actions_full = torch.zeros_like(self.avail_actions)
+        for i in range(batch_size):
+            valid_idx = self.avail_actions[i].bool()
+            valid_alpha = self.concentration[i][valid_idx]
+            valid_dist = torch.distributions.Dirichlet(valid_alpha, validate_args=True)
+            sample_avail = valid_dist.sample()
+            # Fill unavailable actions with 0
+            actions_full[i, valid_idx] = sample_avail
+        return actions_full
 
 
 # Bernoulli
@@ -158,6 +280,23 @@ class DiagGaussian(nn.Module):
         action_logstd = self.logstd(zeros)
 
         return FixedNormal(action_mean, action_logstd.exp(), avail_actions)
+
+
+class DiagDirichlet(nn.Module):
+    def __init__(self, num_inputs, num_outputs, use_orthogonal=True, gain=0.01):
+        super(DiagDirichlet, self).__init__()
+        init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][use_orthogonal]
+
+        def init_(m):
+            return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain)
+
+        self.fc_alpha = init_(nn.Linear(num_inputs, num_outputs))
+
+    def forward(self, x, avail_actions=None):
+        alpha_logits = self.fc_alpha(x)
+        alpha = torch.exp(alpha_logits) + 1e-6
+
+        return FixedDirichlet(alpha, avail_actions)
 
 
 class Bernoulli(nn.Module):

@@ -134,11 +134,11 @@ class MECRunner(Runner):
         rnn_state_collector = []
         rnn_state_critic_collector = []
 
-        raw_actions = []
+        raw_action_collector = []
         for agent_id in range(self.num_agents):
             self.trainer[agent_id].prep_rollout()
             # 这里的action_log_prob不能用来计算policy_loss，因为这个还没有经过处理，不是真正用到环境的动作。
-            _, action, _, rnn_state, rnn_state_critic \
+            value, action, action_log_prob, rnn_state, rnn_state_critic \
                 = self.trainer[agent_id].policy.get_actions(self.buffer[agent_id].share_obs[step],
                                                             self.buffer[agent_id].obs[step],
                                                             self.buffer[agent_id].rnn_states[step],
@@ -146,30 +146,34 @@ class MECRunner(Runner):
                                                             self.buffer[agent_id].masks[step],
                                                             self.buffer[agent_id].available_actions[step],
                                                             attention_active_mask = self.buffer[agent_id].attention_active_mask[step])
-            raw_actions.append(_t2n(action))
+            raw_action_collector.append(_t2n(action))
             rnn_state_collector.append(_t2n(rnn_state))
             rnn_state_critic_collector.append(_t2n(rnn_state_critic))
-        # [self.envs, agents, dim]
-        raw_actions = np.array(raw_actions).transpose(1, 0, 2)
-        processed_actions = self.envs.process_actions(raw_actions)
-        for agent_id in range(self.num_agents):
-            value, action_log_prob, _ = self.trainer[agent_id].policy.evaluate_actions(self.buffer[agent_id].share_obs[step],
-                                                                                       self.buffer[agent_id].obs[step],
-                                                                                       self.buffer[agent_id].rnn_states[step],
-                                                                                       self.buffer[agent_id].rnn_states_critic[step],
-                                                                                       processed_actions[:, agent_id],
-                                                                                       self.buffer[agent_id].masks[step],
-                                                                                       self.buffer[agent_id].available_actions[step],
-                                                                                       attention_active_mask = self.buffer[agent_id].attention_active_mask[step])
             value_collector.append(_t2n(value))
             action_log_prob_collector.append(_t2n(action_log_prob))
+        # # [self.envs, agents, dim]
+        # raw_actions = np.array(raw_actions).transpose(1, 0, 2)
+        # processed_actions = self.envs.process_actions(raw_actions)
+        # for agent_id in range(self.num_agents):
+        #     value, action_log_prob, _ = self.trainer[agent_id].policy.evaluate_actions(self.buffer[agent_id].share_obs[step],
+        #                                                                                self.buffer[agent_id].obs[step],
+        #                                                                                self.buffer[agent_id].rnn_states[step],
+        #                                                                                self.buffer[agent_id].rnn_states_critic[step],
+        #                                                                                processed_actions[:, agent_id],
+        #                                                                                self.buffer[agent_id].masks[step],
+        #                                                                                self.buffer[agent_id].available_actions[step],
+        #                                                                                attention_active_mask = self.buffer[agent_id].attention_active_mask[step])
+        #     value_collector.append(_t2n(value))
+        #     action_log_prob_collector.append(_t2n(action_log_prob))
         # [self.envs, agents, dim]
         values = np.array(value_collector).transpose(1, 0, 2)
+        raw_actions = np.array(raw_action_collector).transpose(1, 0, 2)
         action_log_probs = np.array(action_log_prob_collector).transpose(1, 0, 2)
         rnn_states = np.array(rnn_state_collector).transpose(1, 0, 2, 3)
         rnn_states_critic = np.array(rnn_state_critic_collector).transpose(1, 0, 2, 3)
         
-        return values, processed_actions, action_log_probs, rnn_states, rnn_states_critic
+        # return values, processed_actions, action_log_probs, rnn_states, rnn_states_critic
+        return values, raw_actions, action_log_probs, rnn_states, rnn_states_critic
 
     def insert(self, data, step):
         buffer_step = step
@@ -188,6 +192,10 @@ class MECRunner(Runner):
         active_masks[dones == True] = np.zeros(((dones == True).sum(), 1), dtype=np.float32)
         active_masks[dones_env == True] = np.ones(((dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
 
+        # 添加可用的动作空间小于2时，记录该智能体死亡。不计算梯度。为了利用狄利克雷分布。
+        covering_GUs = np.sum(available_actions, axis=-1)
+        active_masks[covering_GUs < 2] = np.zeros(((covering_GUs < 2).sum(), 1), dtype=np.float32)
+
         if not self.use_centralized_V:
             share_obs = obs
 
@@ -195,7 +203,8 @@ class MECRunner(Runner):
             self.buffer[agent_id].insert(share_obs[:, agent_id], obs[:, agent_id], rnn_states[:, agent_id],
                                          rnn_states_critic[:, agent_id],
                                          actions[:, agent_id], action_log_probs[:, agent_id], values[:, agent_id],
-                                         rewards[:, agent_id], masks[:, agent_id], available_actions=available_actions[:, agent_id],
+                                         rewards[:, agent_id], masks[:, agent_id], active_masks = active_masks[:, agent_id],
+                                         available_actions=available_actions[:, agent_id],
                                          Metropolis_weights=Metropolis_weights[:, agent_id], attention_active_mask=attention_active_mask[:, agent_id])
         #正常流程是在buffer里添加一个delta的属性，存每个step的delta。然后将delta按照下边的方法更新。
         # # 这个对v的平均，有问题呐。推测是会影响Critic的更新。
