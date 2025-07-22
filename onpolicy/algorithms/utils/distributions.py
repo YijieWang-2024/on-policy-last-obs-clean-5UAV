@@ -70,7 +70,6 @@ class FixedDirichlet(torch.distributions.Dirichlet):
         #     samples = samples * self.avail_actions
         #     # 重新归一化，确保求和为1
         #     samples = samples / (samples.sum(dim=-1, keepdim=True) + 1e-8)
-        samples[self.avail_actions_0_1] = 1/self.act_dim
 
         return samples
 
