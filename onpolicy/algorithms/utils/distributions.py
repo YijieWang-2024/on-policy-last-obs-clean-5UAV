@@ -59,6 +59,7 @@ class FixedDirichlet(torch.distributions.Dirichlet):
         super().__init__(masked_concentration)
         self.masked_concentration = masked_concentration
         self.avail_actions_0_1 = torch.where(torch.sum(self.avail_actions, dim=-1)<1)[0]
+        self.avail_actions_to_times_logp = torch.sum(self.avail_actions, dim=-1)<1
 
     def sample(self):
         """采样动作"""
@@ -99,7 +100,7 @@ class FixedDirichlet(torch.distributions.Dirichlet):
         #     log_prob_values = super().log_prob(actions)
 
         log_prob_values = super().log_prob(actions)
-        log_prob_values[self.avail_actions_0_1] = 0
+        log_prob_values = log_prob_values * self.avail_actions_to_times_logp
 
         return log_prob_values.unsqueeze(-1) if log_prob_values.dim() == 1 else log_prob_values
 
@@ -111,7 +112,7 @@ class FixedDirichlet(torch.distributions.Dirichlet):
         #     # 对于masked情况，熵会降低
         #     # 这里是一个简化的处理
         #     pass
-        entropy_values[self.avail_actions_0_1] = 1
+        entropy_values = entropy_values * self.avail_actions_to_times_logp + 1.0 * (1 - self.avail_actions_to_times_logp)
 
         return entropy_values.unsqueeze(-1) if entropy_values.dim() == 1 else entropy_values
 
