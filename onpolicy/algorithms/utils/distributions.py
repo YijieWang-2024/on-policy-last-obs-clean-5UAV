@@ -47,124 +47,73 @@ class FixedNormal(torch.distributions.Normal):
 
 class FixedDirichlet(torch.distributions.Dirichlet):
     def __init__(self, concentration, avail_actions=None):
-        """
-        Args:
-            concentration: Tensor of shape (..., num_actions)
-            avail_actions: Tensor of shape (..., num_actions), binary mask (1=available, 0=unavailable)
-        """
-        super().__init__(concentration)
-        self.concentration_full = concentration  # Save the full concentration
+        self.original_concentration = concentration
         self.avail_actions = avail_actions
-        if avail_actions is not None:
-            # Indices of available actions for each batch
-            self._avail_idx = avail_actions.bool()
-        else:
-            self._avail_idx = None
+        self.act_dim = self.avail_actions.shape[-1]
 
-    def _get_avail(self, tensor):
-        # Returns only available actions from tensor
-        if self.avail_actions is None:
-            return tensor
-        return tensor[..., self._avail_idx]
+        if avail_actions is not None:
+            # masked_concentration = concentration * avail_actions + 1e-6 * (1 - avail_actions)
+            masked_concentration = concentration * avail_actions + 0.1 * (1 - avail_actions)    # 使用0.1而不是1e-6提高数值稳定性？？？
+        else:
+            masked_concentration = concentration
+        super().__init__(masked_concentration)
+        self.masked_concentration = masked_concentration
+        self.avail_actions_0_1 = torch.where(torch.sum(self.avail_actions, dim=-1)<1)[0]
+
+    def sample(self):
+        """采样动作"""
+        samples = super().rsample()
+
+        # if self.avail_actions is not None:
+        #     # 将不可用动作的概率设为0，并重新归一化
+        #     samples = samples * self.avail_actions
+        #     # 重新归一化，确保求和为1
+        #     samples = samples / (samples.sum(dim=-1, keepdim=True) + 1e-8)
+        samples[self.avail_actions_0_1] = 1/self.act_dim
+
+        return samples
 
     def log_probs(self, actions):
         """
-        Computes log probabilities, considering only available actions.
-        Args:
-            actions: Tensor of shape (..., num_actions)
-        Returns:
-            log_prob: Tensor of shape (..., 1)
+        计算动作的对数概率
+        需要考虑mask对概率计算的影响
         """
-        if self.avail_actions is None:
-            log_prob = super().log_prob(actions)
-            return log_prob.unsqueeze(-1)
+        # # 确保actions满足概率向量约束
+        # actions = torch.clamp(actions, min=1e-8)
+        # actions = actions / actions.sum(dim=-1, keepdim=True)
+        # if self.avail_actions is not None:
+        #     # 将不可用动作的值设为0
+        #     masked_actions = actions * self.avail_actions
+        #     # 重新归一化有效动作
+        #     masked_actions = masked_actions / (masked_actions.sum(dim=-1, keepdim=True) + 1e-8)
+        #
+        #     # 使用修正后的action计算概率
+        #     log_prob_values = super().log_prob(masked_actions)
+        #
+        #     # 添加归一化常数修正（因为我们改变了支撑集）
+        #     # 这是一个近似，实际情况更复杂
+        #     num_valid_actions = self.avail_actions.sum(dim=-1)
+        #     correction = torch.lgamma(num_valid_actions + 1e-8)
+        #     log_prob_values = log_prob_values + correction
+        # else:
+        #     log_prob_values = super().log_prob(actions)
 
-        batch_size, K = actions.shape
-        log_probs = torch.zeros((batch_size, 1), device=actions.device)
-        for i in range(batch_size):
-            if torch.sum(self.avail_actions[i]) < 2:
-                log_probs[i] = -999
-                continue
-            valid_idx = self.avail_actions[i].bool()
-            valid_actions = actions[i][valid_idx]
-            valid_alpha = self.concentration[i][valid_idx]
-            valid_dist = torch.distributions.Dirichlet(valid_alpha, validate_args=True)
-            log_prob = valid_dist.log_prob(valid_actions)
-            log_probs[i] = log_prob
-            if torch.isnan(log_probs).any() or torch.isinf(log_probs).any():
-                warnings.warn(f"检测到log_probs中有NaN或Inf值，已裁剪到")   # [-{self.log_ratio_clip:.4f}, {self.log_ratio_clip:.4f}]范围内
-        return log_probs
+        log_prob_values = super().log_prob(actions)
+        log_prob_values[self.avail_actions_0_1] = 0
+
+        return log_prob_values.unsqueeze(-1) if log_prob_values.dim() == 1 else log_prob_values
 
     def entropy(self):
-        """
-        Computes entropy, considering only available actions.
-        Returns:
-            entropy: Tensor of shape (..., 1)
-        """
-        if self.avail_actions is None:
-            entropy = super().entropy()
-            return entropy.unsqueeze(-1)
+        """计算熵"""
+        entropy_values = super().entropy()
 
-        batch_size, K = self.avail_actions.shape
-        entropys = torch.zeros((batch_size, 1), device=self.avail_actions.device)
-        for i in range(batch_size):
-            if torch.sum(self.avail_actions[i]) < 2:
-                entropys[i] = -999
-                continue
-            valid_idx = self.avail_actions[i].bool()
-            valid_alpha = self.concentration[i][valid_idx]
-            valid_dist = torch.distributions.Dirichlet(valid_alpha, validate_args=True)
-            entropy = valid_dist.entropy()
-            entropys[i] = entropy
-        return entropys
+        # if self.avail_actions is not None:
+        #     # 对于masked情况，熵会降低
+        #     # 这里是一个简化的处理
+        #     pass
+        entropy_values[self.avail_actions_0_1] = 1
 
-    def mode(self):
-        """
-        Returns the mode of the Dirichlet, considering only available actions,
-        then fills unavailable actions with zero.
-        Returns:
-            mode: Tensor of shape (..., num_actions)
-        """
-        if self.avail_actions is None:
-            alpha = self.concentration_full
-            if torch.all(alpha > 1):
-                return (alpha - 1) / (alpha.sum(dim=-1, keepdim=True) - alpha.shape[-1])
-            else:
-                return alpha / alpha.sum(dim=-1, keepdim=True)
-
-        avail_idx = self.avail_actions.bool()
-        concentration_avail = self.concentration_full[..., avail_idx]
-        # Mode for available actions
-        if torch.all(concentration_avail > 1):
-            mode_avail = (concentration_avail - 1) / (concentration_avail.sum(dim=-1, keepdim=True) - concentration_avail.shape[-1])
-        else:
-            mode_avail = concentration_avail / concentration_avail.sum(dim=-1, keepdim=True)
-        # Fill unavailable actions with 0
-        mode_full = torch.zeros_like(self.concentration_full)
-        mode_full[..., avail_idx] = mode_avail
-        return mode_full
-
-    def sample(self):
-        """
-        Samples from the Dirichlet, considering only available actions,
-        then fills unavailable actions with zero.
-        Returns:
-            sample: Tensor of shape (..., num_actions)
-        """
-        if self.avail_actions is None:
-            return super().sample()
-
-        batch_size, K = self.avail_actions.shape
-        actions_full = torch.zeros_like(self.avail_actions)
-        for i in range(batch_size):
-            valid_idx = self.avail_actions[i].bool()
-            valid_alpha = self.concentration[i][valid_idx]
-            valid_dist = torch.distributions.Dirichlet(valid_alpha, validate_args=True)
-            sample_avail = valid_dist.sample()
-            # Fill unavailable actions with 0
-            actions_full[i, valid_idx] = sample_avail
-        return actions_full
-
+        return entropy_values.unsqueeze(-1) if entropy_values.dim() == 1 else entropy_values
 
 # Bernoulli
 class FixedBernoulli(torch.distributions.Bernoulli):
@@ -295,6 +244,7 @@ class DiagDirichlet(nn.Module):
     def forward(self, x, avail_actions=None):
         alpha_logits = self.fc_alpha(x)
         alpha = torch.exp(alpha_logits) + 1e-6
+        # alpha = F.softplus(alpha_logits) + 1e-6
 
         return FixedDirichlet(alpha, avail_actions)
 
