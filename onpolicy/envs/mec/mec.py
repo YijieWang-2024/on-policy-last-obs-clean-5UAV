@@ -239,6 +239,7 @@ class MEC(gym.Env):
         self.discrete_associate = args.discrete_associate
         self.continuous_associate = args.continuous_associate
         self.nearest_associate = args.nearest_associate
+        self.nearest_avail_actions = args.nearest_avail_actions
         assert self.discrete_associate + self.continuous_associate + self.nearest_associate == 1
         self.not_process_action = args.not_process_action
         self.fix_uav_pos = args.fix_uav_pos
@@ -884,7 +885,7 @@ class MEC(gym.Env):
                             actions[2][nearest_uav_idx, n] = computation_allocation[nearest_uav_idx]
                     for m in range(self.n_UAVs):
                         total = np.sum(actions[2][m])
-                        if total > 1:
+                        if total > 0:
                             actions[2][m] = actions[2][m] / total
                 else:
                     mask_2 = actions[2] == 0
@@ -927,11 +928,11 @@ class MEC(gym.Env):
                             actions[3][nearest_uav_idx, n] = computation_allocation[nearest_uav_idx]
                     for m in range(self.n_UAVs):
                         total = np.sum(actions[2][m])
-                        if total > 1:
+                        if total > 0:
                             actions[2][m] = actions[2][m] / total
                     for m in range(self.n_UAVs):
                         total = np.sum(actions[3][m])
-                        if total > 1:
+                        if total > 0:
                             actions[3][m] = actions[3][m] / total
         else:
             if self.fix_uav_pos:
@@ -1275,7 +1276,7 @@ class MEC(gym.Env):
         #         processed_actions = self.process_actions(transformed_action_components)
         #     else:
         #         processed_actions = self.transform_uav_actions(action)
-        #     self.render(timestep=self.time_step, title='203', acts=processed_actions[:, 2:2+self.n_GUs])
+        #     self.render(timestep=self.time_step, title='129', acts=processed_actions[:, 2:2+self.n_GUs])
         #     # # # # # # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
         #     time.sleep(0.05)
         if self.time_step >= self.MAX_SIMULATION_TIME:
@@ -1696,15 +1697,35 @@ class MEC(gym.Env):
         else:
             # Extract action arrays
             if self.nearest_associate:
-                action_components = [
-                    action_components[:, :2],  # Movement actions
-                    action_components[:, 2:2 + self.max_GUs_in_range],
-                    action_components[:, 2 + self.max_GUs_in_range:]
-                ]
-                offloading_actions = None
-                bandwidth_actions = action_components[1]
-                computation_actions = action_components[2]
-                transformed_offloading = None
+                if self.ave_resource:
+                    action_components = [
+                        action_components[:, :2]  # Movement actions
+                    ]
+                    offloading_actions = None
+                    bandwidth_actions = None
+                    computation_actions = None
+                    transformed_offloading = None
+                elif self.ave_bandwidth:
+                    action_components = [
+                        action_components[:, :2],  # Movement actions
+                        action_components[:, 2:2 + self.max_GUs_in_range]  # Computation resource allocation
+                    ]
+                    offloading_actions = None
+                    bandwidth_actions = None
+                    computation_actions = action_components[1]
+                    # Initialize transformed arrays with zeros - preallocate memory once
+                    transformed_offloading = None
+                else:
+                    action_components = [
+                        action_components[:, :2],  # Movement actions
+                        action_components[:, 2:2 + self.max_GUs_in_range],  # Bandwidth allocation
+                        action_components[:, 2 + self.max_GUs_in_range:2 + 2 * self.max_GUs_in_range]  # Computation resource allocation
+                    ]
+                    offloading_actions = None
+                    bandwidth_actions = action_components[1]
+                    computation_actions = action_components[2]
+                    # Initialize transformed arrays with zeros - preallocate memory once
+                    transformed_offloading = None
             else:
                 if self.ave_resource:
                     action_components = [
@@ -1775,8 +1796,13 @@ class MEC(gym.Env):
                 result[2] = transformed_computation
         else:
             if self.nearest_associate:
-                result[1] = transformed_bandwidth
-                result[2] = transformed_computation
+                if self.ave_resource:
+                    pass
+                elif self.ave_bandwidth:
+                    result[1] = transformed_computation
+                else:
+                    result[1] = transformed_bandwidth
+                    result[2] = transformed_computation
             else:
                 if self.ave_resource:
                     result[1] = transformed_offloading
@@ -2046,20 +2072,51 @@ class MEC(gym.Env):
         前 “与自身距离小于Cover_R的地面用户的数目” 个地面用户的可用动作设为1，
         针对后续直到max_GUs_in_range的地面用户的avail_actions占位补位0。
         """
-        local_avail_actions = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=int)
-        # 计算所有UAV和地面用户之间的距离平方（避免计算平方根）
-        uav_positions_expanded = self.uav_positions[:, np.newaxis, :2]
-        gu_positions_expanded = self.gu_positions[np.newaxis, :, :2]
-        distances_squared = np.sum((uav_positions_expanded - gu_positions_expanded) ** 2, axis=2)
+        if self.nearest_avail_actions:
+            uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)
+            # 初始化输出矩阵，形状为 (n_UAVs, max_gus)
+            avail_actions = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=np.int32)
+            # 提取候选区域 (n_UAVs, max_gus)
+            candidate_matrix = self.nearby_gus_of_uavs[:, :self.max_GUs_in_range]
+            # 创建有效用户掩码 (n_UAVs, max_gus)
+            valid_mask = candidate_matrix != -1
+            if not np.any(valid_mask):
+                return avail_actions
+            # 获取所有有效的(uav_id, pos, user_id)组合
+            uav_indices, pos_indices = np.where(valid_mask)
+            user_ids = candidate_matrix[uav_indices, pos_indices]
+            # 为每个唯一用户找到所有候选无人机
+            unique_users = np.unique(user_ids)
+            # 对每个唯一用户进行向量化处理
+            for user_id in unique_users:
+                # 找到所有包含该用户的位置
+                user_mask = user_ids == user_id
+                candidate_uav_indices = uav_indices[user_mask]
+                candidate_pos_indices = pos_indices[user_mask]
+                # 获取该用户到所有候选无人机的距离
+                user_distances = uav_gu_distances[candidate_uav_indices, user_id]
+                # 找到最近的无人机
+                closest_idx = np.argmin(user_distances)
+                closest_uav = candidate_uav_indices[closest_idx]
+                closest_pos = candidate_pos_indices[closest_idx]
+                # 在avail_actions中标记连接
+                avail_actions[closest_uav, closest_pos] = 1
+            return avail_actions
+        else:
+            local_avail_actions = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=int)
+            # 计算所有UAV和地面用户之间的距离平方（避免计算平方根）
+            uav_positions_expanded = self.uav_positions[:, np.newaxis, :2]
+            gu_positions_expanded = self.gu_positions[np.newaxis, :, :2]
+            distances_squared = np.sum((uav_positions_expanded - gu_positions_expanded) ** 2, axis=2)
 
-        in_range_mask = distances_squared <= self.Cover_R ** 2
-        num_in_range = np.sum(in_range_mask, axis=1)
-        for i in range(self.n_UAVs):
-            if num_in_range[i] >= self.max_GUs_in_range:
-                local_avail_actions[i] = 1
-            else:
-                local_avail_actions[i, :num_in_range[i]] = 1
-        return local_avail_actions
+            in_range_mask = distances_squared <= self.Cover_R ** 2
+            num_in_range = np.sum(in_range_mask, axis=1)
+            for i in range(self.n_UAVs):
+                if num_in_range[i] >= self.max_GUs_in_range:
+                    local_avail_actions[i] = 1
+                else:
+                    local_avail_actions[i, :num_in_range[i]] = 1
+            return local_avail_actions
 
     # def calculate_user_reward(self, uav_idx, gu_idx, offloading_action, bandwidth_action, computation_action, with_penalty):
     #     """

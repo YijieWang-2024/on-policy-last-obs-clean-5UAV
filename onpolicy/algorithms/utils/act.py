@@ -15,7 +15,7 @@ class ACTLayer(nn.Module):
         self.continuous_associate = args.continuous_associate
         self.ave_resource = args.ave_resource
         self.ave_bandwidth = args.ave_bandwidth
-        # print("在act.py中使用到了连续连接动作的0.5阈值。")
+        print("在act.py中使用到了连续连接动作的0.5阈值。")
         # self.nearest_associate = args.nearest_associate
         self.not_process_action = args.not_process_action
         if action_space.__class__.__name__ == "Box":
@@ -30,10 +30,13 @@ class ACTLayer(nn.Module):
             for i, action_space_i in enumerate(action_space):
                 self.action_dims.append(action_space_i.shape[0])
                 if action_space_i.__class__.__name__ == "Box":
-                    if self.continuous_associate and i>=2:
-                        self.action_outs.append(DiagDirichlet(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
-                    else:
-                        self.action_outs.append(DiagGaussian(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
+                    # 后边资源分配选择狄利克雷分布
+                    # if self.continuous_associate and i>=2:
+                    #     self.action_outs.append(DiagDirichlet(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
+                    # else:
+                    #     self.action_outs.append(DiagGaussian(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
+                    # 全都选择高斯分布。
+                    self.action_outs.append(DiagGaussian(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
                 else:   # multibonulli
                     self.action_outs.append(Bernoulli(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
     
@@ -68,8 +71,8 @@ class ACTLayer(nn.Module):
                 # 这个是用来修改分配B和F_m的avail_actions的。所以分配B和F_m的动作一定要在allocation link之后。
                 if action_out.__class__.__name__ == "Bernoulli" and available_actions is not None:
                     available_actions = available_actions * action
-                # if self.continuous_associate and i==1 and available_actions is not None:    # 连接动作的0.5阈值。
-                #     available_actions = available_actions * (action>=0.5)
+                if self.continuous_associate and i==1 and available_actions is not None:    # 连接动作的0.5阈值。
+                    available_actions = available_actions * (action>=0.5)
 
             actions = torch.cat(actions, -1)
             action_log_probs = torch.sum(torch.cat(action_log_probs, -1), -1, keepdim=True)
@@ -119,8 +122,8 @@ class ACTLayer(nn.Module):
                 # 这个是用来修改分配B和F_m的avail_actions的。所以分配B和F_m的动作一定要在allocation link之后。
                 if action_out.__class__.__name__=="Bernoulli" and available_actions is not None:
                     available_actions = available_actions * action[i]
-                # if self.continuous_associate and i==1 and available_actions is not None:    # 连接动作的0.5阈值。
-                #     available_actions = available_actions * (action[i]>=0.5)
+                if self.continuous_associate and i==1 and available_actions is not None:    # 连接动作的0.5阈值。
+                    available_actions = available_actions * (action[i]>=0.5)
             action_log_probs = torch.sum(torch.cat(action_log_probs, -1), -1, keepdim=True)
             if active_masks is not None:
                 dist_entropy = (torch.sum(torch.cat(dist_entropy, -1), -1) * active_masks.squeeze(-1)).sum() / active_masks.sum()
