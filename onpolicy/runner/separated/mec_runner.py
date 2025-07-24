@@ -192,9 +192,9 @@ class MECRunner(Runner):
         active_masks[dones == True] = np.zeros(((dones == True).sum(), 1), dtype=np.float32)
         active_masks[dones_env == True] = np.ones(((dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
 
-        # # 添加可用的动作空间小于2时，记录该智能体死亡。不计算梯度。为了利用狄利克雷分布。
-        # covering_GUs = np.sum(available_actions, axis=-1)
-        # active_masks[covering_GUs < 1] = np.zeros(((covering_GUs < 1).sum(), 1), dtype=np.float32)
+        # 添加可用的动作空间小于2时，记录该智能体死亡。不计算梯度。为了利用狄利克雷分布。
+        covering_GUs = np.sum(available_actions, axis=-1)
+        active_masks[covering_GUs < 1] = np.zeros(((covering_GUs < 1).sum(), 1), dtype=np.float32)
 
         if not self.use_centralized_V:
             share_obs = obs

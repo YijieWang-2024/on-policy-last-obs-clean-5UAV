@@ -31,12 +31,12 @@ class ACTLayer(nn.Module):
                 self.action_dims.append(action_space_i.shape[0])
                 if action_space_i.__class__.__name__ == "Box":
                     # 后边资源分配选择狄利克雷分布
-                    # if self.continuous_associate and i>=2:
-                    #     self.action_outs.append(DiagDirichlet(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
-                    # else:
-                    #     self.action_outs.append(DiagGaussian(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
-                    # 全都选择高斯分布。
-                    self.action_outs.append(DiagGaussian(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
+                    if self.continuous_associate and i>=2:
+                        self.action_outs.append(DiagDirichlet(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
+                    else:
+                        self.action_outs.append(DiagGaussian(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
+                    # # 全都选择高斯分布。
+                    # self.action_outs.append(DiagGaussian(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
                 else:   # multibonulli
                     self.action_outs.append(Bernoulli(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
     

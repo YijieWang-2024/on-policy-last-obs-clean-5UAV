@@ -1276,7 +1276,7 @@ class MEC(gym.Env):
         #         processed_actions = self.process_actions(transformed_action_components)
         #     else:
         #         processed_actions = self.transform_uav_actions(action)
-        #     self.render(timestep=self.time_step, title='129', acts=processed_actions[:, 2:2+self.n_GUs])
+        #     self.render(timestep=self.time_step, title='145', acts=processed_actions[:, 2:2+self.n_GUs])
         #     # # # # # # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
         #     time.sleep(0.05)
         if self.time_step >= self.MAX_SIMULATION_TIME:
@@ -1994,20 +1994,14 @@ class MEC(gym.Env):
             padding_neighbors = self.max_UAVs_in_neighbor - min(neighbor_count, self.max_UAVs_in_neighbor)
             idx += padding_neighbors * 2
 
-            # 6. Find ground users within coverage range
-            in_range_mask = uav_gu_distances[i] <= self.Cover_R
-            in_range_indices = np.where(in_range_mask)[0]
-            in_range_count = len(in_range_indices)
+            in_range_count = np.sum(self.nearby_gus_of_uavs[i] != -1)
+            in_range_indices = self.nearby_gus_of_uavs[i, :in_range_count]
             # 7. Number of GUs within coverage
             local_obs[i, idx] = in_range_count
             idx += 1
-
             # 8. Sort GUs by distance and take closest max_GUs_in_range
             if in_range_count > 0:
-                # Sort by distance
-                gu_distances = uav_gu_distances[i, in_range_indices]
-                sorted_idx = np.argsort(gu_distances)
-                closest_gus = in_range_indices[sorted_idx[:self.max_GUs_in_range]]
+                closest_gus = in_range_indices[:self.max_GUs_in_range]
                 for j, gu_idx in enumerate(closest_gus):
                     if j < self.max_GUs_in_range:
                         # GU position (3 values)
@@ -2072,16 +2066,16 @@ class MEC(gym.Env):
         前 “与自身距离小于Cover_R的地面用户的数目” 个地面用户的可用动作设为1，
         针对后续直到max_GUs_in_range的地面用户的avail_actions占位补位0。
         """
+        uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)
+        local_avail_actions = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=np.int32)
         if self.nearest_avail_actions:
-            uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)
-            # 初始化输出矩阵，形状为 (n_UAVs, max_gus)
-            avail_actions = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=np.int32)
+            # 重叠覆盖的用户只能卸载到最近的无人机。
             # 提取候选区域 (n_UAVs, max_gus)
             candidate_matrix = self.nearby_gus_of_uavs[:, :self.max_GUs_in_range]
             # 创建有效用户掩码 (n_UAVs, max_gus)
             valid_mask = candidate_matrix != -1
             if not np.any(valid_mask):
-                return avail_actions
+                return local_avail_actions
             # 获取所有有效的(uav_id, pos, user_id)组合
             uav_indices, pos_indices = np.where(valid_mask)
             user_ids = candidate_matrix[uav_indices, pos_indices]
@@ -2100,22 +2094,16 @@ class MEC(gym.Env):
                 closest_uav = candidate_uav_indices[closest_idx]
                 closest_pos = candidate_pos_indices[closest_idx]
                 # 在avail_actions中标记连接
-                avail_actions[closest_uav, closest_pos] = 1
-            return avail_actions
+                local_avail_actions[closest_uav, closest_pos] = 1
+            return local_avail_actions
         else:
-            local_avail_actions = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=int)
-            # 计算所有UAV和地面用户之间的距离平方（避免计算平方根）
-            uav_positions_expanded = self.uav_positions[:, np.newaxis, :2]
-            gu_positions_expanded = self.gu_positions[np.newaxis, :, :2]
-            distances_squared = np.sum((uav_positions_expanded - gu_positions_expanded) ** 2, axis=2)
-
-            in_range_mask = distances_squared <= self.Cover_R ** 2
-            num_in_range = np.sum(in_range_mask, axis=1)
+            # 每架无人机直接可以卸载范围内最近的max_GUs_in_range个用户。
             for i in range(self.n_UAVs):
-                if num_in_range[i] >= self.max_GUs_in_range:
+                in_range_count = np.sum(self.nearby_gus_of_uavs[i] != -1)
+                if in_range_count >= self.max_GUs_in_range:
                     local_avail_actions[i] = 1
                 else:
-                    local_avail_actions[i, :num_in_range[i]] = 1
+                    local_avail_actions[i, :in_range_count] = 1
             return local_avail_actions
 
     # def calculate_user_reward(self, uav_idx, gu_idx, offloading_action, bandwidth_action, computation_action, with_penalty):
@@ -2183,29 +2171,34 @@ class MEC(gym.Env):
         """
         # Pre-allocate the output array with -1 (indicating no user in range)
         nearby_users_sorted = np.full((self.n_UAVs, self.n_GUs), -1, dtype=np.int32)
-        # Compute all distances at once using broadcasting
-        # UAVs_pos shape: (n_UAVs, 2 or 3)
-        # GUs_pos shape: (n_GUs, 2 or 3)
-        # Reshape to enable broadcasting
-        uav_positions = self.uav_positions[:, :2].reshape(self.n_UAVs, 1, -1)  # (n_UAVs, 1, dim)
-        user_positions = self.gu_positions[:, :2].reshape(1, self.n_GUs, -1)  # (1, n_GUs, dim)
-        # Calculate squared distances using broadcasting (avoids sqrt until needed)
-        # Result shape: (n_UAVs, n_GUs)
-        squared_distances = np.sum((uav_positions - user_positions) ** 2, axis=2)
-        # Process each UAV's distances
+        uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)
+        can_finish = self.gu_tasks[:, 1] / self.F_n <= self.gu_tasks[:, 2]
         for i in range(self.n_UAVs):
-            # Get distances for this UAV and identify users within range
-            distances = np.sqrt(squared_distances[i])
-            in_range_mask = distances <= self.Cover_R
-            # Get users that are within range
-            in_range_indices = np.where(in_range_mask)[0]
-            # If no users in range, continue to next UAV
-            if len(in_range_indices) == 0:
-                continue
-            # Sort the indices by their distances
-            sorted_indices = in_range_indices[np.argsort(distances[in_range_indices])]
-            # Fill in the sorted user IDs for this UAV (up to the number of users in range)
-            nearby_users_sorted[i, :len(sorted_indices)] = sorted_indices
+            # 把不能完成任务的放在前面。
+            cannot_finish__in_range_mask = (uav_gu_distances[i] <= self.Cover_R) & (~can_finish)
+            cannot_finish__in_range_indices = np.where(cannot_finish__in_range_mask)[0]
+            if len(cannot_finish__in_range_indices) != 0:
+                cannot_finish__sorted_indices = cannot_finish__in_range_indices[np.argsort(uav_gu_distances[i][cannot_finish__in_range_indices])]
+                # Fill in the sorted user IDs for this UAV (up to the number of users in range)
+                nearby_users_sorted[i, :len(cannot_finish__in_range_indices)] = cannot_finish__sorted_indices
+            can_finish__in_range_mask = (uav_gu_distances[i] <= self.Cover_R) & can_finish
+            can_finish__in_range_indices = np.where(can_finish__in_range_mask)[0]
+            if len(can_finish__in_range_indices) != 0:
+                can_finish__sorted_indices = can_finish__in_range_indices[np.argsort(uav_gu_distances[i][can_finish__in_range_indices])]
+                # Fill in the sorted user IDs for this UAV (up to the number of users in range)
+                nearby_users_sorted[i, len(cannot_finish__in_range_indices):len(cannot_finish__in_range_indices)+len(can_finish__in_range_indices)] \
+                    = can_finish__sorted_indices
+            # # 直接就按照距离排序，不管能不能完成。
+            # in_range_mask = uav_gu_distances[i] <= self.Cover_R
+            # # Get users that are within range
+            # in_range_indices = np.where(in_range_mask)[0]
+            # # If no users in range, continue to next UAV
+            # if len(in_range_indices) == 0:
+            #     continue
+            # # Sort the indices by their distances
+            # sorted_indices = in_range_indices[np.argsort(uav_gu_distances[i][in_range_indices])]
+            # # Fill in the sorted user IDs for this UAV (up to the number of users in range)
+            # nearby_users_sorted[i, :len(sorted_indices)] = sorted_indices
         return nearby_users_sorted
 
     def get_info(self):

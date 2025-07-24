@@ -99,7 +99,7 @@ class FixedDirichlet(torch.distributions.Dirichlet):
         #     log_prob_values = super().log_prob(actions)
 
         log_prob_values = super().log_prob(actions)
-        log_prob_values *= 0.1
+        log_prob_values *= 0.2
         # log_prob_values = log_prob_values * self.avail_actions_true_to_times_logp
 
         return log_prob_values.unsqueeze(-1) if log_prob_values.dim() == 1 else log_prob_values
@@ -107,7 +107,7 @@ class FixedDirichlet(torch.distributions.Dirichlet):
     def entropy(self):
         """计算熵"""
         entropy_values = super().entropy()
-        entropy_values *= 0.1
+        entropy_values *= 0.2
         # if self.avail_actions is not None:
         #     # 对于masked情况，熵会降低
         #     # 这里是一个简化的处理
