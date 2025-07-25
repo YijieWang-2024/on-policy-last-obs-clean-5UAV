@@ -256,17 +256,21 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run140/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run141/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run142/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run143/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run143/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run144/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run145/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run146/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run147/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run148/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run148/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run149/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run150/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run150/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run151/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run152/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run153/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run154/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run155/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run156/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run157/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run201/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
 
         # "./scripts/results/mec/mappo/check/run19/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
@@ -527,19 +531,26 @@ if __name__ == "__main__":
         # "137",    # 熵系数为0了，logp乘的系数：0.1。全分资源..带act.py的0.5改变avail-actions (137好)
         # "141_gaussian",
         # 修改了local-obs的顺序,把大任务的用户放在前
-        "143_ave_resource",
-        # 熵系数都为0, ave_bandwidth..
-        # "144",      # avail-actions=0的经验保留,logp乘的系数：0.1
-        # "145_0.1",      #avail-actions=0的经验屏蔽掉,logp乘的系数：0.1
-        # "146",      #avail-actions=0的经验屏蔽掉,logp乘的系数：0.1     all_action
-        # "147_0.05",      #avail-actions=0的经验屏蔽掉,logp乘的系数：0.05
-        "148_0.2",      #avail-actions=0的经验屏蔽掉,logp乘的系数：0.2
-        # "149_0.4",      #avail-actions=0的经验屏蔽掉,logp乘的系数：0.4
-        "150_0.2",
-        # "151_0.4",
-        # "152_0.8",
-        # "153_1",
+        # "143_ave_resource",
+        # 熵系数都为0,        ave_bandwidth..
+        # "144",            # avail-actions=0的经验保留,logp乘的系数：0.1×××××××××××××××
+        # "145_0.1",        #avail-actions=0的经验屏蔽掉,logp乘的系数：0.1
+        # "146_0.1",                #avail-actions=0的经验屏蔽掉,logp乘的系数：0.1     all_action
+        # "147_0.05",       #avail-actions=0的经验屏蔽掉,logp乘的系数：0.05
+        "148_0.2",        #avail-actions=0的经验屏蔽掉,logp乘的系数：0.2
+        # "149_0.4",        #avail-actions=0的经验屏蔽掉,logp乘的系数：0.4
+        # "150_0.2",                #avail-actions=0的经验屏蔽掉,logp乘的系数：0.2     all_action
+        # "151_0.4",                #avail-actions=0的经验屏蔽掉,logp乘的系数：0.4     all_action
+        # "152_0.8",                #avail-actions=0的经验屏蔽掉,logp乘的系数：0.8     all_action
+        # "153_1",                  #avail-actions=0的经验屏蔽掉,logp乘的系数：1     all_action
+        # 总时延大于0.5的就不要卸载了.
+        # "154_ave_bandwidth",
+        # "155_all",
+        # 仅仅看处理时延大于0.5的就不要卸载了.
+        # "156_ave_bandwidth",
+        "157_all",
         # "12*delta_4",
+        # 思考修正动作,太小的直接不卸载呢.
 
         # 看103的轨迹图
 

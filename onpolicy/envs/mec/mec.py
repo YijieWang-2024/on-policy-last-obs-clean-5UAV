@@ -887,6 +887,38 @@ class MEC(gym.Env):
                         total = np.sum(actions[2][m])
                         if total > 0:
                             actions[2][m] = actions[2][m] / total
+                    # 判断卸载分配的资源能不能完成任务..
+                    ones_count = np.sum(actions[1], axis=1, keepdims=True)  # 避免除零，使用np.divide处理
+                    bandwidth_actions = np.divide(actions[1] * self.B, ones_count, where=ones_count != 0)
+                    computation_actions = actions[2] * self.F_m
+                    for n in range(self.n_GUs):
+                        if np.sum(actions[1][:, n]) != 0:
+                            m = np.argmax(actions[1][:, n])
+                            gu_n_task = self.gu_tasks[n]
+                            d_nm_3 = np.linalg.norm(self.uav_positions[m] - self.gu_positions[n])
+                            theta_nm = 180 / np.pi * np.arcsin((self.H_UAV - self.H_GU) / d_nm_3)
+                            P_LoS = 1 / (1 + a * np.exp(-b * (theta_nm - a)))
+                            P_NLoS = 1 - P_LoS
+                            PL_LoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_LoS
+                            PL_NLoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_NLoS
+                            PL_nm = P_LoS * PL_LoS + P_NLoS * PL_NLoS
+                            h_nm = 10 ** (-PL_nm / 10)
+                            epsilon = 0
+                            R_nm = bandwidth_actions[m, n] * np.log2(
+                                1 + p_t * h_nm / (N_0 * (bandwidth_actions[m, n] + epsilon)))
+                            tau_trans = gu_n_task[0] / (R_nm + epsilon)
+                            tau_exe = gu_n_task[1] / (computation_actions[m, n] + epsilon)
+                            total_delay = tau_trans + tau_exe
+                            if total_delay > self.gu_tasks[n, 2]:
+
+                            # if gu_n_task[1] / computation_actions[m, n] > self.gu_tasks[n, 2]:
+
+                                actions[1][m, n] = 0
+                                actions[2][m, n] = 0
+                    for m in range(self.n_UAVs):
+                        total = np.sum(actions[2][m])
+                        if total > 0:
+                            actions[2][m] = actions[2][m] / total
                 else:
                     mask_2 = actions[2] == 0
                     mask_3 = actions[3] == 0
@@ -926,6 +958,43 @@ class MEC(gym.Env):
                             actions[2][nearest_uav_idx, n] = bandwidth_allocation[nearest_uav_idx]
                             actions[3][:, n] = 0
                             actions[3][nearest_uav_idx, n] = computation_allocation[nearest_uav_idx]
+                    for m in range(self.n_UAVs):
+                        total = np.sum(actions[2][m])
+                        if total > 0:
+                            actions[2][m] = actions[2][m] / total
+                    for m in range(self.n_UAVs):
+                        total = np.sum(actions[3][m])
+                        if total > 0:
+                            actions[3][m] = actions[3][m] / total
+                    # 判断卸载分配的资源能不能完成任务..
+                    bandwidth_actions = actions[2] * self.B
+                    computation_actions = actions[3] * self.F_m
+                    for n in range(self.n_GUs):
+                        if np.sum(actions[1][:, n]) != 0:
+                            m = np.argmax(actions[1][:, n])
+                            gu_n_task = self.gu_tasks[n]
+
+                            d_nm_3 = np.linalg.norm(self.uav_positions[m] - self.gu_positions[n])
+                            theta_nm = 180 / np.pi * np.arcsin((self.H_UAV - self.H_GU) / d_nm_3)
+                            P_LoS = 1 / (1 + a * np.exp(-b * (theta_nm - a)))
+                            P_NLoS = 1 - P_LoS
+                            PL_LoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_LoS
+                            PL_NLoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_NLoS
+                            PL_nm = P_LoS * PL_LoS + P_NLoS * PL_NLoS
+                            h_nm = 10 ** (-PL_nm / 10)
+                            epsilon = 0
+                            R_nm = bandwidth_actions[m, n] * np.log2(
+                                1 + p_t * h_nm / (N_0 * (bandwidth_actions[m, n] + epsilon)))
+                            tau_trans = gu_n_task[0] / (R_nm + epsilon)
+                            tau_exe = gu_n_task[1] / (computation_actions[m, n] + epsilon)
+                            total_delay = tau_trans + tau_exe
+                            if total_delay > self.gu_tasks[n, 2]:
+
+                            # if gu_n_task[1] / computation_actions[m, n] > self.gu_tasks[n, 2]:
+
+                                actions[1][m, n] = 0
+                                actions[2][m, n] = 0
+                                actions[3][m, n] = 0
                     for m in range(self.n_UAVs):
                         total = np.sum(actions[2][m])
                         if total > 0:
