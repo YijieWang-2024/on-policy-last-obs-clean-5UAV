@@ -263,8 +263,8 @@ class MEC(gym.Env):
             # 距离由近到远的前self.max_GUs_in_range个地面用户的位置、信道增益和计算任务的信息]
             # 再加一位呢，用户自己计算不完，添加标志1.。否则为0.。
             self.GUs_in_action_dim = self.max_GUs_in_range
-            self.obs_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 + 9*self.max_GUs_in_range
-            self.state_dim = 3+2 + 1 + 2*self.max_UAVs_in_neighbor +1 + 9*self.max_GUs_in_range
+            self.obs_dim = 3+2 +1 + 9*self.max_GUs_in_range
+            self.state_dim = 3+2 +1 + 9*self.max_GUs_in_range
 
             # # 不要邻居无人机的位置。
             # self.obs_dim = 3 + 2 + 1 + 7 * self.max_GUs_in_range
@@ -272,12 +272,12 @@ class MEC(gym.Env):
         elif self.state_is_k_hops:  # last-obs的k跳。自己的s_{i,t}是包括覆盖范围内的无人机的。
             self.GUs_in_action_dim = self.max_GUs_in_range
             # 包括覆盖范围内d_cov的无人机信息。
-            self.obs_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+9*self.max_GUs_in_range
-            self.state_dim = 3 + 2 + 1+2*self.max_UAVs_in_neighbor + 1+9*self.max_GUs_in_range
+            self.obs_dim = 3 + 2 + 1+9*self.max_GUs_in_range
+            self.state_dim = 3 + 2 + 1+9*self.max_GUs_in_range
         else:
             # self.GUs_in_action_dim = self.n_GUs
             self.GUs_in_action_dim = self.max_GUs_in_range
-            self.obs_dim = 3+2 + 1+2*self.max_UAVs_in_neighbor + 1+9*self.max_GUs_in_range   # 局部obs的dim
+            self.obs_dim = 3+2 + 1+9*self.max_GUs_in_range   # 局部obs的dim
             # 不要邻居无人机的位置。
             # self.obs_dim = 3+2 + 1 + 7*self.max_GUs_in_range   # 局部obs的dim
 
@@ -2045,23 +2045,23 @@ class MEC(gym.Env):
             neighbor_mask = (uav_uav_distances[i] <= self.Cover_R) & (np.arange(self.n_UAVs) != i)
             neighbor_indices = np.where(neighbor_mask)[0]
             neighbor_count = len(neighbor_indices)
-            # 4. Number of neighboring UAVs
-            local_obs[i, idx] = neighbor_count
-            idx += 1
-            # 5. Get closest neighbors
-            if neighbor_count > 0:
-                # Sort neighbors by distance
-                neighbor_distances = uav_uav_distances[i, neighbor_indices]
-                sorted_idx = np.argsort(neighbor_distances)
-                closest_neighbors = neighbor_indices[sorted_idx[:self.max_UAVs_in_neighbor]]
-                # Add positions of closest neighbors
-                for j, neighbor_idx in enumerate(closest_neighbors):
-                    if j < self.max_UAVs_in_neighbor:
-                        local_obs[i, idx:idx + 2] = self.uav_positions[neighbor_idx, :2]
-                        idx += 2
-            # Pad with zeros if there are fewer than max_UAVs_in_neighbor
-            padding_neighbors = self.max_UAVs_in_neighbor - min(neighbor_count, self.max_UAVs_in_neighbor)
-            idx += padding_neighbors * 2
+            # # 4. Number of neighboring UAVs
+            # local_obs[i, idx] = neighbor_count
+            # idx += 1
+            # # 5. Get closest neighbors
+            # if neighbor_count > 0:
+            #     # Sort neighbors by distance
+            #     neighbor_distances = uav_uav_distances[i, neighbor_indices]
+            #     sorted_idx = np.argsort(neighbor_distances)
+            #     closest_neighbors = neighbor_indices[sorted_idx[:self.max_UAVs_in_neighbor]]
+            #     # Add positions of closest neighbors
+            #     for j, neighbor_idx in enumerate(closest_neighbors):
+            #         if j < self.max_UAVs_in_neighbor:
+            #             local_obs[i, idx:idx + 2] = self.uav_positions[neighbor_idx, :2]
+            #             idx += 2
+            # # Pad with zeros if there are fewer than max_UAVs_in_neighbor
+            # padding_neighbors = self.max_UAVs_in_neighbor - min(neighbor_count, self.max_UAVs_in_neighbor)
+            # idx += padding_neighbors * 2
 
             in_range_count = np.sum(self.nearby_gus_of_uavs[i] != -1)
             in_range_indices = self.nearby_gus_of_uavs[i, :in_range_count]
