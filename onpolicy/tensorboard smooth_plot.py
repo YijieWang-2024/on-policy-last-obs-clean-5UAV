@@ -271,6 +271,39 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run155/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run156/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run157/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run158/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run159/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run160/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run161/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run162/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run163/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run164/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run165/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run166/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run167/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run168/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run169/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run170/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run171/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run172/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run173/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run174/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run175/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run176/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run177/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run178/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run179/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run180/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run181/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run182/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run183/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run184/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run185/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run186/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run187/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run188/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run189/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run190/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run201/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
 
         # "./scripts/results/mec/mappo/check/run19/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
@@ -294,6 +327,12 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run120/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run121/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run122/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run143/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run155/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run161/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run163/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run164/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run166/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
 
         # "./scripts/results/mec/mappo/check/run69/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
         # "./scripts/results/mec/mappo/check/run73/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
@@ -303,6 +342,12 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run95/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
         # "./scripts/results/mec/mappo/check/run96/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
         # "./scripts/results/mec/mappo/check/run97/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
+        # "./scripts/results/mec/mappo/check/run143/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
+        # "./scripts/results/mec/mappo/check/run155/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
+        # "./scripts/results/mec/mappo/check/run161/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
+        # "./scripts/results/mec/mappo/check/run163/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
+        # "./scripts/results/mec/mappo/check/run164/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
+        # "./scripts/results/mec/mappo/check/run166/logs/agent0/energy_all_GUs_UAVs/agent0/energy_all_GUs_UAVs",
 
         # "./scripts/results/mec/mappo/check/run19/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
         # "./scripts/results/mec/mappo/check/run20/logs/agent0/n_GUs_by_coverd/agent0/n_GUs_by_coverd",
@@ -409,6 +454,16 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run63/logs/agent0/cumulative_reward/agent0/cumulative_reward",
         # "./scripts/results/mec/mappo/check/run64/logs/agent0/cumulative_reward/agent0/cumulative_reward",
         # "./scripts/results/mec/mappo/check/run65/logs/agent0/cumulative_reward/agent0/cumulative_reward",
+        # "./scripts/results/mec/mappo/check/run161/logs/agent0/cumulative_reward/agent0/cumulative_reward",
+        # "./scripts/results/mec/mappo/check/run162/logs/agent0/cumulative_reward/agent0/cumulative_reward",
+        # "./scripts/results/mec/mappo/check/run163/logs/agent0/cumulative_reward/agent0/cumulative_reward",
+        # "./scripts/results/mec/mappo/check/run164/logs/agent0/cumulative_reward/agent0/cumulative_reward",
+        # "./scripts/results/mec/mappo/check/run165/logs/agent0/cumulative_reward/agent0/cumulative_reward",
+        # "./scripts/results/mec/mappo/check/run166/logs/agent0/cumulative_reward/agent0/cumulative_reward",
+        # "./scripts/results/mec/mappo/check/run167/logs/agent0/cumulative_reward/agent0/cumulative_reward",
+        # "./scripts/results/mec/mappo/check/run168/logs/agent0/cumulative_reward/agent0/cumulative_reward",
+        # "./scripts/results/mec/mappo/check/run169/logs/agent0/cumulative_reward/agent0/cumulative_reward",
+        # "./scripts/results/mec/mappo/check/run170/logs/agent0/cumulative_reward/agent0/cumulative_reward",
     ]
     experiment_names = [
         # "19proposed",
@@ -537,7 +592,7 @@ if __name__ == "__main__":
         # "145_0.1",        #avail-actions=0的经验屏蔽掉,logp乘的系数：0.1
         # "146_0.1",                #avail-actions=0的经验屏蔽掉,logp乘的系数：0.1     all_action
         # "147_0.05",       #avail-actions=0的经验屏蔽掉,logp乘的系数：0.05
-        "148_0.2",        #avail-actions=0的经验屏蔽掉,logp乘的系数：0.2
+        # "148_0.2",        #avail-actions=0的经验屏蔽掉,logp乘的系数：0.2
         # "149_0.4",        #avail-actions=0的经验屏蔽掉,logp乘的系数：0.4
         # "150_0.2",                #avail-actions=0的经验屏蔽掉,logp乘的系数：0.2     all_action
         # "151_0.4",                #avail-actions=0的经验屏蔽掉,logp乘的系数：0.4     all_action
@@ -548,9 +603,51 @@ if __name__ == "__main__":
         # "155_all",
         # 仅仅看处理时延大于0.5的就不要卸载了.
         # "156_ave_bandwidth",
-        "157_all",
-        # "12*delta_4",
-        # 思考修正动作,太小的直接不卸载呢.
+        # "157_all",
+        # individual-state不要无人机位置了
+        # "158",
+        # 估计全局奖励
+        # "159",
+        # "160",  # 估计时不要邻居惩罚。
+                    # 权重0.01的场景。
+        # "161",      # 平均资源
+        # "162",      # 利用全部资源的 平均带宽。
+        # "163",      # 利用全部资源的 所有动作。
+                # 权重0.1的场景。
+        # "164",  # 平均资源
+        # "165",  # 利用全部资源的 平均带宽。
+        # "166",  # 利用全部资源的 所有动作。
+        # "167",      # 部分资源的 平均带宽。
+        # "168",      # 部分资源的 所有动作。
+        # "169",  # 部分资源的 平均带宽。
+        # "170",  # 部分资源的 所有动作。
+        # 带平均A的不同k
+        # "175",
+        # "171",
+        # "172",
+        # "173",
+        # "174",
+        # 不带平均A的不同k
+        # "175",
+        # "176",    # 1跳
+        # "177",    # 2跳
+        # "178",    # 3跳
+        # 不带平均A的不同k。 inidvidual-state中不要无人机
+        # "179",
+        # "180",    # 1跳
+        # "181",    # 2跳
+        # "182",    # 3跳
+        # # 初始在小范围的位置中随机找一个
+        # "183",
+        # "184",      # 1跳
+        # "185",      # 2跳
+        # "186",      # 3跳
+        # 初始4角随机
+        "187",
+        "188",  # 1跳
+        "189",  # 2跳
+        "190",  # 3跳
+
 
         # 看103的轨迹图
 
