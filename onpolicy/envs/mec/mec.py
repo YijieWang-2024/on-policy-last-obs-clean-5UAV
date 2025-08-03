@@ -196,6 +196,7 @@ class MEC(gym.Env):
         self.perform_with_local_state = args.perform_with_local_state
         self.state_is_k_hops = args.state_is_k_hops
         self.all_uav_k_hops = args.all_uav_k_hops   # 如果这个为True，就是k跳邻居的状态不再是由近到远排列。直接按所有id排列，邻居的信息补进去。
+        self.use_atten_actor = args.use_atten_actor
 
         assert not (self.perform_with_local_state and self.state_is_k_hops), "不能同时使用和obs一样的local_state，和k_hops state"
         # self.concat_neighbor_obs = args.concat_neighbor_obs
@@ -310,6 +311,9 @@ class MEC(gym.Env):
             # if self.state_is_k_hops:就是下边的乘一下最大数目，然后用atten。
             # else：其实就是mappo，state_dim也提前设定好了
             self.state_dim *= self.max_UAVs_obs_concat
+            if self.use_atten_actor:
+                # 0803，obs和state一样。CTCE。
+                self.obs_dim *= self.max_UAVs_obs_concat
 
         if self.fix_uav_pos:
             pass
@@ -447,19 +451,19 @@ class MEC(gym.Env):
             self.uav_positions = np.array([[100, 100, self.H_UAV], [300, 100, self.H_UAV], [100, 300, self.H_UAV],
                                            [300, 300, self.H_UAV]], dtype=np.float)
         if self.n_UAVs == 16 and self.x_max == 900 and self.n_GUs == 200:
-            # self.uav_positions = np.array(
-            #         [[112.5, 112.5, self.H_UAV], [337.5, 112.5, self.H_UAV], [562.5, 112.5, self.H_UAV], [787.5, 112.5, self.H_UAV],
-            #          [112.5, 337.5, self.H_UAV], [337.5, 337.5, self.H_UAV], [562.5, 337.5, self.H_UAV], [787.5, 337.5, self.H_UAV],
-            #          [112.5, 562.5, self.H_UAV], [337.5, 562.5, self.H_UAV], [562.5, 562.5, self.H_UAV], [787.5, 562.5, self.H_UAV],
-            #          [112.5, 787.5, self.H_UAV],[337.5, 787.5, self.H_UAV], [562.5, 787.5, self.H_UAV], [787.5, 787.5, self.H_UAV]],
-            #         dtype=np.float)
-            # 居中
+            self.uav_positions = np.array(
+                    [[112.5, 112.5, self.H_UAV], [337.5, 112.5, self.H_UAV], [562.5, 112.5, self.H_UAV], [787.5, 112.5, self.H_UAV],
+                     [112.5, 337.5, self.H_UAV], [337.5, 337.5, self.H_UAV], [562.5, 337.5, self.H_UAV], [787.5, 337.5, self.H_UAV],
+                     [112.5, 562.5, self.H_UAV], [337.5, 562.5, self.H_UAV], [562.5, 562.5, self.H_UAV], [787.5, 562.5, self.H_UAV],
+                     [112.5, 787.5, self.H_UAV],[337.5, 787.5, self.H_UAV], [562.5, 787.5, self.H_UAV], [787.5, 787.5, self.H_UAV]],
+                    dtype=np.float)
+            # # 居中
             # self.uav_positions[:,:2] = self.uav_positions[:,:2]/2 + 225.5
-            # 四角
-            self.uav_positions = np.array([[ 56.25,  56.25, self.H_UAV], [168.75,  56.25, self.H_UAV], [ 56.25, 168.75, self.H_UAV], [168.75, 168.75, self.H_UAV],
-                                           [731.25,  56.25, self.H_UAV], [843.75,  56.25, self.H_UAV], [731.25, 168.75, self.H_UAV], [843.75, 168.75, self.H_UAV],
-                                           [ 56.25, 731.25, self.H_UAV], [168.75, 731.25, self.H_UAV], [ 56.25, 843.75, self.H_UAV], [168.75, 843.75, self.H_UAV],
-                                           [731.25, 731.25, self.H_UAV], [843.75, 731.25, self.H_UAV], [731.25, 843.75, self.H_UAV], [843.75, 843.75, self.H_UAV]], dtype=np.float)
+            # # 四角
+            # self.uav_positions = np.array([[ 56.25,  56.25, self.H_UAV], [168.75,  56.25, self.H_UAV], [ 56.25, 168.75, self.H_UAV], [168.75, 168.75, self.H_UAV],
+            #                                [731.25,  56.25, self.H_UAV], [843.75,  56.25, self.H_UAV], [731.25, 168.75, self.H_UAV], [843.75, 168.75, self.H_UAV],
+            #                                [ 56.25, 731.25, self.H_UAV], [168.75, 731.25, self.H_UAV], [ 56.25, 843.75, self.H_UAV], [168.75, 843.75, self.H_UAV],
+            #                                [731.25, 731.25, self.H_UAV], [843.75, 731.25, self.H_UAV], [731.25, 843.75, self.H_UAV], [843.75, 843.75, self.H_UAV]], dtype=np.float)
             # 添加上随机性。
             np.random.shuffle(self.uav_positions)
 
@@ -533,6 +537,9 @@ class MEC(gym.Env):
             single_state_dim = self.state_dim // self.max_UAVs_obs_concat
             final_state = np.zeros((self.n_UAVs, self.state_dim))
             if self.all_uav_k_hops:
+                pri = np.ones((self.n_UAVs, self.n_UAVs), dtype=np.int8)
+                pri[np.arange(self.n_UAVs), np.arange(self.n_UAVs)] = 0
+                perm_indices = np.argsort(pri, axis=1)  # shape (n, n)
                 for i in range(self.n_UAVs):
                     neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance)    # 包括自己。
                     neighbors = np.where(neighbor_mask)[0]
@@ -541,6 +548,12 @@ class MEC(gym.Env):
                         end_pos = (neighbor_idx + 1) * single_state_dim
                         final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
                         self.attention_active_mask[i, neighbor_idx] = 1
+                # 2) Reorder neighbor_mask in one shot
+                self.attention_active_mask = np.take_along_axis(self.attention_active_mask, perm_indices, axis=1)
+                # 3) For observations, reshape to (n, n, F), reorder axis=1, then flatten back
+                final_state3d = final_state.reshape(self.n_UAVs, self.n_UAVs, single_state_dim)
+                reordered3d = np.take_along_axis(final_state3d, perm_indices[..., None], axis=1)
+                final_state = reordered3d.reshape(self.n_UAVs, self.n_UAVs * single_state_dim)
             else:
                 final_state[:, :single_state_dim] = local_obs
                 for i in range(self.n_UAVs):
@@ -555,6 +568,9 @@ class MEC(gym.Env):
                             final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
                     self.attention_active_mask[i, :min(len(neighbors)+1, self.max_UAVs_obs_concat)] = 1
             self.state = final_state
+            if self.use_atten_actor:
+                # 0803，obs和state一样。CTCE。
+                self.obs = final_state
         else:
             # self.state = self.get_state()
             # self.state = np.tile(local_obs.reshape((1, -1)), (self.n_UAVs, 1))
@@ -1318,6 +1334,9 @@ class MEC(gym.Env):
             single_state_dim = self.state_dim // self.max_UAVs_obs_concat
             final_state = np.zeros((self.n_UAVs, self.state_dim))
             if self.all_uav_k_hops:
+                pri = np.ones((self.n_UAVs, self.n_UAVs), dtype=np.int8)
+                pri[np.arange(self.n_UAVs), np.arange(self.n_UAVs)] = 0
+                perm_indices = np.argsort(pri, axis=1)  # shape (n, n)
                 for i in range(self.n_UAVs):
                     neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance)    # 包括自己。
                     neighbors = np.where(neighbor_mask)[0]
@@ -1326,6 +1345,12 @@ class MEC(gym.Env):
                         end_pos = (neighbor_idx + 1) * single_state_dim
                         final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
                         self.attention_active_mask[i, neighbor_idx] = 1
+                # 2) Reorder neighbor_mask in one shot
+                self.attention_active_mask = np.take_along_axis(self.attention_active_mask, perm_indices, axis=1)
+                # 3) For observations, reshape to (n, n, F), reorder axis=1, then flatten back
+                final_state3d = final_state.reshape(self.n_UAVs, self.n_UAVs, single_state_dim)
+                reordered3d = np.take_along_axis(final_state3d, perm_indices[..., None], axis=1)
+                final_state = reordered3d.reshape(self.n_UAVs, self.n_UAVs * single_state_dim)
             else:
                 final_state[:, :single_state_dim] = local_obs
                 for i in range(self.n_UAVs):
@@ -1340,6 +1365,9 @@ class MEC(gym.Env):
                             final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
                     self.attention_active_mask[i, :min(len(neighbors)+1, self.max_UAVs_obs_concat)] = 1
             self.state = final_state
+            if self.use_atten_actor:
+                # 0803，obs和state一样。CTCE。
+                self.obs = final_state
         else:
             # self.state = self.get_state()
             # self.state = np.tile(local_obs.reshape((1, -1)), (self.n_UAVs, 1))
@@ -1572,33 +1600,6 @@ class MEC(gym.Env):
                 per_GU_energy_true[n] = np.clip(total_energy, 0, 10)
                 # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
                 per_GU_task_reward[n] = per_GU_delay_reward[n] + per_GU_energy_reward[n]
-            # # 被服务的用户的奖励平分给覆盖的无人机！
-            # if len(uav_indices) > 0 and not execute_local:
-            #     R_task_delay[uav_indices] += self.gamma_r * (self.gu_tasks[n, 2] - total_delay)/len(uav_indices) if self.gu_tasks[n, 2] > total_delay else -1 * self.delta_r/len(uav_indices)
-            #     R_task_energy[uav_indices] += -1 * self.lambda_r * np.clip(total_energy, 0, 10)/len(uav_indices)
-
-            # if len(uav_indices) > 0:
-            #     if self.gu_tasks[n, 2] > total_delay:
-            #         per_GU_delay_reward[n] = self.gamma_r * (self.gu_tasks[n, 2] - total_delay)
-            #     else:
-            #         per_GU_delay_reward[n] = -1 * self.delta_r
-            #     per_GU_energy_reward[n] = -1 * self.lambda_r * np.clip(total_energy, 0, 10)
-            #     # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
-            #     # 任务奖励为，地面用户任务奖励的平分。
-            #     per_GU_task_reward[n] = per_GU_delay_reward[n] + per_GU_energy_reward[n]
-                # R_task[uav_indices] += (per_GU_delay_reward[n] + per_GU_energy_reward[n]) / len(uav_indices)
-                # # 范围内都有奖励。
-                # R_task[uav_indices] += (per_GU_delay_reward[n] + per_GU_energy_reward[n])
-                # R_task_delay[uav_indices] += per_GU_delay_reward[n]
-                # R_task_energy[uav_indices] += per_GU_energy_reward[n]
-            # else:
-            #     if self.gu_tasks[n, 2] > total_delay:
-            #         per_GU_delay_reward_others[n] = self.gamma_r * (self.gu_tasks[n, 2] - total_delay)
-            #     else:
-            #         per_GU_delay_reward_others[n] = -1 * self.delta_r
-            #     per_GU_energy_reward_others[n] = -1 * self.lambda_r * np.clip(total_energy, 0, 10)
-            #     # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
-            #     per_GU_task_reward_others[n] = per_GU_delay_reward_others[n] + per_GU_energy_reward_others[n]
         if self.fix_uav_pos:
             velocity = np.zeros(self.n_UAVs)
         else:
@@ -2047,7 +2048,11 @@ class MEC(gym.Env):
         #     obs_dim = self.obs_dim // self.max_UAVs_obs_concat
         # else:
         #     obs_dim = self.obs_dim
-        obs_dim = self.obs_dim
+
+        if self.use_atten_actor:
+            obs_dim = self.obs_dim // self.max_UAVs_obs_concat
+        else:
+            obs_dim = self.obs_dim
 
         local_obs = np.zeros((self.n_UAVs, obs_dim))
 

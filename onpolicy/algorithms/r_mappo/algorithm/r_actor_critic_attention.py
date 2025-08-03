@@ -80,7 +80,9 @@ class R_Actor_Attention(nn.Module):
         super(R_Actor_Attention, self).__init__()
         self.hidden_size = args.hidden_size
         self.max_UAVs_obs_concat = args.max_UAVs_obs_concat
-
+        self.state_is_k_hops = args.state_is_k_hops
+        self.n_UAVs = args.n_UAVs
+        assert self.max_UAVs_obs_concat == self.n_UAVs
         self._gain = args.gain
         self._use_orthogonal = args.use_orthogonal
         self._use_policy_active_masks = args.use_policy_active_masks
@@ -104,7 +106,7 @@ class R_Actor_Attention(nn.Module):
         self.attention = AttentionLayer(self.hidden_size, self.hidden_size*2)
 
         # Final MLP after attention
-        self.mlp_after_attention = MLPBase(args, [self.hidden_size], layer_N=0)
+        self.mlp_after_attention = MLPBase(args, [self.hidden_size], layer_N=0+1)
 
         # Action module
         self.act = ACTLayer(action_space, self.hidden_size, self._use_orthogonal, self._gain, args=args)
@@ -121,6 +123,9 @@ class R_Actor_Attention(nn.Module):
 
         if available_actions is not None:
             available_actions = check(available_actions).to(**self.tpdv)
+
+        if not self.state_is_k_hops:  # local-state（s_{i,t}）或者全局拼接self+所有的state。都不需要active_mask。
+            attention_active_mask = None
         if attention_active_mask is not None:
             attention_active_mask = check(attention_active_mask).to(**self.tpdv)
 
@@ -129,7 +134,7 @@ class R_Actor_Attention(nn.Module):
         # Reshape observations to split into individual agent observations
         if self.max_UAVs_obs_concat > 1:
             # [batch_size, obs_dim] -> [batch_size, max_UAVs_obs_concat, individual_obs_dim]
-            obs_reshaped = obs.view(batch_size, self.max_UAVs_obs_concat, self.individual_obs_dim)
+            obs_reshaped = obs.view(batch_size, -1, self.individual_obs_dim)
             agent_features = self.agent_encoder(obs_reshaped)
             # Apply attention mechanism with mask
             # [batch_size, max_UAVs_obs_concat, hidden_size]
@@ -171,6 +176,9 @@ class R_Actor_Attention(nn.Module):
             available_actions = check(available_actions).to(**self.tpdv)
         if active_masks is not None:
             active_masks = check(active_masks).to(**self.tpdv)
+
+        if not self.state_is_k_hops:    # local-state（s_{i,t}）或者全局拼接self+所有的state。都不需要active_mask。
+            attention_active_mask = None
         if attention_active_mask is not None:
             attention_active_mask = check(attention_active_mask).to(**self.tpdv)
 
@@ -179,7 +187,7 @@ class R_Actor_Attention(nn.Module):
         # Reshape observations to split into individual agent observations
         if self.max_UAVs_obs_concat > 1:
             # [batch_size, obs_dim] -> [batch_size, max_UAVs_obs_concat, individual_obs_dim]
-            obs_reshaped = obs.view(batch_size, self.max_UAVs_obs_concat, self.individual_obs_dim)
+            obs_reshaped = obs.view(batch_size, -1, self.individual_obs_dim)
 
             agent_features = self.agent_encoder(obs_reshaped)
 
