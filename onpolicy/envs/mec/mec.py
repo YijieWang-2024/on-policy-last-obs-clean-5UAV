@@ -457,8 +457,8 @@ class MEC(gym.Env):
                      [112.5, 562.5, self.H_UAV], [337.5, 562.5, self.H_UAV], [562.5, 562.5, self.H_UAV], [787.5, 562.5, self.H_UAV],
                      [112.5, 787.5, self.H_UAV],[337.5, 787.5, self.H_UAV], [562.5, 787.5, self.H_UAV], [787.5, 787.5, self.H_UAV]],
                     dtype=np.float)
-            # # 居中
-            # self.uav_positions[:,:2] = self.uav_positions[:,:2]/2 + 225.5
+            # 居中
+            self.uav_positions[:,:2] = self.uav_positions[:,:2]/2 + 225.5
             # # 四角
             # self.uav_positions = np.array([[ 56.25,  56.25, self.H_UAV], [168.75,  56.25, self.H_UAV], [ 56.25, 168.75, self.H_UAV], [168.75, 168.75, self.H_UAV],
             #                                [731.25,  56.25, self.H_UAV], [843.75,  56.25, self.H_UAV], [731.25, 168.75, self.H_UAV], [843.75, 168.75, self.H_UAV],

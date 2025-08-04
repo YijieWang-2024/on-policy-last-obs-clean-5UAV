@@ -82,7 +82,9 @@ class R_Actor_Attention(nn.Module):
         self.max_UAVs_obs_concat = args.max_UAVs_obs_concat
         self.state_is_k_hops = args.state_is_k_hops
         self.n_UAVs = args.n_UAVs
-        assert self.max_UAVs_obs_concat == self.n_UAVs
+        self.all_uav_k_hops = args.all_uav_k_hops
+        if self.all_uav_k_hops:
+            assert self.max_UAVs_obs_concat == self.n_UAVs
         self._gain = args.gain
         self._use_orthogonal = args.use_orthogonal
         self._use_policy_active_masks = args.use_policy_active_masks
@@ -229,7 +231,9 @@ class R_Critic_Attention(nn.Module):
         self.perform_with_local_state = args.perform_with_local_state
         self.state_is_k_hops = args.state_is_k_hops
         self.n_UAVs = args.n_UAVs
-        assert self.max_UAVs_obs_concat == self.n_UAVs
+        self.all_uav_k_hops = args.all_uav_k_hops
+        if self.all_uav_k_hops:
+            assert self.max_UAVs_obs_concat == self.n_UAVs
         self._use_orthogonal = args.use_orthogonal
         self.tpdv = dict(dtype=torch.float32, device=device)
         # Get centralized observation space dimensions

@@ -13,7 +13,11 @@ class MECRunner(Runner):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
     def __init__(self, config):
         super(MECRunner, self).__init__(config)
-        self.normer = Normer(args=self.all_args, obs_space=get_shape_from_obs_space(self.envs.observation_space[0]), states_space=get_shape_from_obs_space(self.envs.share_observation_space[0]))
+        self.normer = []
+        self.n_UAVs = config['all_args'].n_UAVs
+        for i in range(self.n_UAVs):
+            self.normer.append(Normer(args=self.all_args, obs_space=get_shape_from_obs_space(self.envs.observation_space[i]), states_space=get_shape_from_obs_space(self.envs.share_observation_space[i])))
+        # self.normer = Normer(args=self.all_args, obs_space=get_shape_from_obs_space(self.envs.observation_space[0]), states_space=get_shape_from_obs_space(self.envs.share_observation_space[0]))
         if self.model_dir is not None:
             self.restore()
         self.average_local_advantage = config['all_args'].average_local_advantage
@@ -41,9 +45,10 @@ class MECRunner(Runner):
 
                 # Obser reward and next obs
                 obs, share_obs, rewards, dones, infos, available_actions, Metropolis_weights, attention_active_mask = self.envs.step(actions)
-                obs = self.normer._obfilt(obs)
-                share_obs = self.normer._statefilt(share_obs)
-                rewards = self.normer._rewsfilt(rewards, dones)
+                for i in range(self.n_UAVs):
+                    obs[:, i] = self.normer[i]._obfilt(obs[:, i])
+                    share_obs[:, i] = self.normer[i]._statefilt(share_obs[:, i])
+                    rewards[:, i] = self.normer[i]._rewsfilt(rewards[:, i], dones[:, i])
 
                 data = obs, share_obs, rewards, dones, infos, available_actions, \
                        values, actions, action_log_probs, \
@@ -114,8 +119,10 @@ class MECRunner(Runner):
     def warmup(self):
         # reset env
         obs, share_obs, available_actions, Metropolis_weights, attention_active_mask = self.envs.reset()
-        obs = self.normer._obfilt(obs)
-        share_obs = self.normer._statefilt(share_obs)
+        for i in range(self.n_UAVs):
+            obs[:, i] = self.normer[i]._obfilt(obs[:, i])
+            share_obs[:, i] = self.normer[i]._statefilt(share_obs[:, i])
+
 
         # replay buffer
         if not self.use_centralized_V:
@@ -409,9 +416,13 @@ class MECRunner(Runner):
             torch.save(policy_actor.state_dict(), str(self.save_dir) + "/actor_agent" + str(agent_id) + ".pt")
             policy_critic = self.trainer[agent_id].policy.critic
             torch.save(policy_critic.state_dict(), str(self.save_dir) + "/critic_agent" + str(agent_id) + ".pt")
-        # 保存 normer 对象
-        normer_path = str(self.save_dir)+ "/normer.pkl"
-        self.normer.save(normer_path)
+
+            # 保存 normer 对象
+            normer_path = str(self.save_dir) + "/normer"+ str(agent_id) +".pkl"
+            self.normer[agent_id].save(normer_path)
+        # # 保存 normer 对象
+        # normer_path = str(self.save_dir)+ "/normer.pkl"
+        # self.normer.save(normer_path)
 
     def restore(self):
         for agent_id in range(self.num_agents):
@@ -419,6 +430,9 @@ class MECRunner(Runner):
             self.policy[agent_id].actor.load_state_dict(policy_actor_state_dict)
             policy_critic_state_dict = torch.load(str(self.model_dir) + '/critic_agent' + str(agent_id) + '.pt', map_location='cpu')
             self.policy[agent_id].critic.load_state_dict(policy_critic_state_dict)
-        # 恢复 normer 对象
-        normer_path = str(self.model_dir) + "/normer.pkl"
-        self.normer.load(normer_path)
+            # 恢复 normer 对象
+            normer_path = str(self.model_dir) + "/normer"+ str(agent_id) +".pkl"
+            self.normer[agent_id].load(normer_path)
+        # # 恢复 normer 对象
+        # normer_path = str(self.model_dir) + "/normer.pkl"
+        # self.normer.load(normer_path)
