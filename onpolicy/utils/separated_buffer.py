@@ -23,6 +23,7 @@ class SeparatedReplayBuffer(object):
         self._use_proper_time_limits = args.use_proper_time_limits
         self.n_agents = args.n_UAVs
         self.max_UAVs_obs_concat = args.max_UAVs_obs_concat
+        self.whether_average_value_preds = args.whether_average_value_preds
 
         obs_shape = get_shape_from_obs_space(obs_space)
         share_obs_shape = get_shape_from_obs_space(share_obs_space)
@@ -43,6 +44,8 @@ class SeparatedReplayBuffer(object):
         self.returns = np.zeros((self.episode_length + 1, self.n_rollout_threads, 1), dtype=np.float32)
         self.advantages = np.zeros(
             (self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
+        if self.whether_average_value_preds:
+            self.average_value_preds = np.zeros((self.episode_length+1, self.n_rollout_threads, 1), dtype=np.float32)
         self.Metropolis_weights = np.zeros((self.episode_length+1, self.n_rollout_threads, self.n_agents), dtype=np.float32)
         self.attention_active_mask = np.zeros((self.episode_length+1, self.n_rollout_threads, self.max_UAVs_obs_concat), dtype=np.float32)
 

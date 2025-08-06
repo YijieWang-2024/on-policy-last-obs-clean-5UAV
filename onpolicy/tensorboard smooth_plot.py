@@ -304,19 +304,19 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run188/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run189/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run190/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run191/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run192/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run193/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run191/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run192/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run193/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run194/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run195/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run196/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run197/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run198/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run201/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        # "./scripts/results/mec/mappo/check/run205/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        # "./scripts/results/mec/mappo/check/run206/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        # "./scripts/results/mec/mappo/check/run207/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        # "./scripts/results/mec/mappo/check/run208/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run205/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run206/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run207/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run208/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
 
         # "./scripts/results/mec/mappo/check/run19/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run20/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
@@ -660,20 +660,20 @@ if __name__ == "__main__":
         # "189",  # 2跳
         # "190",  # 3跳
         # 好位置的随机，修改state_k_obs的顺序，自己的放到前边
-        "191",      # 1跳
-        "192",      # 2跳
-        "193",      # 3跳
+        # "191",      # 1跳
+        # "192",      # 2跳
+        # "193",      # 3跳
         # "198",      # 4跳
         # # 和上个一样。 atten-actor
         # "194",      # 1跳
         # "195",      # 2跳
         # "196",      # 3跳
         # "197",      # 4跳
-        # # 和上个一样。DC-PPO，不平均。
-        # "205",      # 1跳
-        # "206",      # 2跳
-        # "207",      # 3跳
-        # "208",      # 4跳
+        # 和上个一样。DC-PPO，不平均。
+        "205",      # 1跳
+        "206",      # 2跳
+        "207",      # 3跳
+        "208",      # 4跳
 
 
         # 看103的轨迹图

@@ -22,6 +22,8 @@ class MECRunner(Runner):
             self.restore()
         self.average_local_advantage = config['all_args'].average_local_advantage
         self.average_local_advantage_timely = config['all_args'].average_local_advantage_timely
+        self.whether_local_add_ave_adadvantage = config['all_args'].whether_local_add_ave_adadvantage
+        self.whether_average_value_preds = config['all_args'].whether_average_value_preds
         self.average_neighbor_advantage = config['all_args'].average_neighbor_advantage
         self.whether_average_network_parameters = config['all_args'].whether_average_network_parameters
         self.average_network_parameters_interval = config['all_args'].average_network_parameters_interval
@@ -231,18 +233,50 @@ class MECRunner(Runner):
     def train(self):
         train_infos = []
         if self.average_local_advantage_timely and self.average_local_advantage:
-            for agent_id in range(self.num_agents):
-                self.buffer[agent_id].advantages = self.buffer[agent_id].returns[:-1] - self.buffer[agent_id].value_preds[:-1]
-            for step in range(self.episode_length):
-                all_advantages = np.zeros((self.num_agents, step+1, self.n_rollout_threads), dtype=np.float32)
-                all_Metropolis_weights = np.zeros((self.num_agents, step+1, self.n_rollout_threads, self.num_agents), dtype=np.float32)
+            if self.whether_average_value_preds:
                 for agent_id in range(self.num_agents):
-                    advantages_i = self.buffer[agent_id].advantages[:step + 1]
-                    all_advantages[agent_id] = advantages_i.squeeze(-1)
-                    all_Metropolis_weights[agent_id] = np.tile(self.buffer[agent_id].Metropolis_weights[[step]], (step+1, 1, 1))
-                updated_advantages = np.einsum('istj,jst->ist', all_Metropolis_weights, all_advantages)
+                    self.buffer[agent_id].average_value_preds[:-1] = self.buffer[agent_id].value_preds[:-1].copy()
+                for step in range(self.episode_length):
+                    all_average_value_preds = np.zeros((self.num_agents, step + 1, self.n_rollout_threads), dtype=np.float32)
+                    all_Metropolis_weights = np.zeros((self.num_agents, step + 1, self.n_rollout_threads, self.num_agents), dtype=np.float32)
+                    for agent_id in range(self.num_agents):
+                        average_value_preds_i = self.buffer[agent_id].average_value_preds[:step + 1]
+                        all_average_value_preds[agent_id] = average_value_preds_i.squeeze(-1)
+                        all_Metropolis_weights[agent_id] = np.tile(self.buffer[agent_id].Metropolis_weights[[step]], (step + 1, 1, 1))
+                    updated_average_value_preds = np.einsum('istj,jst->ist', all_Metropolis_weights, all_average_value_preds)
+                    for agent_id in range(self.num_agents):
+                        self.buffer[agent_id].average_value_preds[:step + 1] = updated_average_value_preds[agent_id, :, :, np.newaxis].copy()
+            elif self.whether_local_add_ave_adadvantage:
+                local_advantage = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
                 for agent_id in range(self.num_agents):
-                    self.buffer[agent_id].advantages[:step + 1] = updated_advantages[agent_id, :, :, np.newaxis].copy()
+                    self.buffer[agent_id].advantages = self.buffer[agent_id].returns[:-1] - self.buffer[agent_id].value_preds[:-1]
+                    local_advantage[agent_id] = self.buffer[agent_id].advantages.copy()
+                for step in range(self.episode_length):
+                    all_advantages = np.zeros((self.num_agents, step+1, self.n_rollout_threads), dtype=np.float32)
+                    all_Metropolis_weights = np.zeros((self.num_agents, step+1, self.n_rollout_threads, self.num_agents), dtype=np.float32)
+                    for agent_id in range(self.num_agents):
+                        advantages_i = self.buffer[agent_id].advantages[:step + 1]
+                        all_advantages[agent_id] = advantages_i.squeeze(-1)
+                        all_Metropolis_weights[agent_id] = np.tile(self.buffer[agent_id].Metropolis_weights[[step]], (step+1, 1, 1))
+                    updated_advantages = np.einsum('istj,jst->ist', all_Metropolis_weights, all_advantages)
+                    for agent_id in range(self.num_agents):
+                        self.buffer[agent_id].advantages[:step + 1] = updated_advantages[agent_id, :, :, np.newaxis].copy()
+                for agent_id in range(self.num_agents):
+                    self.buffer[agent_id].advantages += local_advantage[agent_id]
+            else:
+                for agent_id in range(self.num_agents):
+                    self.buffer[agent_id].advantages = self.buffer[agent_id].returns[:-1] - self.buffer[agent_id].value_preds[:-1]
+                for step in range(self.episode_length):
+                    all_advantages = np.zeros((self.num_agents, step + 1, self.n_rollout_threads), dtype=np.float32)
+                    all_Metropolis_weights = np.zeros(
+                        (self.num_agents, step + 1, self.n_rollout_threads, self.num_agents), dtype=np.float32)
+                    for agent_id in range(self.num_agents):
+                        advantages_i = self.buffer[agent_id].advantages[:step + 1]
+                        all_advantages[agent_id] = advantages_i.squeeze(-1)
+                        all_Metropolis_weights[agent_id] = np.tile(self.buffer[agent_id].Metropolis_weights[[step]], (step + 1, 1, 1))
+                    updated_advantages = np.einsum('istj,jst->ist', all_Metropolis_weights, all_advantages)
+                    for agent_id in range(self.num_agents):
+                        self.buffer[agent_id].advantages[:step + 1] = updated_advantages[agent_id, :, :, np.newaxis].copy()
         elif (not self.average_local_advantage_timely) and (self.average_local_advantage or self.average_neighbor_advantage):
             # 没有timely，就是每一步的adv固定迭代更新n_iterations次。（这样好像也不对？前几步明明可以更新的更多的啊）
             n_iterations = self.all_args.n_iterations

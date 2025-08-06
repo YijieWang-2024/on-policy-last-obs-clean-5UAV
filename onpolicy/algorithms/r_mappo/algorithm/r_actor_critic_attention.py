@@ -262,7 +262,7 @@ class R_Critic_Attention(nn.Module):
         # Attention layer for inter-agent information exchange
         self.attention = AttentionLayer(self.hidden_size, self.hidden_size*2)
         # Final MLP after attention
-        self.mlp_after_attention = MLPBase(args, [self.hidden_size], layer_N=0+1)
+        self.mlp_after_attention = MLPBase(args, [self.hidden_size], layer_N=0+2)
         # Value head
         init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][self._use_orthogonal]
         def init_(m):

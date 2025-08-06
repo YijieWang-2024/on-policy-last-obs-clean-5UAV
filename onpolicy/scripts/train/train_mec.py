@@ -154,6 +154,8 @@ def parse_args(args, parser):
 
     parser.add_argument("--average_local_advantage_timely", action='store_true', default=False, help="If true, Execute the average of the local advantage functions every timestep, rather than after sampling B buffer")
     parser.add_argument("--average_local_advantage", action='store_true', default=False, help="If true, Execute the average of the local advantage functions in the mec_runner.py")
+    parser.add_argument("--whether_average_value_preds", action='store_true', default=False, help="If true, average the value_preds rather than advantage in the mec_runner.py")
+    parser.add_argument("--whether_local_add_ave_adadvantage", action='store_true', default=False, help="If true, local add averaged advantage in the mec_runner.py")
     parser.add_argument("--average_neighbor_advantage", action='store_true', default=False, help="If true, Execute the average of all neighbor's Advantage in the mec_runner.py with neighbor_weights")
     parser.add_argument("--n_iterations", type=int, default=50, help="Number of iterations for weighted summation when finding the global advantage function")
     parser.add_argument("--whether_average_network_parameters", action='store_true', default=False, help="If true, Execute the average of all network's parameters in the mec_runner.py")

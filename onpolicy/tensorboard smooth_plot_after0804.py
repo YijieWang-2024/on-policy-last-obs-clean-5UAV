@@ -136,6 +136,13 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run206/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run207/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run208/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run9/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run10/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run11/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run12/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run13/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run14/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run15/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
 
 
         # "./scripts/results/mec/mappo/check/run164/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
@@ -162,6 +169,14 @@ if __name__ == "__main__":
         # "206",      # 2跳
         # "207",      # 3跳
         # "208",      # 4跳
+        # 减小覆盖范围，增加无人机数目。
+        "9",        # self
+        "10",       # 1跳
+        "11",       # 2跳
+        # "12",       # 4跳
+        # "13",       # 8跳
+        "14",       # 1跳
+        "15",       # 2跳
 
     ]
 
