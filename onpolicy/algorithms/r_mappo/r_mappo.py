@@ -40,7 +40,6 @@ class R_MAPPO():
         self._use_policy_active_masks = args.use_policy_active_masks
         self.average_local_advantage = args.average_local_advantage
         self.average_local_advantage_timely = args.average_local_advantage_timely
-        self.whether_average_value_preds = args.whether_average_value_preds
         self.average_neighbor_advantage = args.average_neighbor_advantage
         self.num_updates = 0
         self.continue_training = True
@@ -234,10 +233,7 @@ class R_MAPPO():
         使用小批量梯度下降进行训练更新，增加了训练稳定性监控
         """
         if self.average_local_advantage_timely and self.average_local_advantage:
-            if self.whether_average_value_preds:
-                advantages = buffer.returns[:-1] - buffer.average_value_preds[:-1]
-            else:
-                advantages = buffer.advantages
+            advantages = buffer.advantages
         elif (not self.average_local_advantage_timely) and (self.average_local_advantage or self.average_neighbor_advantage):
             advantages = buffer.advantages
         else:

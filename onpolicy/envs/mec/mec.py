@@ -2370,65 +2370,96 @@ if __name__ == '__main__':
     # print_hi('PyCharm')
     class Args:
         def __init__(self):
-            self.n_UAVs = 5
-            self.n_GUs = 50
-            self.x_max = 1000
+            self.n_UAVs = 25
+            self.n_GUs = 200
+            self.x_max = 900
+            self.max_UAVs_obs_concat = 25
+            self.neighbor_distance = 195.0
+            self.d_optimal = 210
+            self.perform_with_local_state = False
+            self.state_is_k_hops = True
+            self.local_reward = True
+            self.alpha_r = 32
+            self.beta_r = 0.5
+            self.gamma_r = 4
+            self.delta_r = 2.0
+            self.lambda_r = 0.0001
+            self.epsilon_r = 0.0
+            self.mu_r = 64
+            self.all_uav_k_hops = True
+            self.use_atten_actor = False
+            self.discrete_associate = False
+            self.continuous_associate = True
+            self.nearest_associate = False
+            self.nearest_avail_actions = False
+            self.not_process_action = True
+            self.fix_uav_pos = False
+            self.ave_resource = False
+            self.ave_bandwidth = False
+            self.not_served_rew_to_ave = False
+            self.not_served_rew_to_nearest = True
+            self.average_neighbor_advantage = False
+            self.neighbor_R = 300
 
-            self.B = 20 * 10 ** 6  # 信道带宽，Hz，20MHz
-            self.H_UAV = 120  # m，无人机服务器固定飞行高度
+            self.max_UAVs_in_neighbor = 3
+
+            self.B = 30 * 10 ** 6  # 信道带宽，Hz，20MHz
+            self.H_UAV = 90  # m，无人机服务器固定飞行高度
             self.H_GU = 1  # m，地面用户高度
             # 边缘计算参数
-            self.F_m = 15 * 10 ** 9  # 15 Gigacycles，无人机服务器的最大可用计算资源
+            self.F_m = 20 * 10 ** 9  # 15 Gigacycles，无人机服务器的最大可用计算资源
             self.F_n = 1.5 * 10 ** 9  # 1.5 Gigacycles，地面用户的最大可用计算资源
             # 任务参数
-            self.D_min = 1 * 10 ** 6  # 1 MB，生成任务的最小数据量
-            self.D_max = 3 * 10 ** 6  # 3 MB，生成任务的最大数据量
-            self.C_min = 300 * 10 ** 6  # 300 Megacycles，生成任务的最小资源需求
-            self.C_max = 500 * 10 ** 6  # 500 Megacycles，生成任务的最大资源需求
-            self.delay_min = 0.25  # 250 ms，生成任务的最小延迟要求
-            self.delay_max = 0.3  # 300 ms，生成任务的最大延迟要求
+            self.D_min = 2 * 10 ** 6  # 1 MB，生成任务的最小数据量
+            self.D_max = 4 * 10 ** 6  # 3 MB，生成任务的最大数据量
+            self.C_min = 700 * 10 ** 6  # 300 Megacycles，生成任务的最小资源需求
+            self.C_max = 800 * 10 ** 6  # 500 Megacycles，生成任务的最大资源需求
+            self.delay_min = 0.499  # 250 ms，生成任务的最小延迟要求
+            self.delay_max = 0.5  # 300 ms，生成任务的最大延迟要求
             # 这几个参数自己设置的
-            self.Dis_min = 20  # 20m, 无人机服务器之间的最小防碰撞距离
-            self.Cover_R = self.H_UAV  # 120m, 无人机服务器二维的通信覆盖半径，在Evolutionary Multi-Objective中有最大仰角45度的限制，覆盖范围等于无人机高度。
+            self.Dis_min = 8  # 20m, 无人机服务器之间的最小防碰撞距离
+            self.Cover_R = 90  # 120m, 无人机服务器二维的通信覆盖半径，在Evolutionary Multi-Objective中有最大仰角45度的限制，覆盖范围等于无人机高度。
             self.Delta_t = 0.5  # 0.5s, 无人机服务器的最小时间间隔
-            self.episode_length = 50  # 50步数，仿真的最大步数
+            self.episode_length = 400  # 50步数，仿真的最大步数
             # self.MAX_SIMULATION_TIME = args.episode_length  # 50步数，仿真的最大步数，在config.py里边有episode_length
             self.w1 = 20  # 计算奖励时时延部分的权重
             self.w2 = 1  # 计算奖励时能耗部分的权重
             self.p3 = 500  # 计算奖励时防碰撞部分的惩罚值
-            self.v_max = 20      # 20m/s，无人机飞行的最大速度
-            self.mean_velocity = 10  # 10m/s，地面用户的平均移动速度
+            self.v_max = 30  # 20m/s，无人机飞行的最大速度
+            self.mean_velocity = 15.0  # 10m/s，地面用户的平均移动速度
+            self.ob_state_with_timestep = True
+            self.max_GUs_in_range = 10
+            self.q1 = 1
+            self.q2 = 1
+            self.q3 = 1
+            self.q4 = 1
+            self.q5 = 1
 
     args = Args()
     env = MEC(args)
-
+    start = time.time()
     # Reset the environment
-    obs, state, avail_actions = env.reset()
-    print("Initial Observation:", obs)
-    print("Initial State:", state)
-    print("Initial Available Actions:", avail_actions)
-    # Take a random action within the action space bounds
-    # flight_action = np.random.uniform(low=env.flight_action_space.low, high=env.flight_action_space.high,
-    #                                   size=(env.n_UAVs, 2))
-    # task_offloading_action = np.random.randint(low=0, high=2, size=(env.n_UAVs, env.n_GUs))
-    # bandwidth_allocation_action = np.random.uniform(low=env.bandwidth_allocation_space.low,
-    #                                                 high=env.bandwidth_allocation_space.high,
-    #                                                 size=(env.n_UAVs, env.n_GUs))
-    # computation_allocation_action = np.random.uniform(low=env.computation_allocation_space.low,
-    #                                                   high=env.computation_allocation_space.high,
-    #                                                   size=(env.n_UAVs, env.n_GUs))
-    #
-    # action = (flight_action, task_offloading_action, bandwidth_allocation_action, computation_allocation_action)
-    # Take a random action
-    action = [np.random.uniform(low=0, high=1, size=(env.n_UAVs, 2)),
-              np.random.uniform(low=0, high=1, size=(env.n_UAVs, env.n_GUs)),
-              np.random.uniform(low=0, high=1, size=(env.n_UAVs, env.n_GUs)),
-              np.random.uniform(low=0, high=1, size=(env.n_UAVs, env.n_GUs))]
+    for j in range(10):
+        obs, state, avail_actions, Metropolis_weights, attention_active_mask = env.reset()
+        print(j)
+        for i in range(400):
+            # print("Initial Observation:", obs)
+            # print("Initial State:", state)
+            # print("Initial Available Actions:", avail_actions)
+            action = np.concatenate([np.random.uniform(low=0, high=1, size=(env.n_UAVs, 2)),
+                      np.random.uniform(low=0, high=1, size=(env.n_UAVs, env.max_GUs_in_range)),
+                      np.random.uniform(low=0, high=1, size=(env.n_UAVs, env.max_GUs_in_range)),
+                      np.random.uniform(low=0, high=1, size=(env.n_UAVs, env.max_GUs_in_range))], axis=-1)
 
-    obs, rewards, dones, state, avail_actions, info = env.step(action)
-    print("Observation after step:", obs)
-    print("Rewards after step:", rewards)
-    print("Dones after step:", dones)
-    print("State after step:", state)
-    print("Available Actions after step:", avail_actions)
-    print("Info after step:", info)
+            obs, rewards, dones, state, avail_actions, info, Metropolis_weights, attention_active_mask = env.step(action)
+            if i % 50==0:
+                print(i)
+        # print("Observation after step:", obs)
+        # print("Rewards after step:", rewards)
+        # print("Dones after step:", dones)
+        # print("State after step:", state)
+        # print("Available Actions after step:", avail_actions)
+        # print("Info after step:", info)
+    end = time.time()
+    print("time:", end-start)
+
