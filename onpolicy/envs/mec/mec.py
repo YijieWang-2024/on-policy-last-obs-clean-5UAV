@@ -1397,7 +1397,7 @@ class MEC(gym.Env):
         #         processed_actions = self.process_actions(transformed_action_components)
         #     else:
         #         processed_actions = self.transform_uav_actions(action)
-        #     self.render(timestep=self.time_step, title='6', acts=processed_actions[:, 2:2+self.n_GUs])
+        #     self.render(timestep=self.time_step, title='24', acts=processed_actions[:, 2:2+self.n_GUs])
         #     # # # # # # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
         #     time.sleep(0.05)
         if self.time_step >= self.MAX_SIMULATION_TIME:
@@ -1724,7 +1724,6 @@ class MEC(gym.Env):
                                                                       true_positions=knowledge_position_i) * self.n_UAVs / num_knwoledge_i,
                                               self.x_max ** 2)
                 R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max ** 2 - coverage_area_estimated) / (self.x_max ** 2)
-
             rewards += R_cover_areas
 
         self.cumulative_individual_reward += rewards
@@ -2045,9 +2044,9 @@ class MEC(gym.Env):
         距离由近到远的前self.max_GUs_in_range个地面用户的位置、信道增益和计算任务的信息]。
         """
         # Pre-calculate all UAV-to-UAV distances at once (n_UAVs × n_UAVs matrix)
-        uav_uav_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :], axis=1)
+        # uav_uav_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :], axis=1)
         # Pre-calculate all UAV-to-GU distances at once (n_UAVs × n_GUs matrix)
-        uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)
+        # uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)
         # Pre-calculate 3D distances for channel gain calculations
         uav_gu_distances_3d = np.linalg.norm(self.uav_positions[:, :3, np.newaxis] - self.gu_positions[:, :3].T[np.newaxis, :], axis=1)
         # Pre-allocate the result array

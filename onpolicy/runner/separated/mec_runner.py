@@ -24,6 +24,7 @@ class MECRunner(Runner):
         self.average_local_advantage_timely = config['all_args'].average_local_advantage_timely
         self.whether_local_add_ave_adadvantage = config['all_args'].whether_local_add_ave_adadvantage
         self.whether_local_add_direct_ave_adv = config['all_args'].whether_local_add_direct_ave_adv
+        self.local_add_T_ave_adv = config['all_args'].local_add_T_ave_adv
         self.average_neighbor_advantage = config['all_args'].average_neighbor_advantage
         self.whether_average_network_parameters = config['all_args'].whether_average_network_parameters
         self.average_network_parameters_interval = config['all_args'].average_network_parameters_interval
@@ -264,6 +265,41 @@ class MECRunner(Runner):
                     # print('第',step,'步:', error_step/error_0)
                 for agent_id in range(self.num_agents):
                     self.buffer[agent_id].advantages += local_advantage[agent_id]
+            elif self.local_add_T_ave_adv != 0:
+                local_advantage = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
+                for agent_id in range(self.num_agents):
+                    self.buffer[agent_id].advantages = self.buffer[agent_id].returns[:-1] - self.buffer[agent_id].value_preds[:-1]
+                    local_advantage[agent_id] = self.buffer[agent_id].advantages.copy()
+                mean_advantage = local_advantage.copy()
+                for step in range(self.episode_length):
+                    all_advantages = mean_advantage[:, max(step + 1 - self.local_add_T_ave_adv, 0):step + 1].squeeze(-1)
+                    all_Metropolis_weights = np.zeros((self.num_agents, min(self.local_add_T_ave_adv, step + 1), self.n_rollout_threads, self.num_agents), dtype=np.float32)
+                    for agent_id in range(self.num_agents):
+                        all_Metropolis_weights[agent_id] = np.tile(self.buffer[agent_id].Metropolis_weights[[step]], (min(self.local_add_T_ave_adv, step + 1), 1, 1))
+                    updated_advantages = np.einsum('istj,jst->ist', all_Metropolis_weights, all_advantages)
+                    mean_advantage[:, max(step + 1 - self.local_add_T_ave_adv, 0):step + 1] = updated_advantages[..., np.newaxis].copy()
+                for agent_id in range(self.num_agents):
+                    self.buffer[agent_id].advantages = mean_advantage[agent_id] + local_advantage[agent_id]
+
+                # # 调试到这里，然后使用下边的代码去debug
+                # for T in [1, 2, 4, 6, 8, 10, 15, 20]:
+                #     # T = 20
+                #     mean_advantage = local_advantage.copy()
+                #     for step in range(self.episode_length):
+                #         all_advantages = mean_advantage[:, max(step + 1 - T, 0):step + 1].squeeze(-1)
+                #         all_Metropolis_weights = np.zeros(
+                #             (self.num_agents, min(T, step + 1), self.n_rollout_threads, self.num_agents),
+                #             dtype=np.float32)
+                #         for agent_id in range(self.num_agents):
+                #             all_Metropolis_weights[agent_id] = np.tile(self.buffer[agent_id].Metropolis_weights[[step]],
+                #                                                        (min(T, step + 1), 1, 1))
+                #         updated_advantages = np.einsum('istj,jst->ist', all_Metropolis_weights, all_advantages)
+                #         mean_advantage[:, max(step + 1 - T, 0):step + 1] = updated_advantages[..., np.newaxis].copy()
+                #     # advantages_0_mean = np.mean(local_advantage[:, :self.episode_length - T], axis=0)
+                #     advantages_0_mean = np.mean(local_advantage[:, :], axis=0)
+                #     error_0 = np.mean(np.linalg.norm(local_advantage[:, :] - advantages_0_mean, axis=0))
+                #     error_step = np.mean(np.linalg.norm(mean_advantage[:, :] - advantages_0_mean, axis=0))
+                #     print('第', T, '步:', error_step / error_0)
             else:
                 for agent_id in range(self.num_agents):
                     self.buffer[agent_id].advantages = self.buffer[agent_id].returns[:-1] - self.buffer[agent_id].value_preds[:-1]

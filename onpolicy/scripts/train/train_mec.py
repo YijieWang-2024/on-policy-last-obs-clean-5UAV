@@ -156,6 +156,7 @@ def parse_args(args, parser):
     parser.add_argument("--average_local_advantage", action='store_true', default=False, help="If true, Execute the average of the local advantage functions in the mec_runner.py")
     parser.add_argument("--whether_local_add_direct_ave_adv", action='store_true', default=False, help="If true, local add actual mean advantage in the mec_runner.py")
     parser.add_argument("--whether_local_add_ave_adadvantage", action='store_true', default=False, help="If true, local add averaged advantage in the mec_runner.py")
+    parser.add_argument("--local_add_T_ave_adv", type=int, default=0, help="how many steps of the advantage to average")
     parser.add_argument("--average_neighbor_advantage", action='store_true', default=False, help="If true, Execute the average of all neighbor's Advantage in the mec_runner.py with neighbor_weights")
     parser.add_argument("--n_iterations", type=int, default=50, help="Number of iterations for weighted summation when finding the global advantage function")
     parser.add_argument("--whether_average_network_parameters", action='store_true', default=False, help="If true, Execute the average of all network's parameters in the mec_runner.py")
@@ -165,6 +166,7 @@ def parse_args(args, parser):
 
     default_parser = parser.parse_args([])
     assert default_parser.alpha_r==0 and default_parser.epsilon_r==0, "这两个参数要默认为0。哪个输入了新的值，不为零，就是考虑了对应的惩罚。"
+    assert default_parser.local_add_T_ave_adv == 0, "这个参数要默认为0，不为0的话，就是使用了这样一个平均方式。"
     all_args = parser.parse_known_args(args)[0]
     return all_args
 
