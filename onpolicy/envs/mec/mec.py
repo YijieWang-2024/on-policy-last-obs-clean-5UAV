@@ -39,8 +39,10 @@ A = 0.503  # (m^2)Rotor disc area
 # 计算消耗能量参数来自Task Offloading and Resource Allocation Strategies Among Multiple Edge Servers
 k_local = 1e-27  # J/(Hz^2 * cycle)Placeholder value
 k_server = 1e-29  # J/(Hz^2 * cycle)Placeholder value
-# uav_uav_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :], axis=1)
-# uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)
+# 常量预计算
+LOG_TERM = 20 * np.log10(4 * np.pi * f_c / 3e8)
+CONST_TERM_LoS = LOG_TERM + eta_LoS
+CONST_TERM_NLoS = LOG_TERM + eta_NLoS
 
 class DroneInfo:
     def __init__(self, drone_id: int):
@@ -112,29 +114,35 @@ def update_drone_knowledge_id(drones: List[DroneInfo], positions: np.ndarray, R_
     """更新所有无人机的位置知识"""
     m = len(drones)
     # 计算距离矩阵
-    distance_matrix = np.linalg.norm(positions[:, :2, np.newaxis] - positions[:, :2].T[np.newaxis, :], axis=1)
+    distance_matrix = np.linalg.norm(positions[:, np.newaxis] - positions[np.newaxis, :], axis=2)
     # 重置所有无人机的知识
-    # 每架无人机都知道自己的位置
-    for i, drone in enumerate(drones):
-        drone.drone_knowledge = {i}
-    # 第一步：每架无人机通过感知获得直接信息
-    for i, drone in enumerate(drones):
-        sensing_neighbors_mask = (distance_matrix[i] <= R_cover) & (np.arange(m) != i)
-        sensing_neighbors = np.where(sensing_neighbors_mask)[0]
-        drone.drone_knowledge.update(sensing_neighbors)
+    # # 每架无人机都知道自己的位置
+    # for i, drone in enumerate(drones):
+    #     drone.drone_knowledge = {i}
+    # # 第一步：每架无人机通过感知获得直接信息
+    # for i, drone in enumerate(drones):
+    #     sensing_neighbors_mask = (distance_matrix[i] <= R_cover) & (np.arange(m) != i)
+    #     sensing_neighbors = np.where(sensing_neighbors_mask)[0]
+    #     drone.drone_knowledge.update(sensing_neighbors)
+    #
+    # # 第二步：每架无人机通过与一跳邻居通信获得间接信息
+    # for i, drone in enumerate(drones):
+    #     communication_neighbors_mask = (distance_matrix[i] <= R_comm) & (np.arange(m) != i)
+    #     communication_neighbors = np.where(communication_neighbors_mask)[0]
+    #     # 从每个通信邻居那里获得其感知范围内的信息
+    #     for comm_neighbor in communication_neighbors:
+    #         neighbor_sensing_mask = (distance_matrix[comm_neighbor] <= R_cover) & (np.arange(m) != comm_neighbor)
+    #         neighbor_sensing = np.where(neighbor_sensing_mask)[0]
+    #         # 邻居感知到的无人机，当前无人机也可以知道
+    #         drone.drone_knowledge.update(neighbor_sensing)
+    #         # 同时也知道这个通信邻居本身的位置
+    #         drone.drone_knowledge.add(comm_neighbor)
 
-    # 第二步：每架无人机通过与一跳邻居通信获得间接信息
+    # 不要上边了。直接更新通信范围内id
     for i, drone in enumerate(drones):
-        communication_neighbors_mask = (distance_matrix[i] <= R_comm) & (np.arange(m) != i)
+        communication_neighbors_mask = distance_matrix[i] <= R_comm
         communication_neighbors = np.where(communication_neighbors_mask)[0]
-        # 从每个通信邻居那里获得其感知范围内的信息
-        for comm_neighbor in communication_neighbors:
-            neighbor_sensing_mask = (distance_matrix[comm_neighbor] <= R_cover) & (np.arange(m) != comm_neighbor)
-            neighbor_sensing = np.where(neighbor_sensing_mask)[0]
-            # 邻居感知到的无人机，当前无人机也可以知道
-            drone.drone_knowledge.update(neighbor_sensing)
-            # 同时也知道这个通信邻居本身的位置
-            drone.drone_knowledge.add(comm_neighbor)
+        drone.drone_knowledge.update(communication_neighbors)
 
 def update_drone_knowledge(drones: List[DroneInfo], positions: np.ndarray,
                            current_time: int, k: float):
@@ -359,7 +367,14 @@ class MEC(gym.Env):
         self.time_step = None
         self.attention_active_mask = np.zeros((self.n_UAVs, self.max_UAVs_obs_concat), dtype=np.float32)
 
-        # Initialize UAV positions randomly within the area
+        # 缓存计算结果的属性
+        self.uav_uav_distances_2d = None
+        self.uav_gu_distances_2d = None
+        self.uav_gu_distances_3d = None
+        self.channel_gains = None
+        self.coverage_mask = None
+
+        # 初始化UAV位置
         self.uav_positions = np.random.uniform(0, self.x_max, (self.n_UAVs, 2))
         self.uav_positions = np.hstack((self.uav_positions, self.H_UAV * np.ones((self.n_UAVs, 1))))
         self.drones = [DroneInfo(i) for i in range(self.n_UAVs)]
@@ -401,6 +416,8 @@ class MEC(gym.Env):
         self.complete_task = np.zeros((self.n_GUs, ))   # 记录当前时刻的动作下，用户是否完成任务。完成为1
         self.self_complete_task = np.zeros((self.n_GUs, ))   # 当前时刻，如果自己计算能不能完成任务？能的话为1
         self.complete_task_ratio = 0  # 统计整个episode完成任务的比率
+        self.cumulative_individual_reward_wo_cover = np.zeros((self.n_UAVs,))
+        self.cumulative_reward_wo_cover = np.zeros((self.n_UAVs,))
         # calculate_local_reward里先调用到了transform_uav_actions()。
         # get_local_obs()里边，是重新挨个计算的距离。
         self.average_neighbor_advantage = args.average_neighbor_advantage
@@ -443,60 +460,60 @@ class MEC(gym.Env):
         if self.n_UAVs == 9 and self.x_max == 600 and self.n_GUs == 80:
             self.uav_positions = np.array([[120, 120, self.H_UAV], [300,120, self.H_UAV], [480, 120, self.H_UAV],
                                            [120, 300, self.H_UAV], [300, 300, self.H_UAV], [480, 300, self.H_UAV],
-                                           [120, 480, self.H_UAV],[300, 480, self.H_UAV], [480, 480, self.H_UAV]], dtype=np.float)
+                                           [120, 480, self.H_UAV],[300, 480, self.H_UAV], [480, 480, self.H_UAV]], dtype=np.float32)
         # if self.n_UAVs == 4 and self.x_max == 400 and self.n_GUs == 40:
         #     self.uav_positions = np.array([[25, 25, self.H_UAV], [375, 25, self.H_UAV], [25, 375, self.H_UAV],
-        #                                    [375, 375, self.H_UAV]], dtype=np.float)
-        if self.n_UAVs == 4 and self.x_max == 400 and self.n_GUs == 40:
+        #                                    [375, 375, self.H_UAV]], dtype=np.float32)
+        elif self.n_UAVs == 4 and self.x_max == 400 and self.n_GUs == 40:
             self.uav_positions = np.array([[100, 100, self.H_UAV], [300, 100, self.H_UAV], [100, 300, self.H_UAV],
-                                           [300, 300, self.H_UAV]], dtype=np.float)
-        if self.n_UAVs == 16 and self.x_max == 900 and self.n_GUs == 200:
+                                           [300, 300, self.H_UAV]], dtype=np.float32)
+        elif self.n_UAVs == 16 and self.x_max == 900 and self.n_GUs == 200:
             self.uav_positions = np.array(
                     [[112.5, 112.5, self.H_UAV], [337.5, 112.5, self.H_UAV], [562.5, 112.5, self.H_UAV], [787.5, 112.5, self.H_UAV],
                      [112.5, 337.5, self.H_UAV], [337.5, 337.5, self.H_UAV], [562.5, 337.5, self.H_UAV], [787.5, 337.5, self.H_UAV],
                      [112.5, 562.5, self.H_UAV], [337.5, 562.5, self.H_UAV], [562.5, 562.5, self.H_UAV], [787.5, 562.5, self.H_UAV],
                      [112.5, 787.5, self.H_UAV],[337.5, 787.5, self.H_UAV], [562.5, 787.5, self.H_UAV], [787.5, 787.5, self.H_UAV]],
-                    dtype=np.float)
+                    dtype=np.float32)
             # # 居中
             # self.uav_positions[:,:2] = self.uav_positions[:,:2]/2 + 225.5
             # # 四角
             # self.uav_positions = np.array([[ 56.25,  56.25, self.H_UAV], [168.75,  56.25, self.H_UAV], [ 56.25, 168.75, self.H_UAV], [168.75, 168.75, self.H_UAV],
             #                                [731.25,  56.25, self.H_UAV], [843.75,  56.25, self.H_UAV], [731.25, 168.75, self.H_UAV], [843.75, 168.75, self.H_UAV],
             #                                [ 56.25, 731.25, self.H_UAV], [168.75, 731.25, self.H_UAV], [ 56.25, 843.75, self.H_UAV], [168.75, 843.75, self.H_UAV],
-            #                                [731.25, 731.25, self.H_UAV], [843.75, 731.25, self.H_UAV], [731.25, 843.75, self.H_UAV], [843.75, 843.75, self.H_UAV]], dtype=np.float)
+            #                                [731.25, 731.25, self.H_UAV], [843.75, 731.25, self.H_UAV], [731.25, 843.75, self.H_UAV], [843.75, 843.75, self.H_UAV]], dtype=np.float32)
             # 添加上随机性。
             np.random.shuffle(self.uav_positions)
-        if self.n_UAVs == 25 and self.x_max == 900 and self.n_GUs == 200:
+        elif self.n_UAVs == 25 and self.x_max == 900 and self.n_GUs == 200:
             self.uav_positions = np.array(
                     [[90, 90, self.H_UAV], [270, 90, self.H_UAV], [450, 90, self.H_UAV], [630, 90, self.H_UAV], [810, 90, self.H_UAV],
                      [90, 270, self.H_UAV], [270, 270, self.H_UAV], [450, 270, self.H_UAV], [630, 270, self.H_UAV], [810, 270, self.H_UAV],
                      [90, 450, self.H_UAV], [270, 450, self.H_UAV], [450, 450, self.H_UAV], [630, 450, self.H_UAV], [810, 450, self.H_UAV],
                      [90, 630, self.H_UAV], [270, 630, self.H_UAV], [450, 630, self.H_UAV], [630, 630, self.H_UAV], [810, 630, self.H_UAV],
-                     [90, 810, self.H_UAV], [270, 810, self.H_UAV], [450, 810, self.H_UAV], [630, 810, self.H_UAV], [810, 810, self.H_UAV]], dtype=np.float)
+                     [90, 810, self.H_UAV], [270, 810, self.H_UAV], [450, 810, self.H_UAV], [630, 810, self.H_UAV], [810, 810, self.H_UAV]], dtype=np.float32)
             # 添加上随机性。
             np.random.shuffle(self.uav_positions)
 
-        if self.n_UAVs in [5,10,15,20,25] and self.x_max==1000 and self.n_GUs==220:
+        elif self.n_UAVs in [5,10,15,20,25] and self.x_max==1000 and self.n_GUs==220:
             if self.n_UAVs == 5:
                 self.uav_positions = np.array([[250, 250, self.H_UAV], [750, 250, self.H_UAV], [500, 500, self.H_UAV],
-                                               [250, 750, self.H_UAV], [750, 750, self.H_UAV]], dtype=np.float)
+                                               [250, 750, self.H_UAV], [750, 750, self.H_UAV]], dtype=np.float32)
             elif self.n_UAVs == 10:
                 self.uav_positions = np.array([[190, 190, self.H_UAV], [500, 190, self.H_UAV], [810, 190, self.H_UAV],
                                                [128, 500, self.H_UAV], [376, 500, self.H_UAV], [628, 500, self.H_UAV], [872, 500, self.H_UAV],
-                                               [190, 810, self.H_UAV], [500, 810, self.H_UAV], [810, 810, self.H_UAV]], dtype=np.float)
+                                               [190, 810, self.H_UAV], [500, 810, self.H_UAV], [810, 810, self.H_UAV]], dtype=np.float32)
             elif self.n_UAVs == 15:
                 self.uav_positions = np.array(
                     [[128, 128, self.H_UAV], [376, 128, self.H_UAV], [628, 128, self.H_UAV], [872, 128, self.H_UAV],
                      [128, 376, self.H_UAV], [376, 376, self.H_UAV], [628, 376, self.H_UAV], [872, 376, self.H_UAV],
                      [128, 628, self.H_UAV], [376, 628, self.H_UAV], [628, 628, self.H_UAV], [872, 628, self.H_UAV],
                      [190, 872, self.H_UAV],[500, 872, self.H_UAV], [810, 872, self.H_UAV]],
-                    dtype=np.float)
+                    dtype=np.float32)
             elif self.n_UAVs == 20:
                 self.uav_positions = np.array([[100, 128, self.H_UAV], [300, 128, self.H_UAV], [500, 128, self.H_UAV], [700, 128, self.H_UAV], [900, 128, self.H_UAV],
                                                [100, 376, self.H_UAV], [300, 376, self.H_UAV],[500, 376, self.H_UAV],[700, 376, self.H_UAV],[900, 376, self.H_UAV],
                                                [100, 628, self.H_UAV], [300, 628, self.H_UAV], [500, 628, self.H_UAV], [700, 628, self.H_UAV], [900, 628, self.H_UAV],
                                                [100, 872, self.H_UAV], [300, 872, self.H_UAV], [500, 872, self.H_UAV], [700, 872, self.H_UAV], [900, 872, self.H_UAV]],
-                                              dtype=np.float)
+                                              dtype=np.float32)
             elif self.n_UAVs == 25:
                 self.uav_positions = np.array(
                     [[100, 100, self.H_UAV], [300, 100, self.H_UAV],[500, 100, self.H_UAV],[700, 100, self.H_UAV],[900, 100, self.H_UAV],
@@ -504,7 +521,7 @@ class MEC(gym.Env):
                      [100, 500, self.H_UAV], [300, 500, self.H_UAV], [500, 500, self.H_UAV], [700, 500, self.H_UAV], [900, 500, self.H_UAV],
                      [100, 700, self.H_UAV], [300, 700, self.H_UAV], [500, 700, self.H_UAV], [700, 700, self.H_UAV], [900, 700, self.H_UAV],
                      [100, 900, self.H_UAV], [300, 900, self.H_UAV], [500, 900, self.H_UAV], [700, 900, self.H_UAV], [900, 900, self.H_UAV]],
-                    dtype=np.float)
+                    dtype=np.float32)
 
 
         # self.uav_positions = np.array([[120, 120, self.H_UAV], [480, 120, self.H_UAV], [120, 480, self.H_UAV],[480, 480, self.H_UAV]], dtype=np.float32)
@@ -531,7 +548,13 @@ class MEC(gym.Env):
         # np.random.seed(None)
         # Initialize tasks for ground users
         self.gu_tasks = self.generate_tasks()
+
+        # 预计算距离矩阵和其他辅助数据
+        self._update_distance_matrices()
         self.nearby_gus_of_uavs = self.get_nearby_users_sorted_all()
+
+        # 预计算信道增益
+        self._calculate_channel_gains()
 
         # 在state_k_hops中，带自己的s_{i,t}，总共有max_UAVs_obs_concat个信息。 如果是全局拼接state的话，也不需要mask了。正好。
         self.attention_active_mask = np.zeros((self.n_UAVs, self.max_UAVs_obs_concat), dtype=np.float32)
@@ -542,34 +565,38 @@ class MEC(gym.Env):
         if self.perform_with_local_state:
             self.state = self.obs
         elif self.state_is_k_hops:
-            uav_uav_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :], axis=1)
             single_state_dim = self.state_dim // self.max_UAVs_obs_concat
             final_state = np.zeros((self.n_UAVs, self.state_dim))
             if self.all_uav_k_hops:
                 pri = np.ones((self.n_UAVs, self.n_UAVs), dtype=np.int8)
                 pri[np.arange(self.n_UAVs), np.arange(self.n_UAVs)] = 0
                 perm_indices = np.argsort(pri, axis=1)  # shape (n, n)
+                # 创建邻居掩码
+                neighbor_mask = self.uav_uav_distances_2d <= self.neighbor_distance
+
+                # 使用矩阵操作填充状态
                 for i in range(self.n_UAVs):
-                    neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance)    # 包括自己。
-                    neighbors = np.where(neighbor_mask)[0]
-                    for neighbor_idx in neighbors:
-                        start_pos = neighbor_idx * single_state_dim
-                        end_pos = (neighbor_idx + 1) * single_state_dim
-                        final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
-                        self.attention_active_mask[i, neighbor_idx] = 1
-                # 2) Reorder neighbor_mask in one shot
+                    neighbors = np.where(neighbor_mask[i])[0]
+                    neighbor_idx_flat = neighbors.reshape(-1, 1) * single_state_dim + np.arange(single_state_dim)
+
+                    # 展平索引使用高级索引
+                    final_state[i].reshape(-1)[neighbor_idx_flat.flatten()] = local_obs[neighbors].flatten()
+                    self.attention_active_mask[i, neighbors] = 1
+
+                # 重新排序
                 self.attention_active_mask = np.take_along_axis(self.attention_active_mask, perm_indices, axis=1)
-                # 3) For observations, reshape to (n, n, F), reorder axis=1, then flatten back
+
+                # 重新排序状态
                 final_state3d = final_state.reshape(self.n_UAVs, self.n_UAVs, single_state_dim)
                 reordered3d = np.take_along_axis(final_state3d, perm_indices[..., None], axis=1)
                 final_state = reordered3d.reshape(self.n_UAVs, self.n_UAVs * single_state_dim)
             else:
                 final_state[:, :single_state_dim] = local_obs
                 for i in range(self.n_UAVs):
-                    neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
+                    neighbor_mask = (self.uav_uav_distances_2d[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
                     neighbors = np.where(neighbor_mask)[0]
                     if len(neighbors) > 0:
-                        sorted_neighbors = neighbors[np.argsort(uav_uav_distances[i, neighbors])]
+                        sorted_neighbors = neighbors[np.argsort(self.uav_uav_distances_2d[i, neighbors])]
                         closest = sorted_neighbors[:self.max_UAVs_obs_concat - 1]
                         for j, neighbor_idx in enumerate(closest):
                             start_pos = (j + 1) * single_state_dim
@@ -607,23 +634,61 @@ class MEC(gym.Env):
         self.uav_energy_consumption = np.zeros((self.n_UAVs,))  # 无人机及其范围内用户每时刻能耗和，再对step求和
         self.user_average_delay = np.zeros((self.n_UAVs,))  # 每架无人机范围内用户平均时延，再对step求平均
         self.n_GUs_per_uav_served = np.zeros((self.n_UAVs,))  # 每架无人机每个时刻服务的用户数目，再对step求平均
+        self.cumulative_individual_reward_wo_cover = np.zeros((self.n_UAVs,))
+        self.cumulative_reward_wo_cover = np.zeros((self.n_UAVs,))
         return self.obs, self.state, self.avail_actions, self.Metropolis_weights, self.attention_active_mask
+
+    def _update_distance_matrices(self):
+        """更新距离矩阵"""
+        # 计算UAV-UAV 2D距离
+        self.uav_uav_distances_2d = np.linalg.norm(
+            self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :],
+            axis=1
+        )
+
+        # 计算UAV-GU 2D和3D距离
+        self.uav_gu_distances_2d = np.linalg.norm(
+            self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :],
+            axis=1
+        )
+
+        self.uav_gu_distances_3d = np.linalg.norm(
+            self.uav_positions[:, :3, np.newaxis] - self.gu_positions[:, :3].T[np.newaxis, :],
+            axis=1
+        )
+
+        # 计算覆盖掩码
+        self.coverage_mask = self.uav_gu_distances_2d <= self.Cover_R
+
+    def _calculate_channel_gains(self):
+        """计算信道增益"""
+        # 计算角度
+        with np.errstate(invalid='ignore'):  # 忽略可能的除零警告
+            theta_nm = 180 / np.pi * np.arcsin(
+                np.clip((self.H_UAV - self.H_GU) / self.uav_gu_distances_3d, -1, 1)
+            )
+
+        # 计算概率
+        P_LoS = 1 / (1 + a * np.exp(-b * (theta_nm - a)))
+        P_NLoS = 1 - P_LoS
+
+        # 计算路径损耗
+        PL_LoS = CONST_TERM_LoS + 20 * np.log10(np.maximum(self.uav_gu_distances_3d, 1e-10))
+        PL_NLoS = CONST_TERM_NLoS + 20 * np.log10(np.maximum(self.uav_gu_distances_3d, 1e-10))
+
+        PL_nm = P_LoS * PL_LoS + P_NLoS * PL_NLoS
+        self.channel_gains = 10 ** (-PL_nm / 10)
 
     def process_actions(self, action):
         action = np.clip(action, 0., 1.)
         # Convert action to a list with the specified slices
         if self.fix_uav_pos:
-            if self.nearest_associate:
-                actions = [
-                    action[:, :self.n_GUs],
-                    action[:, self.n_GUs:]
-                ]
-            else:
-                actions = [
-                    action[:, :self.n_GUs],
-                    action[:, self.n_GUs:2 * self.n_GUs],
-                    action[:, 2 * self.n_GUs:]
-                ]
+            assert self.continuous_associate
+            actions = [
+                action[:, :self.n_GUs],
+                action[:, self.n_GUs:2 * self.n_GUs],
+                action[:, 2 * self.n_GUs:]
+            ]
         else:
             if self.nearest_associate:
                 if self.ave_resource:
@@ -827,6 +892,7 @@ class MEC(gym.Env):
                 mask_2 = actions[2] == 0
                 combined_mask = mask_1 | mask_2
                 actions[0][combined_mask] = 0
+                actions[0] = np.where(actions[0] >= 0.5, actions[0], 0)
                 col_max = np.max(actions[0], axis=0)
                 # 为了防止最大值为0的存在，导致取到多个不存在的无人机。
                 col_max = np.where(col_max, col_max, 99.0)
@@ -835,11 +901,12 @@ class MEC(gym.Env):
                     user_selection = actions[0][:, n].copy()
                     bandwidth_allocation = actions[1][:, n].copy()
                     computation_allocation = actions[2][:, n].copy()
-                    if np.sum(user_selection) == 0:
+                    sum_selection = np.sum(user_selection)
+                    if sum_selection == 0:
                         actions[0][:, n] = 0
                         actions[1][:, n] = 0
                         actions[2][:, n] = 0
-                    elif np.sum(user_selection) == 1:
+                    elif sum_selection == 1:
                         best_uav = np.argmax(actions[0][:, n])  # UAV m is offloading task n
                         actions[0][:, n] = 0
                         actions[0][best_uav, n] = 1
@@ -849,7 +916,7 @@ class MEC(gym.Env):
                         actions[2][best_uav, n] = computation_allocation[best_uav]
                     else:
                         active_mask = user_selection == 1
-                        distances = np.linalg.norm(self.uav_positions - self.gu_positions[n], axis=1)
+                        distances = self.uav_gu_distances_3d[:, n]
                         # 只考虑活跃无人机的距离，非活跃无人机距离设为无穷大
                         distances_masked = np.where(active_mask, distances, np.inf)
                         # 找到距离最近的无人机索引
@@ -860,14 +927,54 @@ class MEC(gym.Env):
                         actions[1][nearest_uav_idx, n] = bandwidth_allocation[nearest_uav_idx]
                         actions[2][:, n] = 0
                         actions[2][nearest_uav_idx, n] = computation_allocation[nearest_uav_idx]
+
+                # 标准化资源
                 for m in range(self.n_UAVs):
-                    total = np.sum(actions[1][m])
-                    if total > 1:
-                        actions[1][m] = actions[1][m] / total
+                    total_bw = np.sum(actions[1][m])
+                    total_comp = np.sum(actions[2][m])
+
+                    if total_bw > 0:
+                        actions[1][m] = actions[1][m] / total_bw
+
+                    if total_comp > 0:
+                        actions[2][m] = actions[2][m] / total_comp
+                # 计算实际带宽和计算资源
+                bandwidth_actions = actions[1] * self.B
+                computation_actions = actions[2] * self.F_m
+
+                # 验证每个用户任务
+                for n in range(self.n_GUs):
+                    if np.any(actions[0][:, n]):
+                        m = np.argmax(actions[0][:, n])
+                        task = self.gu_tasks[n]
+
+                        # 计算传输速率
+                        h_nm = self.channel_gains[m, n]
+                        bw = bandwidth_actions[m, n]
+                        R_nm = bw * np.log2(1 + p_t * h_nm / (N_0 * (bw + 1e-10)))
+
+                        # 计算时延
+                        tau_trans = task[0] / (R_nm + 1e-10)
+                        tau_exe = task[1] / (computation_actions[m, n] + 1e-10)
+                        total_delay = tau_trans + tau_exe
+
+                        # 如果无法满足延迟要求，取消分配
+                        if total_delay > task[2]:
+                            actions[0][m, n] = 0
+                            actions[1][m, n] = 0
+                            actions[2][m, n] = 0
+
+                # 重新标准化资源
                 for m in range(self.n_UAVs):
-                    total = np.sum(actions[2][m])
-                    if total > 1:
-                        actions[2][m] = actions[2][m] / total
+                    total_bw = np.sum(actions[1][m])
+                    total_comp = np.sum(actions[2][m])
+
+                    if total_bw > 0:
+                        actions[1][m] = actions[1][m] / total_bw
+
+                    if total_comp > 0:
+                        actions[2][m] = actions[2][m] / total_comp
+
             else:
                 if self.ave_resource:
                     actions[1] = np.where(actions[1]>=0.5, actions[1], 0)   # 添加了卸载的阈值为0.5。
@@ -877,19 +984,16 @@ class MEC(gym.Env):
                     actions[1] = (actions[1] == col_max).astype(int)
                     for n in range(self.n_GUs):
                         user_selection = actions[1][:, n].copy()
-                        if np.sum(user_selection) == 0:
+                        sum_selection = np.sum(user_selection)
+                        if sum_selection == 0:
                             actions[1][:, n] = 0
-                        elif np.sum(user_selection) == 1:
-                            best_uav = np.argmax(actions[1][:, n])  # UAV m is offloading task n
-                            actions[1][:, n] = 0
-                            actions[1][best_uav, n] = 1
-                        else:
+                        elif sum_selection > 1:
+                            # 如果多个UAV选择同一用户，只保留最近的
                             active_mask = user_selection == 1
-                            distances = np.linalg.norm(self.uav_positions - self.gu_positions[n], axis=1)
-                            # 只考虑活跃无人机的距离，非活跃无人机距离设为无穷大
+                            distances = self.uav_gu_distances_3d[:, n]
                             distances_masked = np.where(active_mask, distances, np.inf)
-                            # 找到距离最近的无人机索引
                             nearest_uav_idx = np.argmin(distances_masked)
+
                             actions[1][:, n] = 0
                             actions[1][nearest_uav_idx, n] = 1
                 elif self.ave_bandwidth:
@@ -903,10 +1007,11 @@ class MEC(gym.Env):
                     for n in range(self.n_GUs):
                         user_selection = actions[1][:, n].copy()
                         computation_allocation = actions[2][:, n].copy()
-                        if np.sum(user_selection) == 0:
+                        sum_selection = np.sum(user_selection)
+                        if sum_selection == 0:
                             actions[1][:, n] = 0
                             actions[2][:, n] = 0
-                        elif np.sum(user_selection) == 1:
+                        elif sum_selection == 1:
                             best_uav = np.argmax(actions[1][:, n])  # UAV m is offloading task n
                             actions[1][:, n] = 0
                             actions[1][best_uav, n] = 1
@@ -914,7 +1019,7 @@ class MEC(gym.Env):
                             actions[2][best_uav, n] = computation_allocation[best_uav]
                         else:
                             active_mask = user_selection == 1
-                            distances = np.linalg.norm(self.uav_positions - self.gu_positions[n], axis=1)
+                            distances = self.uav_gu_distances_3d[:, n]
                             # 只考虑活跃无人机的距离，非活跃无人机距离设为无穷大
                             distances_masked = np.where(active_mask, distances, np.inf)
                             # 找到距离最近的无人机索引
@@ -935,17 +1040,13 @@ class MEC(gym.Env):
                         if np.sum(actions[1][:, n]) != 0:
                             m = np.argmax(actions[1][:, n])
                             gu_n_task = self.gu_tasks[n]
-                            d_nm_3 = np.linalg.norm(self.uav_positions[m] - self.gu_positions[n])
-                            theta_nm = 180 / np.pi * np.arcsin((self.H_UAV - self.H_GU) / d_nm_3)
-                            P_LoS = 1 / (1 + a * np.exp(-b * (theta_nm - a)))
-                            P_NLoS = 1 - P_LoS
-                            PL_LoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_LoS
-                            PL_NLoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_NLoS
-                            PL_nm = P_LoS * PL_LoS + P_NLoS * PL_NLoS
-                            h_nm = 10 ** (-PL_nm / 10)
+
+                            # 计算传输速率
+                            h_nm = self.channel_gains[m, n]
+                            bw = bandwidth_actions[m, n]
+                            R_nm = bw * np.log2(1 + p_t * h_nm / (N_0 * (bw + 1e-10)))
+
                             epsilon = 0
-                            R_nm = bandwidth_actions[m, n] * np.log2(
-                                1 + p_t * h_nm / (N_0 * (bandwidth_actions[m, n] + epsilon)))
                             tau_trans = gu_n_task[0] / (R_nm + epsilon)
                             tau_exe = gu_n_task[1] / (computation_actions[m, n] + epsilon)
                             total_delay = tau_trans + tau_exe
@@ -973,11 +1074,12 @@ class MEC(gym.Env):
                         user_selection = actions[1][:, n].copy()
                         bandwidth_allocation = actions[2][:, n].copy()
                         computation_allocation = actions[3][:, n].copy()
-                        if np.sum(user_selection) == 0:
+                        sum_selection = np.sum(user_selection)
+                        if sum_selection == 0:
                             actions[1][:, n] = 0
                             actions[2][:, n] = 0
                             actions[3][:, n] = 0
-                        elif np.sum(user_selection) == 1:
+                        elif sum_selection == 1:
                             best_uav = np.argmax(actions[1][:, n])  # UAV m is offloading task n
                             actions[1][:, n] = 0
                             actions[1][best_uav, n] = 1
@@ -987,7 +1089,7 @@ class MEC(gym.Env):
                             actions[3][best_uav, n] = computation_allocation[best_uav]
                         else:
                             active_mask = user_selection == 1
-                            distances = np.linalg.norm(self.uav_positions - self.gu_positions[n], axis=1)
+                            distances = self.uav_gu_distances_3d[:, n]
                             # 只考虑活跃无人机的距离，非活跃无人机距离设为无穷大
                             distances_masked = np.where(active_mask, distances, np.inf)
                             # 找到距离最近的无人机索引
@@ -998,33 +1100,30 @@ class MEC(gym.Env):
                             actions[2][nearest_uav_idx, n] = bandwidth_allocation[nearest_uav_idx]
                             actions[3][:, n] = 0
                             actions[3][nearest_uav_idx, n] = computation_allocation[nearest_uav_idx]
+                    # 标准化资源
                     for m in range(self.n_UAVs):
-                        total = np.sum(actions[2][m])
-                        if total > 0:
-                            actions[2][m] = actions[2][m] / total
-                    for m in range(self.n_UAVs):
-                        total = np.sum(actions[3][m])
-                        if total > 0:
-                            actions[3][m] = actions[3][m] / total
+                        total_bw = np.sum(actions[2][m])
+                        total_comp = np.sum(actions[3][m])
+
+                        if total_bw > 0:
+                            actions[2][m] = actions[2][m] / total_bw
+
+                        if total_comp > 0:
+                            actions[3][m] = actions[3][m] / total_comp
                     # 判断卸载分配的资源能不能完成任务..
                     bandwidth_actions = actions[2] * self.B
                     computation_actions = actions[3] * self.F_m
                     for n in range(self.n_GUs):
-                        if np.sum(actions[1][:, n]) != 0:
+                        if np.any(actions[1][:, n]):
                             m = np.argmax(actions[1][:, n])
                             gu_n_task = self.gu_tasks[n]
 
-                            d_nm_3 = np.linalg.norm(self.uav_positions[m] - self.gu_positions[n])
-                            theta_nm = 180 / np.pi * np.arcsin((self.H_UAV - self.H_GU) / d_nm_3)
-                            P_LoS = 1 / (1 + a * np.exp(-b * (theta_nm - a)))
-                            P_NLoS = 1 - P_LoS
-                            PL_LoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_LoS
-                            PL_NLoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_NLoS
-                            PL_nm = P_LoS * PL_LoS + P_NLoS * PL_NLoS
-                            h_nm = 10 ** (-PL_nm / 10)
+                            # 计算传输速率
+                            h_nm = self.channel_gains[m, n]
+                            bw = bandwidth_actions[m, n]
+                            R_nm = bw * np.log2(1 + p_t * h_nm / (N_0 * (bw + 1e-10)))
+
                             epsilon = 0
-                            R_nm = bandwidth_actions[m, n] * np.log2(
-                                1 + p_t * h_nm / (N_0 * (bandwidth_actions[m, n] + epsilon)))
                             tau_trans = gu_n_task[0] / (R_nm + epsilon)
                             tau_exe = gu_n_task[1] / (computation_actions[m, n] + epsilon)
                             total_delay = tau_trans + tau_exe
@@ -1035,14 +1134,16 @@ class MEC(gym.Env):
                                 actions[1][m, n] = 0
                                 actions[2][m, n] = 0
                                 actions[3][m, n] = 0
+                    # 重新标准化资源
                     for m in range(self.n_UAVs):
-                        total = np.sum(actions[2][m])
-                        if total > 0:
-                            actions[2][m] = actions[2][m] / total
-                    for m in range(self.n_UAVs):
-                        total = np.sum(actions[3][m])
-                        if total > 0:
-                            actions[3][m] = actions[3][m] / total
+                        total_bw = np.sum(actions[2][m])
+                        total_comp = np.sum(actions[3][m])
+
+                        if total_bw > 0:
+                            actions[2][m] = actions[2][m] / total_bw
+
+                        if total_comp > 0:
+                            actions[3][m] = actions[3][m] / total_comp
         else:
             if self.fix_uav_pos:
                 for n in range(self.n_GUs):
@@ -1137,177 +1238,6 @@ class MEC(gym.Env):
                             actions[2][m] = actions[2][m] / total
         return np.concatenate(actions, axis=-1)
 
-    def process_local_actions(self, action):
-        # 带transformed表示，处理成全局角度的动作。
-        action = np.clip(action, 0., 1.)
-        if self.fix_uav_pos:
-            if self.nearest_associate:
-                action_components = [
-                    action[:, :self.max_GUs_in_range],  # Bandwidth allocation
-                    action[:, self.max_GUs_in_range:]  # Computation resource allocation
-                ]
-                offloading_actions = None
-                bandwidth_actions = action_components[0]
-                computation_actions = action_components[1]
-                transformed_offloading = None
-            else:
-                action_components = [
-                    action[:, :self.max_GUs_in_range],  # Offloading decisions
-                    action[:, self.max_GUs_in_range:2 * self.max_GUs_in_range],  # Bandwidth allocation
-                    action[:, 2 * self.max_GUs_in_range:]  # Computation resource allocation
-                ]
-                offloading_actions = action_components[0]
-                bandwidth_actions = action_components[1]
-                computation_actions = action_components[2]
-                transformed_offloading = np.zeros((self.n_UAVs, self.n_GUs), dtype=offloading_actions.dtype)
-        else:
-            if self.nearest_associate:
-                action_components = [
-                    action[:, :2],  # Movement actions
-                    action[:, 2: 2 + self.max_GUs_in_range],  # Bandwidth allocation
-                    action[:, 2 + self.max_GUs_in_range:]  # Computation resource allocation
-                ]
-                offloading_actions = None
-                bandwidth_actions = action_components[1]
-                computation_actions = action_components[2]
-                transformed_offloading = None
-            else:
-                if self.ave_resource:
-                    action_components = [
-                        action[:, :2],  # Movement actions
-                        action[:, 2:2 + self.max_GUs_in_range]  # Offloading decisions
-                    ]
-                    offloading_actions = action_components[1]
-                    bandwidth_actions = None
-                    computation_actions = None
-                    transformed_offloading = np.zeros((self.n_UAVs, self.n_GUs), dtype=offloading_actions.dtype)
-                elif self.ave_bandwidth:
-                    action_components = [
-                        action[:, :2],  # Movement actions
-                        action[:, 2:2 + self.max_GUs_in_range],  # Offloading decisions
-                        action[:, 2 + self.max_GUs_in_range:]    # Computation resource allocation
-                    ]
-                    offloading_actions = action_components[1]
-                    bandwidth_actions = None
-                    computation_actions = action_components[2]
-                    transformed_offloading = np.zeros((self.n_UAVs, self.n_GUs), dtype=offloading_actions.dtype)
-                else:
-                    action_components = [
-                        action[:, :2],  # Movement actions
-                        action[:, 2:2 + self.max_GUs_in_range],  # Offloading decisions
-                        action[:, 2 + self.max_GUs_in_range:2 + 2 * self.max_GUs_in_range],  # Bandwidth allocation
-                        action[:, 2 + 2 * self.max_GUs_in_range:]  # Computation resource allocation
-                    ]
-                    offloading_actions = action_components[1]
-                    bandwidth_actions = action_components[2]
-                    computation_actions = action_components[3]
-                    transformed_offloading = np.zeros((self.n_UAVs, self.n_GUs), dtype=offloading_actions.dtype)
-        transformed_bandwidth = np.zeros((self.n_UAVs, self.n_GUs), dtype=np.float32)
-        transformed_computation = np.zeros((self.n_UAVs, self.n_GUs), dtype=np.float32)
-        valid_mask = self.nearby_gus_of_uavs[:, :self.max_GUs_in_range] != -1
-        for uav_idx in range(self.n_UAVs):
-            valid_indices = self.nearby_gus_of_uavs[uav_idx, :self.max_GUs_in_range][valid_mask[uav_idx]]
-            valid_pos = np.where(valid_mask[uav_idx])[0]
-            if len(valid_indices) > 0:
-                if self.nearest_associate:
-                    transformed_offloading = None
-                else:
-                    transformed_offloading[uav_idx, valid_indices] = offloading_actions[uav_idx, valid_pos]
-                if self.ave_resource:
-                    transformed_bandwidth = None
-                    transformed_computation = None
-                elif self.ave_bandwidth:
-                    transformed_bandwidth = None
-                    transformed_computation[uav_idx, valid_indices] = computation_actions[uav_idx, valid_pos]
-                else:
-                    transformed_bandwidth[uav_idx, valid_indices] = bandwidth_actions[uav_idx, valid_pos]
-                    transformed_computation[uav_idx, valid_indices] = computation_actions[uav_idx, valid_pos]
-        if self.fix_uav_pos:
-            if self.nearest_associate:
-                transformed_actions_array = np.concatenate([transformed_bandwidth, transformed_computation], axis=1)
-            else:
-                transformed_actions_array = np.concatenate([transformed_offloading, transformed_bandwidth, transformed_computation], axis=1)
-        else:
-            if self.nearest_associate:
-                transformed_actions_array = np.concatenate([action_components[0], transformed_bandwidth, transformed_computation], axis=1)
-            else:
-                if self.ave_resource:
-                    transformed_actions_array = np.concatenate([action_components[0], transformed_offloading], axis=1)
-                elif self.ave_bandwidth:
-                    transformed_actions_array = np.concatenate([action_components[0], transformed_offloading, transformed_computation], axis=1)
-                else:
-                    transformed_actions_array = np.concatenate([action_components[0], transformed_offloading, transformed_bandwidth, transformed_computation], axis=1)
-        processed_transformed_actions = self.process_actions(transformed_actions_array)     # 全局动作，去除重复之后的。
-        if self.fix_uav_pos:
-            if self.nearest_associate:
-                processed_transformed_offloading = None
-                processed_transformed_bandwidth = processed_transformed_actions[:, :self.n_GUs]
-                processed_transformed_computation = processed_transformed_actions[:, self.n_GUs:]
-                processed_local_offloading = None
-            else:
-                processed_transformed_offloading = processed_transformed_actions[:, :self.n_GUs]
-                processed_transformed_bandwidth = processed_transformed_actions[:, self.n_GUs:2 * self.n_GUs]
-                processed_transformed_computation = processed_transformed_actions[:, 2 * self.n_GUs:]
-                processed_local_offloading = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=offloading_actions.dtype)
-        else:
-            if self.nearest_associate:
-                processed_transformed_offloading = None
-                processed_transformed_bandwidth = processed_transformed_actions[:, 2:2 + self.n_GUs]
-                processed_transformed_computation = processed_transformed_actions[:, 2 + self.n_GUs:]
-                processed_local_offloading = None
-            else:
-                if self.ave_resource:
-                    processed_transformed_offloading = processed_transformed_actions[:, 2:2 + self.n_GUs]
-                    processed_transformed_bandwidth = None
-                    processed_transformed_computation = None
-                    processed_local_offloading = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=offloading_actions.dtype)
-                elif self.ave_bandwidth:
-                    processed_transformed_offloading = processed_transformed_actions[:, 2:2 + self.n_GUs]
-                    processed_transformed_bandwidth = None
-                    processed_transformed_computation = processed_transformed_actions[:, 2 + self.n_GUs:]
-                    processed_local_offloading = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=offloading_actions.dtype)
-                else:
-                    processed_transformed_offloading = processed_transformed_actions[:, 2:2 + self.n_GUs]
-                    processed_transformed_bandwidth = processed_transformed_actions[:, 2 + self.n_GUs:2 + 2 * self.n_GUs]
-                    processed_transformed_computation = processed_transformed_actions[:, 2 + 2 * self.n_GUs:]
-                    processed_local_offloading = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=offloading_actions.dtype)
-
-        processed_local_bandwidth = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=np.float32)
-        processed_local_computation = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=np.float32)
-        for uav_idx in range(self.n_UAVs):
-            valid_indices = self.nearby_gus_of_uavs[uav_idx, :self.max_GUs_in_range][valid_mask[uav_idx]]
-            valid_pos = np.where(valid_mask[uav_idx])[0]
-            if len(valid_indices) > 0:
-                if self.nearest_associate:
-                    processed_local_offloading = None
-                else:
-                    processed_local_offloading[uav_idx, valid_pos] = processed_transformed_offloading[uav_idx, valid_indices]
-                if self.ave_resource:
-                    processed_local_bandwidth = None
-                    processed_local_computation = None
-                elif self.ave_bandwidth:
-                    processed_local_bandwidth[uav_idx, valid_pos] = None
-                    processed_local_computation[uav_idx, valid_pos] = processed_transformed_computation[uav_idx, valid_indices]
-                else:
-                    processed_local_bandwidth[uav_idx, valid_pos] = processed_transformed_bandwidth[uav_idx, valid_indices]
-                    processed_local_computation[uav_idx, valid_pos] = processed_transformed_computation[uav_idx, valid_indices]
-        if self.fix_uav_pos:
-            if self.nearest_associate:
-                processed_local_actions = np.concatenate([processed_local_bandwidth, processed_local_computation], axis=1)
-            else:
-                processed_local_actions = np.concatenate([processed_local_offloading, processed_local_bandwidth, processed_local_computation], axis=1)
-        else:
-            if self.nearest_associate:
-                processed_local_actions = np.concatenate([action_components[0], processed_local_bandwidth, processed_local_computation], axis=1)
-            else:
-                if self.ave_resource:
-                    processed_local_actions = np.concatenate([action_components[0], processed_local_offloading], axis=1)
-                elif self.ave_bandwidth:
-                    processed_local_actions = np.concatenate([action_components[0], processed_local_offloading, processed_local_computation], axis=1)
-                else:
-                    processed_local_actions = np.concatenate([action_components[0], processed_local_offloading, processed_local_bandwidth, processed_local_computation], axis=1)
-        return processed_local_actions
-
     def step(self, action):   # acts是一个(n_agents, )的数组，每个元素代表动作序号
         self.time_step += 1
         # Ensure action is a numpy array
@@ -1329,6 +1259,10 @@ class MEC(gym.Env):
 
         # Generate new tasks for ground users
         self.gu_tasks = self.generate_tasks()
+
+        # 更新距离矩阵和覆盖信息
+        # self._update_distance_matrices()  # 计算reward时，更新完位置后直接更新了。
+        self._calculate_channel_gains()
         self.nearby_gus_of_uavs = self.get_nearby_users_sorted_all()
 
         self.attention_active_mask = np.zeros((self.n_UAVs, self.max_UAVs_obs_concat), dtype=np.float32)
@@ -1339,34 +1273,38 @@ class MEC(gym.Env):
         if self.perform_with_local_state:
             self.state = self.obs
         elif self.state_is_k_hops:
-            uav_uav_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :], axis=1)
             single_state_dim = self.state_dim // self.max_UAVs_obs_concat
             final_state = np.zeros((self.n_UAVs, self.state_dim))
             if self.all_uav_k_hops:
                 pri = np.ones((self.n_UAVs, self.n_UAVs), dtype=np.int8)
                 pri[np.arange(self.n_UAVs), np.arange(self.n_UAVs)] = 0
                 perm_indices = np.argsort(pri, axis=1)  # shape (n, n)
+                # 创建邻居掩码
+                neighbor_mask = self.uav_uav_distances_2d <= self.neighbor_distance
+
+                # 使用矩阵操作填充状态
                 for i in range(self.n_UAVs):
-                    neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance)    # 包括自己。
-                    neighbors = np.where(neighbor_mask)[0]
-                    for neighbor_idx in neighbors:
-                        start_pos = neighbor_idx * single_state_dim
-                        end_pos = (neighbor_idx + 1) * single_state_dim
-                        final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
-                        self.attention_active_mask[i, neighbor_idx] = 1
-                # 2) Reorder neighbor_mask in one shot
+                    neighbors = np.where(neighbor_mask[i])[0]
+                    neighbor_idx_flat = neighbors.reshape(-1, 1) * single_state_dim + np.arange(single_state_dim)
+
+                    # 展平索引使用高级索引
+                    final_state[i].reshape(-1)[neighbor_idx_flat.flatten()] = local_obs[neighbors].flatten()
+                    self.attention_active_mask[i, neighbors] = 1
+
+                # 重新排序
                 self.attention_active_mask = np.take_along_axis(self.attention_active_mask, perm_indices, axis=1)
-                # 3) For observations, reshape to (n, n, F), reorder axis=1, then flatten back
+
+                # 重新排序状态
                 final_state3d = final_state.reshape(self.n_UAVs, self.n_UAVs, single_state_dim)
                 reordered3d = np.take_along_axis(final_state3d, perm_indices[..., None], axis=1)
                 final_state = reordered3d.reshape(self.n_UAVs, self.n_UAVs * single_state_dim)
             else:
                 final_state[:, :single_state_dim] = local_obs
                 for i in range(self.n_UAVs):
-                    neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
+                    neighbor_mask = (self.uav_uav_distances_2d[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
                     neighbors = np.where(neighbor_mask)[0]
                     if len(neighbors) > 0:
-                        sorted_neighbors = neighbors[np.argsort(uav_uav_distances[i, neighbors])]
+                        sorted_neighbors = neighbors[np.argsort(self.uav_uav_distances_2d[i, neighbors])]
                         closest = sorted_neighbors[:self.max_UAVs_obs_concat - 1]
                         for j, neighbor_idx in enumerate(closest):
                             start_pos = (j + 1) * single_state_dim
@@ -1405,6 +1343,8 @@ class MEC(gym.Env):
             info = {'cumulative_reward': self.cumulative_reward, 'n_GUs_per_uav_served': self.n_GUs_per_uav_served/self.MAX_SIMULATION_TIME,
                     'uav_m_toal_energy_consumption': self.uav_energy_consumption, 'user_in_m_average_delay': self.user_average_delay/self.MAX_SIMULATION_TIME,
                     'cumulative_individual_reward': self.cumulative_individual_reward, 'system_performance': self.system_performance,
+                    'cumulative_individual_reward_wo_cover': self.cumulative_individual_reward_wo_cover,
+                    'cumulative_reward_wo_cover': self.cumulative_reward_wo_cover,
                     'system_performance_individual': self.system_performance_individual,
                     'system_performance_true_all_GUs': self.system_performance_true_all_GUs,
                     'delay_true_all_GUs':self.delay_true_all_GUs/self.MAX_SIMULATION_TIME,
@@ -1415,6 +1355,7 @@ class MEC(gym.Env):
                     'n_GUs_by_coverd':self.n_GUs_by_coverd/(self.MAX_SIMULATION_TIME/2),
                     'complete_task_ratio':self.complete_task_ratio/self.MAX_SIMULATION_TIME
                     }
+        # info['uav_positions'] = self.uav_positions[:, :2]
         return self.obs, rewards, dones, self.state, self.avail_actions, info, self.Metropolis_weights, self.attention_active_mask
 
     def calculate_local_reward_raw_action(self, action):
@@ -1431,22 +1372,15 @@ class MEC(gym.Env):
 
     def calculate_reward(self, action):
         if self.fix_uav_pos:
-            if self.nearest_associate:
-                action_components = [
-                    action[:, :self.n_GUs],  # Offloading decisions
-                    action[:, self.n_GUs:],  # Bandwidth allocation
-                ]
-                bandwidth_actions = action_components[0] * self.B
-                computation_actions = action_components[1] * self.F_m
-            else:
-                action_components = [
-                    action[:, :self.n_GUs],  # Offloading decisions
-                    action[:, self.n_GUs:2 * self.n_GUs],  # Bandwidth allocation
-                    action[:, 2 * self.n_GUs:]  # Computation resource allocation
-                ]
-                offloading_actions = action_components[0]
-                bandwidth_actions = action_components[1] * self.B
-                computation_actions = action_components[2] * self.F_m
+            assert self.continuous_associate
+            action_components = [
+                action[:, :self.n_GUs],  # Offloading decisions
+                action[:, self.n_GUs:2 * self.n_GUs],  # Bandwidth allocation
+                action[:, 2 * self.n_GUs:]  # Computation resource allocation
+            ]
+            offloading_actions = action_components[0]
+            bandwidth_actions = action_components[1] * self.B
+            computation_actions = action_components[2] * self.F_m
         else:
             if self.nearest_associate:
                 if self.ave_resource:
@@ -1480,7 +1414,6 @@ class MEC(gym.Env):
                     offloading_actions = action_components[1]
                     ones_count = np.sum(action_components[1], axis=1, keepdims=True)# 避免除零，使用np.divide处理
                     bandwidth_actions = np.divide(action_components[1] * self.B, ones_count, where=ones_count != 0)
-                    ones_count = np.sum(action_components[1], axis=1, keepdims=True)  # 避免除零，使用np.divide处理
                     computation_actions = np.divide(action_components[1] * self.F_m, ones_count, where=ones_count != 0)
                 elif self.ave_bandwidth:
                     action_components = [
@@ -1518,8 +1451,9 @@ class MEC(gym.Env):
         per_GU_energy_true_others = np.zeros(self.n_GUs)
         # Calculate UAV-GU distances efficiently
 
-        uav_gu_distances_2d = np.linalg.norm(self.uav_positions[:, None, :2] - self.gu_positions[None, :, :2], axis=2)
-        coverage_mask = uav_gu_distances_2d <= self.Cover_R
+        # 使用缓存的距离和掩码
+        uav_gu_distances_2d = self.uav_gu_distances_2d
+        coverage_mask = self.coverage_mask
 
         R_task = np.zeros(self.n_UAVs)
         R_task_delay = np.zeros(self.n_UAVs)
@@ -1577,17 +1511,14 @@ class MEC(gym.Env):
                     self.self_complete_task[n] = 0
 
                 gu_n_task = self.gu_tasks[n]
-                d_nm_3 = np.linalg.norm(self.uav_positions[m] - self.gu_positions[n])
-                theta_nm = 180 / np.pi * np.arcsin((self.H_UAV - self.H_GU) / d_nm_3)
-                P_LoS = 1 / (1 + a * np.exp(-b * (theta_nm - a)))
-                P_NLoS = 1 - P_LoS
-                PL_LoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_LoS
-                PL_NLoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_NLoS
-                PL_nm = P_LoS * PL_LoS + P_NLoS * PL_NLoS
-                h_nm = 10 ** (-PL_nm / 10)
+                # 使用缓存的信道增益
+                h_nm = self.channel_gains[m, n]
+
+                # 计算传输速率
+                bw = bandwidth_actions[m, n]
+                R_nm = bw * np.log2(1 + p_t * h_nm / (N_0 * (bw + 1e-10)))
+
                 epsilon = 0
-                R_nm = bandwidth_actions[m, n] * np.log2(
-                    1 + p_t * h_nm / (N_0 * (bandwidth_actions[m, n] + epsilon)))
                 tau_trans = gu_n_task[0] / (R_nm + epsilon)
                 E_trans = p_t * tau_trans
                 tau_exe = gu_n_task[1] / (computation_actions[m, n] + epsilon)
@@ -1623,9 +1554,19 @@ class MEC(gym.Env):
             pass
         else:
             fly_action = action[:, :2] * np.array([2 * np.pi, self.v_max])  # 方向和速度都是0-1之间的数
-            for i in range(self.n_UAVs):
-                direction, velocity = fly_action[i]
-                self.uav_positions[i, :2] += velocity * self.Delta_t * np.array([np.cos(direction), np.sin(direction)])
+            # 向量化更新位置
+            directions = fly_action[:, 0]
+            velocities = fly_action[:, 1]
+
+            # 计算位移
+            dx = velocities * self.Delta_t * np.cos(directions)
+            dy = velocities * self.Delta_t * np.sin(directions)
+
+            # 更新位置
+            self.uav_positions[:, 0] += dx
+            self.uav_positions[:, 1] += dy
+
+            # 确保在边界内
             self.uav_positions[:, :2] = np.clip(self.uav_positions[:, :2], 0, self.x_max)
         # 更新用户位置。 Update GU positions
         # Update ground user velocities and directions using Gauss-Markov Model
@@ -1636,95 +1577,105 @@ class MEC(gym.Env):
         # Update ground user positions
         self.gu_positions[:, 0] += self.gu_velocities * np.cos(self.gu_directions) * self.Delta_t
         self.gu_positions[:, 1] += self.gu_velocities * np.sin(self.gu_directions) * self.Delta_t
-        # With this bouncing implementation:
-        for i in range(self.n_GUs):
-            hit_vertical = False
-            hit_horizontal = False
-            # Check for x boundary collisions
-            if self.gu_positions[i, 0] < 0:
-                hit_vertical = True
-                self.gu_positions[i, 0] = -self.gu_positions[i, 0]  # Reflect position
-            elif self.gu_positions[i, 0] > self.x_max:
-                hit_vertical = True
-                self.gu_positions[i, 0] = 2 * self.x_max - self.gu_positions[i, 0]  # Reflect position
-            # Check for y boundary collisions
-            if self.gu_positions[i, 1] < 0:
-                hit_horizontal = True
-                self.gu_positions[i, 1] = -self.gu_positions[i, 1]  # Reflect position
-            elif self.gu_positions[i, 1] > self.x_max:
-                hit_horizontal = True
-                self.gu_positions[i, 1] = 2 * self.x_max - self.gu_positions[i, 1]  # Reflect position
-            if hit_vertical and hit_horizontal:
-                # 碰到角落 - 两个方向都反射（旋转180°）
-                self.gu_directions[i] = (self.gu_directions[i] + np.pi) % (2 * np.pi)
-                self.gu_directions_0[i] = self.gu_directions[i].copy()
-            elif hit_vertical:
-                # 碰到垂直墙壁 - 水平反射
-                self.gu_directions[i] = (np.pi - self.gu_directions[i]) % (2 * np.pi)
-                self.gu_directions_0[i] = self.gu_directions[i].copy()
-            elif hit_horizontal:
-                # 碰到水平墙壁 - 垂直反射
-                self.gu_directions[i] = (2 * np.pi - self.gu_directions[i]) % (2 * np.pi)
-                self.gu_directions_0[i] = self.gu_directions[i].copy()
+        # 向量化处理边界碰撞
+        x_out_min = self.gu_positions[:, 0] < 0
+        x_out_max = self.gu_positions[:, 0] > self.x_max
+        y_out_min = self.gu_positions[:, 1] < 0
+        y_out_max = self.gu_positions[:, 1] > self.x_max
 
-        uav_uav_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :], axis=1)
-        R_collision = -1 * self.mu_r * (np.sum(uav_uav_distances < self.Dis_min, axis=1) - 1)
+        # 反射位置
+        self.gu_positions[x_out_min, 0] = -self.gu_positions[x_out_min, 0]
+        self.gu_positions[x_out_max, 0] = 2 * self.x_max - self.gu_positions[x_out_max, 0]
+        self.gu_positions[y_out_min, 1] = -self.gu_positions[y_out_min, 1]
+        self.gu_positions[y_out_max, 1] = 2 * self.x_max - self.gu_positions[y_out_max, 1]
+
+        # 处理方向反射
+        hit_vertical = x_out_min | x_out_max
+        hit_horizontal = y_out_min | y_out_max
+
+        # 角落碰撞 - 两个方向都反射
+        corner_hit = hit_vertical & hit_horizontal
+        self.gu_directions[corner_hit] = (self.gu_directions[corner_hit] + np.pi) % (2 * np.pi)
+
+        # 垂直墙壁碰撞
+        vert_hit = hit_vertical & (~corner_hit)
+        self.gu_directions[vert_hit] = (np.pi - self.gu_directions[vert_hit]) % (2 * np.pi)
+
+        # 水平墙壁碰撞
+        horiz_hit = hit_horizontal & (~corner_hit)
+        self.gu_directions[horiz_hit] = (2 * np.pi - self.gu_directions[horiz_hit]) % (2 * np.pi)
+
+        # 更新基准方向
+        self.gu_directions_0[corner_hit | vert_hit | horiz_hit] = self.gu_directions[
+            corner_hit | vert_hit | horiz_hit]
+
+        self._update_distance_matrices()
+
+        R_collision = -1 * self.mu_r * (np.sum(self.uav_uav_distances_2d < self.Dis_min, axis=1) - 1)
         rewards = R_task_delay + R_task_energy + R_fly_energy + R_collision
+        # has_neighbors = np.any((uav_uav_distances < self.neighbor_distance) &  (np.eye(self.n_UAVs) == 0), axis=1)
+        # if np.sum(has_neighbors) < self.n_UAVs:
+        #     print("有无人机孤立:",self.n_UAVs-np.sum(has_neighbors))
+
+        self.cumulative_individual_reward_wo_cover += rewards
+        self.cumulative_reward_wo_cover += np.mean(rewards) * np.ones_like(rewards)
 
         # 一、加上未覆盖用户的惩罚。
         if self.alpha_r != 0:
-            # # 一、1 利用所有无人机、用户的真实位置计算奖励
-            # uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)    #（n_UAVs, n_GUs）
-            # coverd_gu = np.any(uav_gu_distances<=self.Cover_R, axis=0)      # (n_GUs,)
-            # R_cover_all = -1 * self.alpha_r * (self.n_GUs - np.sum(coverd_gu)) / self.n_GUs
-            # rewards += R_cover_all
-            # 一、2 根据{M_i^1}邻居之间通信，利用1跳无人机的s_{i,t} 估计覆盖的总用户数目
-            uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)  # （n_UAVs, n_GUs）
-            update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_R)
-            R_cover_all = np.zeros(self.n_UAVs)
-            for i in range(self.n_UAVs):
-                knowledge_id_i = np.array(list(self.drones[i].drone_knowledge))
-                num_knowledge_id_i = len(knowledge_id_i)
-                # if num_knowledge_id_i <= 1:
-                #     # 如果就没有一跳邻居。
-                #     R_cover_all[i] = -1 * self.alpha_r
-                # else:
-                #     coverd_gu_i = np.any(uav_gu_distances[knowledge_id_i]<=self.Cover_R, axis=0)      # 邻居几个无人机真正覆盖的用户数目
-                #     coverd_gu_estimated_i = min(np.sum(coverd_gu_i)*self.n_UAVs/num_knowledge_id_i, self.n_GUs)
-                #     R_cover_all[i] = -1 * self.alpha_r * (self.n_GUs - coverd_gu_estimated_i) / self.n_GUs
-                coverd_gu_i = np.any(uav_gu_distances[knowledge_id_i] <= self.Cover_R, axis=0)  # 邻居几个无人机真正覆盖的用户数目
-                coverd_gu_estimated_i = min(np.sum(coverd_gu_i) * self.n_UAVs / num_knowledge_id_i, self.n_GUs)
-                R_cover_all[i] = -1 * self.alpha_r * (self.n_GUs - coverd_gu_estimated_i) / self.n_GUs
+            # 一、1 利用所有无人机、用户的真实位置计算奖励
+            uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)    #（n_UAVs, n_GUs）
+            coverd_gu = np.any(uav_gu_distances<=self.Cover_R, axis=0)      # (n_GUs,)
+            R_cover_all = -1 * self.alpha_r * (self.n_GUs - np.sum(coverd_gu)) / self.n_GUs
             rewards += R_cover_all
+            # # 一、2 根据{M_i^1}邻居之间通信，利用1跳无人机的s_{i,t} 估计覆盖的总用户数目
+            # uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)  # （n_UAVs, n_GUs）
+            # # update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_R)
+            # update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_distance)
+            # R_cover_all = np.zeros(self.n_UAVs)
+            # for i in range(self.n_UAVs):
+            #     knowledge_id_i = np.array(list(self.drones[i].drone_knowledge))
+            #     num_knowledge_id_i = len(knowledge_id_i)
+            #     # if num_knowledge_id_i <= 1:
+            #     #     # 如果就没有一跳邻居。
+            #     #     R_cover_all[i] = -1 * self.alpha_r
+            #     # else:
+            #     #     coverd_gu_i = np.any(uav_gu_distances[knowledge_id_i]<=self.Cover_R, axis=0)      # 邻居几个无人机真正覆盖的用户数目
+            #     #     coverd_gu_estimated_i = min(np.sum(coverd_gu_i)*self.n_UAVs/num_knowledge_id_i, self.n_GUs)
+            #     #     R_cover_all[i] = -1 * self.alpha_r * (self.n_GUs - coverd_gu_estimated_i) / self.n_GUs
+            #     coverd_gu_i = np.any(uav_gu_distances[knowledge_id_i] <= self.Cover_R, axis=0)  # 邻居几个无人机真正覆盖的用户数目
+            #     coverd_gu_estimated_i = min(np.sum(coverd_gu_i) * self.n_UAVs / num_knowledge_id_i, self.n_GUs)
+            #     R_cover_all[i] = -1 * self.alpha_r * (self.n_GUs - coverd_gu_estimated_i) / self.n_GUs
+            # rewards += R_cover_all
 
         # 二、加上覆盖面积的惩罚
         if self.epsilon_r != 0:
-            # # 二、1 利用真实位置计算奖励
-            # R_cover_areas = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, true_positions = self.uav_positions[:, :2])) / (self.x_max**2)
-            # rewards += R_cover_areas
+            # 二、1 利用真实位置计算奖励
+            R_cover_areas = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, true_positions = self.uav_positions[:, :2])) / (self.x_max**2)
+            rewards += R_cover_areas
             # # 二、2 根据邻居之间通信，利用延迟的位置计算奖励。     （这些都不符合R(s_{M_i^1}, a_{M_i^1})或者不符合p(s_{i,t+1} | s_{M_i^1}, a_{M_i^1})）
             # update_drone_knowledge(self.drones, self.uav_positions[:, :2], self.time_step, self.neighbor_distance)
             # R_cover_areas = np.zeros(self.n_UAVs)
             # for i in range(self.n_UAVs):
             #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, known_positions = self.drones[i].known_positions)) / (self.x_max**2)
             # rewards += R_cover_areas
-            # 二、3 根据{M_i^1}邻居之间通信，根据1跳邻居所知道的无人机位置 估计覆盖的总面积。
-            update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_R)
-            R_cover_areas = np.zeros(self.n_UAVs)
-            for i in range(self.n_UAVs):
-                knowledge_position_i = self.uav_positions[np.array(list(self.drones[i].drone_knowledge)), :2]
-                num_knwoledge_i = len(knowledge_position_i)
-                # if num_knwoledge_i <= 1:
-                #     # 如果就没有一跳邻居。
-                #     R_cover_areas[i] = -1 * self.epsilon_r
-                # else:
-                #     coverage_area_estimated = min(calculate_coverage_area(self.Cover_R, self.x_max, true_positions = knowledge_position_i) * self.n_UAVs / num_knwoledge_i, self.x_max**2)
-                #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max**2 - coverage_area_estimated) / (self.x_max**2)
-                coverage_area_estimated = min(calculate_coverage_area(self.Cover_R, self.x_max,
-                                                                      true_positions=knowledge_position_i) * self.n_UAVs / num_knwoledge_i,
-                                              self.x_max ** 2)
-                R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max ** 2 - coverage_area_estimated) / (self.x_max ** 2)
-            rewards += R_cover_areas
+            # # 二、3 根据{M_i^1}邻居之间通信，根据1跳邻居所知道的无人机位置 估计覆盖的总面积。
+            # # update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_R)
+            # update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_distance)
+            # R_cover_areas = np.zeros(self.n_UAVs)
+            # for i in range(self.n_UAVs):
+            #     knowledge_position_i = self.uav_positions[np.array(list(self.drones[i].drone_knowledge)), :2]
+            #     num_knwoledge_i = len(knowledge_position_i)
+            #     # if num_knwoledge_i <= 1:
+            #     #     # 如果就没有一跳邻居。
+            #     #     R_cover_areas[i] = -1 * self.epsilon_r
+            #     # else:
+            #     #     coverage_area_estimated = min(calculate_coverage_area(self.Cover_R, self.x_max, true_positions = knowledge_position_i) * self.n_UAVs / num_knwoledge_i, self.x_max**2)
+            #     #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max**2 - coverage_area_estimated) / (self.x_max**2)
+            #     coverage_area_estimated = min(calculate_coverage_area(self.Cover_R, self.x_max,
+            #                                                           true_positions=knowledge_position_i) * self.n_UAVs / num_knwoledge_i,
+            #                                   self.x_max ** 2)
+            #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max ** 2 - coverage_area_estimated) / (self.x_max ** 2)
+            # rewards += R_cover_areas
 
         self.cumulative_individual_reward += rewards
         # 无人机角度出发每架无人机自己从服务用户获得的性能。 求和是system_performance。
@@ -1774,27 +1725,18 @@ class MEC(gym.Env):
             Updated action_components list with transformed action arrays
         """
         if self.fix_uav_pos:
-            if self.nearest_associate:
-                action_components = [
-                    action_components[:, :self.max_GUs_in_range],
-                    action_components[:, self.max_GUs_in_range:]
-                ]
-                offloading_actions = None
-                bandwidth_actions = action_components[0]
-                computation_actions = action_components[1]
-                transformed_offloading = None
-            else:
-                action_components = [
-                    action_components[:, :self.max_GUs_in_range],  # Offloading decisions
-                    action_components[:, self.max_GUs_in_range:2 * self.max_GUs_in_range],
-                    # Bandwidth allocation
-                    action_components[:, 2 * self.max_GUs_in_range:]  # Computation resource allocation
-                ]
-                offloading_actions = action_components[0]
-                bandwidth_actions = action_components[1]
-                computation_actions = action_components[2]
-                # Initialize transformed arrays with zeros - preallocate memory once
-                transformed_offloading = np.zeros((self.n_UAVs, self.n_GUs), dtype=offloading_actions.dtype)
+            assert self.continuous_associate
+            action_components = [
+                action_components[:, :self.max_GUs_in_range],  # Offloading decisions
+                action_components[:, self.max_GUs_in_range:2 * self.max_GUs_in_range],
+                # Bandwidth allocation
+                action_components[:, 2 * self.max_GUs_in_range:]  # Computation resource allocation
+            ]
+            offloading_actions = action_components[0]
+            bandwidth_actions = action_components[1]
+            computation_actions = action_components[2]
+            # Initialize transformed arrays with zeros - preallocate memory once
+            transformed_offloading = np.zeros((self.n_UAVs, self.n_GUs), dtype=offloading_actions.dtype)
         else:
             # Extract action arrays
             if self.nearest_associate:
@@ -1871,30 +1813,18 @@ class MEC(gym.Env):
             valid_indices = self.nearby_gus_of_uavs[uav_idx, :self.max_GUs_in_range][valid_mask[uav_idx]]
             valid_pos = np.where(valid_mask[uav_idx])[0]
             if len(valid_indices) > 0:
-                # Efficiently assign values using advanced indexing
-                if self.nearest_associate:
-                    transformed_offloading = None
-                else:
+                if offloading_actions is not None:
                     transformed_offloading[uav_idx, valid_indices] = offloading_actions[uav_idx, valid_pos]
-                if self.ave_resource:
-                    transformed_bandwidth = None
-                    transformed_computation = None
-                elif self.ave_bandwidth:
-                    transformed_bandwidth[uav_idx, valid_indices] = None
-                    transformed_computation[uav_idx, valid_indices] = computation_actions[uav_idx, valid_pos]
-                else:
+                if bandwidth_actions is not None:
                     transformed_bandwidth[uav_idx, valid_indices] = bandwidth_actions[uav_idx, valid_pos]
+                if computation_actions is not None:
                     transformed_computation[uav_idx, valid_indices] = computation_actions[uav_idx, valid_pos]
         # Create and return result without copying the entire action_components array
         result = action_components.copy()  # Convert to list if it's not already
         if self.fix_uav_pos:
-            if self.nearest_associate:
-                result[0] = transformed_bandwidth
-                result[1] = transformed_computation
-            else:
-                result[0] = transformed_offloading
-                result[1] = transformed_bandwidth
-                result[2] = transformed_computation
+            result[0] = transformed_offloading
+            result[1] = transformed_bandwidth
+            result[2] = transformed_computation
         else:
             if self.nearest_associate:
                 if self.ave_resource:
@@ -1984,9 +1914,7 @@ class MEC(gym.Env):
 
     def get_neighbor_weights(self):
         # 每个智能体i对邻居的权重为1/ (d(i)+1)
-        positions = self.uav_positions[:, :2]
-        diff = positions[:, np.newaxis, :] - positions[np.newaxis, :, :]  # shape: (n_UAVs, n_UAVs, 2)
-        distances = np.linalg.norm(diff, axis=2)  # shape: (n_UAVs, n_UAVs)
+        distances = self.uav_uav_distances_2d
 
         # Create adjacency matrix based on neighbor_distance
         # adjacency_matrix = (distances <= self.neighbor_distance) & (np.eye(self.n_UAVs) == 0)
@@ -2008,9 +1936,7 @@ class MEC(gym.Env):
                 weights_matrix: An n_UAVs x n_UAVs matrix containing Metropolis weights
             """
         # Calculate pairwise distances between UAVs using vectorization
-        positions = self.uav_positions[:, :2]
-        diff = positions[:, np.newaxis, :] - positions[np.newaxis, :, :]  # shape: (n_UAVs, n_UAVs, 2)
-        distances = np.linalg.norm(diff, axis=2)  # shape: (n_UAVs, n_UAVs)
+        distances = self.uav_uav_distances_2d
 
         # Create adjacency matrix based on neighbor_distance
         adjacency_matrix = (distances <= self.neighbor_distance) & (np.eye(self.n_UAVs) == 0)
@@ -2044,12 +1970,8 @@ class MEC(gym.Env):
         距离由近到远的前self.max_GUs_in_range个地面用户的位置、信道增益和计算任务的信息]。
         """
         # Pre-calculate all UAV-to-UAV distances at once (n_UAVs × n_UAVs matrix)
-        # uav_uav_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.uav_positions[:, :2].T[np.newaxis, :], axis=1)
-        # Pre-calculate all UAV-to-GU distances at once (n_UAVs × n_GUs matrix)
-        # uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)
-        # Pre-calculate 3D distances for channel gain calculations
-        uav_gu_distances_3d = np.linalg.norm(self.uav_positions[:, :3, np.newaxis] - self.gu_positions[:, :3].T[np.newaxis, :], axis=1)
-        # Pre-allocate the result array
+        # uav_uav_distances = self.uav_uav_distances_2d
+        # uav_gu_distances = self.uav_gu_distances_2d
 
         # # obsdim应该不变了。直接就是s_{i,t}已经不动了。
         # if self.concat_neighbor_obs:
@@ -2114,17 +2036,8 @@ class MEC(gym.Env):
                         idx += 2
                         local_obs[i, idx] = self.gu_directions[gu_idx]
                         idx += 1
-                        # Calculate channel gain h_nm
-                        d_nm_3 = uav_gu_distances_3d[i, gu_idx]
-                        theta_nm = 180 / np.pi * np.arcsin((self.H_UAV - self.H_GU) / d_nm_3)
-                        P_LoS = 1 / (1 + a * np.exp(-b * (theta_nm - a)))
-                        P_NLoS = 1 - P_LoS
-                        PL_LoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_LoS
-                        PL_NLoS = 20 * np.log10(4 * np.pi * f_c * d_nm_3 / 3e8) + eta_NLoS
-                        PL_nm = P_LoS * PL_LoS + P_NLoS * PL_NLoS
-                        h_nm = 10 ** (-PL_nm / 10)
                         # Add channel gain (1 value)
-                        local_obs[i, idx] = h_nm
+                        local_obs[i, idx] = self.channel_gains[i, gu_idx]
                         idx += 1
                         # Add task information (3 values)
                         local_obs[i, idx:idx + 3] = self.gu_tasks[gu_idx]
@@ -2171,7 +2084,7 @@ class MEC(gym.Env):
         前 “与自身距离小于Cover_R的地面用户的数目” 个地面用户的可用动作设为1，
         针对后续直到max_GUs_in_range的地面用户的avail_actions占位补位0。
         """
-        uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)
+        uav_gu_distances = self.uav_gu_distances_2d
         local_avail_actions = np.zeros((self.n_UAVs, self.max_GUs_in_range), dtype=np.int32)
         if self.nearest_avail_actions:
             # 重叠覆盖的用户只能卸载到最近的无人机。
@@ -2276,17 +2189,20 @@ class MEC(gym.Env):
         """
         # Pre-allocate the output array with -1 (indicating no user in range)
         nearby_users_sorted = np.full((self.n_UAVs, self.n_GUs), -1, dtype=np.int32)
-        uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)
+        # 使用缓存的距离和掩码
+        uav_gu_distances = self.uav_gu_distances_2d
+        coverage_mask = self.coverage_mask
+
         can_finish = self.gu_tasks[:, 1] / self.F_n <= self.gu_tasks[:, 2]
         for i in range(self.n_UAVs):
             # 把不能完成任务的放在前面。
-            cannot_finish__in_range_mask = (uav_gu_distances[i] <= self.Cover_R) & (~can_finish)
+            cannot_finish__in_range_mask = coverage_mask[i] & (~can_finish)
             cannot_finish__in_range_indices = np.where(cannot_finish__in_range_mask)[0]
             if len(cannot_finish__in_range_indices) != 0:
                 cannot_finish__sorted_indices = cannot_finish__in_range_indices[np.argsort(uav_gu_distances[i][cannot_finish__in_range_indices])]
                 # Fill in the sorted user IDs for this UAV (up to the number of users in range)
                 nearby_users_sorted[i, :len(cannot_finish__in_range_indices)] = cannot_finish__sorted_indices
-            can_finish__in_range_mask = (uav_gu_distances[i] <= self.Cover_R) & can_finish
+            can_finish__in_range_mask = coverage_mask[i] & can_finish
             can_finish__in_range_indices = np.where(can_finish__in_range_mask)[0]
             if len(can_finish__in_range_indices) != 0:
                 can_finish__sorted_indices = can_finish__in_range_indices[np.argsort(uav_gu_distances[i][can_finish__in_range_indices])]

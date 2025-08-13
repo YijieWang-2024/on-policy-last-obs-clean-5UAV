@@ -30,6 +30,13 @@ class MECRunner(Runner):
         self.average_network_parameters_interval = config['all_args'].average_network_parameters_interval
         # if self.whether_average_network_parameters:
         #     self.average_network_parameters()
+        # self.uav_positions = np.zeros((self.episode_length, self.n_rollout_threads, self.n_UAVs, 2))
+        # # self.uav_positions[0] = np.array(
+        # #             [[90, 90], [270, 90], [450, 90], [630, 90], [810, 90],
+        # #              [90, 270], [270, 270], [450, 270], [630, 270], [810, 270],
+        # #              [90, 450], [270, 450], [450, 450], [630, 450], [810, 450],
+        # #              [90, 630], [270, 630], [450, 630], [630, 630], [810, 630],
+        # #              [90, 810], [270, 810], [450, 810], [630, 810], [810, 810]], dtype=np.float)
 
     def run(self):
         self.warmup()   
@@ -52,6 +59,9 @@ class MECRunner(Runner):
                     obs[:, i] = self.normer[i]._obfilt(obs[:, i])
                     share_obs[:, i] = self.normer[i]._statefilt(share_obs[:, i])
                     rewards[:, i] = self.normer[i]._rewsfilt(rewards[:, i], dones[:, i])
+                # if len(infos) > 0:
+                #     for i, info in enumerate(infos):
+                #         self.uav_positions[step, i] = info['uav_positions']
 
                 data = obs, share_obs, rewards, dones, infos, available_actions, \
                        values, actions, action_log_probs, \
@@ -88,6 +98,8 @@ class MECRunner(Runner):
                 if self.env_name == 'mec':
                     for agent_id in range(self.num_agents):
                         train_infos[agent_id].update({'cumulative_reward': np.mean(np.mean([info['cumulative_reward'] for info in infos], axis=0)).round(5)})
+                        train_infos[agent_id].update({'cumulative_individual_reward_wo_cover': np.mean([info['cumulative_individual_reward_wo_cover'] for info in infos], axis=0)[agent_id].round(5)})
+                        train_infos[agent_id].update({'cumulative_reward_wo_cover': np.mean(np.mean([info['cumulative_reward_wo_cover'] for info in infos], axis=0)).round(5)})
                         train_infos[agent_id].update({'system_performance': np.mean(np.mean([info['system_performance'] for info in infos], axis=0)).round(5)})
                         train_infos[agent_id].update({'system_performance_true_all_GUs': np.mean(np.mean([info['system_performance_true_all_GUs'] for info in infos], axis=0)).round(5)})
                         train_infos[agent_id].update({'system_performance_individual': np.mean([info['system_performance_individual'] for info in infos], axis=0)[agent_id].round(5)})
@@ -243,6 +255,7 @@ class MECRunner(Runner):
                 for agent_id in range(self.num_agents):
                     self.buffer[agent_id].advantages += mean_advantage
             elif self.whether_local_add_ave_adadvantage:
+                # buffer更新。local+updated
                 local_advantage = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
                 for agent_id in range(self.num_agents):
                     self.buffer[agent_id].advantages = self.buffer[agent_id].returns[:-1] - self.buffer[agent_id].value_preds[:-1]
@@ -301,6 +314,7 @@ class MECRunner(Runner):
                 #     error_step = np.mean(np.linalg.norm(mean_advantage[:, :] - advantages_0_mean, axis=0))
                 #     print('第', T, '步:', error_step / error_0)
             else:
+                # buffer更新。local
                 for agent_id in range(self.num_agents):
                     self.buffer[agent_id].advantages = self.buffer[agent_id].returns[:-1] - self.buffer[agent_id].value_preds[:-1]
                 for step in range(self.episode_length):
@@ -393,7 +407,7 @@ class MECRunner(Runner):
         # train_infos["average_step_rewards"] = np.mean(self.buffer.rewards)
         for agent_id in range(self.num_agents):
             for k, v in train_infos[agent_id].items():
-                if agent_id==0 or k in ['cumulative_individual_reward', 'system_performance_individual']:
+                if agent_id==0 or k in ['cumulative_individual_reward', 'system_performance_individual', 'cumulative_individual_reward_wo_cover']:
                     agent_k = "agent%i/" % agent_id + k
                     if self.use_wandb:
                         wandb.log({agent_k: v}, step=total_num_steps)
