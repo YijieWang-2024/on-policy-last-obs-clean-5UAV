@@ -1359,7 +1359,8 @@ class MEC(gym.Env):
                     'energy_all_GUs_UAVs':self.energy_all_GUs_UAVs/self.MAX_SIMULATION_TIME,
                     'system_performance_coverd_GUs': self.system_performance_coverd_GUs,
                     'n_GUs_by_coverd':self.n_GUs_by_coverd/(self.MAX_SIMULATION_TIME/2),
-                    'complete_task_ratio':self.complete_task_ratio/self.MAX_SIMULATION_TIME
+                    'complete_task_ratio':self.complete_task_ratio/self.MAX_SIMULATION_TIME,
+                    'uav_positions': self.uav_positions[:, :2],
                     }
         # info['uav_positions'] = self.uav_positions[:, :2]
         return self.obs, rewards, dones, self.state, self.avail_actions, info, self.Metropolis_weights, self.attention_active_mask

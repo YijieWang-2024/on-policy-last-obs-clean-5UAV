@@ -30,7 +30,9 @@ class MECRunner(Runner):
         self.average_network_parameters_interval = config['all_args'].average_network_parameters_interval
         if self.whether_average_network_parameters:
             self.average_network_parameters()
-        # self.uav_positions = np.zeros((self.episode_length, self.n_rollout_threads, self.n_UAVs, 2))
+        # self.n_UAVs = config['all_args'].n_UAVs
+        # self.uav_positions = np.zeros((self.n_rollout_threads, self.n_UAVs, 2))
+        # self.local_advantages = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
         # # self.uav_positions[0] = np.array(
         # #             [[90, 90], [270, 90], [450, 90], [630, 90], [810, 90],
         # #              [90, 270], [270, 270], [450, 270], [630, 270], [810, 270],
@@ -74,6 +76,14 @@ class MECRunner(Runner):
                 
                 # insert data into buffer
                 self.insert(data, step)
+
+            # if (episode % self.save_interval == 0 or episode == episodes - 1):
+            #     for i, info in enumerate(infos):
+            #         self.uav_positions[i] = info['uav_positions']
+            #     np.save(str(self.run_dir) + '/uav_positions_' + str(episode) + '.npy', self.uav_positions)
+            #     for agent_id in range(self.num_agents):
+            #         self.local_advantages[agent_id] = self.buffer[agent_id].returns[:-1] - self.buffer[agent_id].value_preds[:-1]
+            #     np.save(str(self.run_dir) + '/local_advantages_' + str(episode) + '.npy', self.local_advantages)
 
             # compute return and update network
             self.compute()
@@ -536,3 +546,42 @@ class MECRunner(Runner):
         # 恢复 normer 对象
         normer_path = str(self.model_dir) + "/normer.pkl"
         self.normer.load(normer_path)
+
+    def run_consensus_algorithm(self, local_observations, max_iterations):
+        """
+            Run the consensus algorithm to share local observations among UAVs.
+            Args:
+                positions: UAV positions with shape (n_rollout_threads, n_UAVs, 2)
+                local_observations: Local observations with shape (n_UAVs, episode_length, n_rollout_threads, 1)
+                neighbor_distance: Maximum distance for two UAVs to be neighbors
+                max_iterations: Maximum number of consensus iterations
+            Returns:
+                Updated observations after consensus with shape (n_UAVs, episode_length, n_rollout_threads, 1)
+            """
+        # 重新组织观测数据，使计算更直接
+        # 新形状: (n_rollout_threads, n_UAVs, episode_length, 1)
+        obs = np.transpose(local_observations, (2, 0, 1, 3))
+        # 初始化共识估计值
+        consensus_estimates = np.copy(obs)
+
+        weight_matrices = np.zeros((self.num_agents, self.n_rollout_threads, self.num_agents))
+        for agent_id in range(self.num_agents):
+            weight_matrices[agent_id] = self.buffer[agent_id].Metropolis_weights[-1]
+        weight_matrices = np.transpose(weight_matrices, (1,0,2))
+
+        # Run consensus iterations
+        for iteration in range(max_iterations):
+            for env_idx in range(self.n_rollout_threads):
+                weights = weight_matrices[env_idx]  # (n_UAVs, n_UAVs)
+                # 使用矩阵乘法执行共识迭代
+                thread_estimates = consensus_estimates[env_idx]  # (n_UAVs, episode_length, 1)
+                # 使用矩阵乘法进行更新 (n_UAVs, n_UAVs) @ (n_UAVs, episode_length, 1)
+                # 重塑为2D进行矩阵乘法，然后恢复原始形状
+                reshaped_estimates = thread_estimates.reshape(self.num_agents, -1)  # (n_UAVs, episode_length*1)
+                updated_estimates = weights @ reshaped_estimates  # (n_UAVs, episode_length*1)
+                thread_estimates = updated_estimates.reshape(self.num_agents, self.episode_length, 1)
+                consensus_estimates[env_idx] = thread_estimates
+
+        # 转置回原始格式: (n_UAVs, episode_length, n_rollout_threads, 1)
+        result = np.transpose(consensus_estimates, (1, 2, 0, 3))
+        return result
