@@ -10,6 +10,7 @@ from typing import Dict, Tuple, List, Optional
 from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 import warnings
+from matplotlib.patches import Circle
 
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
@@ -214,7 +215,21 @@ class MEC(gym.Env):
         # self.max_UAVs_obs_concat = args.n_UAVs # 这个是s_{M_i^k}跳要拼接的无人机s_{i,t}的数目。 放在之前就是构造一跳观测的s_{M_i^1}拼接数目。
         self.local_reward = args.local_reward
         self.n_agents = self.n_UAVs                 # 100架飞机。
-        self.x_max = args.x_max                  # 15km*15km的范围
+        self.x_min_uav = args.x_min_uav
+        self.x_max_uav = args.x_max_uav
+        self.y_min_uav = args.y_min_uav
+        self.y_max_uav = args.y_max_uav
+        self.x_min_gu = args.x_min_gu  # 15km*15km的范围
+        self.x_max_gu = args.x_max_gu  # 15km*15km的范围
+        self.y_min_gu = args.y_min_gu  # 15km*15km的范围
+        self.y_max_gu = args.y_max_gu  # 15km*15km的范围
+
+        if self.x_max_gu == 300 and self.n_GUs == 40:
+            # 在[0, 0]到[300, 300]的区域内有40个用户
+            self.x_min_all_gus = np.array([self.x_min_gu]*35+[100]*5)
+            self.x_max_all_gus = np.array([self.x_max_gu]*35+[200]*5)
+            self.y_min_all_gus = np.array([self.y_min_gu] * 35 + [100] * 5)
+            self.y_max_all_gus = np.array([self.y_max_gu] * 35 + [200] * 5)
         self.alpha_r = args.alpha_r
         self.beta_r = args.beta_r
         self.gamma_r = args.gamma_r
@@ -276,24 +291,34 @@ class MEC(gym.Env):
             self.GUs_in_action_dim = self.max_GUs_in_range
             # self.obs_dim = 3 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 3 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
+            self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
+            self.state_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
 
             # 不要邻居无人机的位置。
-            self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
-            self.state_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
+            # self.state_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
+            # self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            # self.state_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
         elif self.state_is_k_hops:  # last-obs的k跳。自己的s_{i,t}是包括覆盖范围内的无人机的。
             self.GUs_in_action_dim = self.max_GUs_in_range
             # # 包括覆盖范围内d_cov的无人机信息。
             # self.obs_dim = 3 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 3 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
+            self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
+            self.state_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
             # 不要邻居无人机的位置。
-            self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
-            self.state_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
+            # self.state_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
+            # self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            # self.state_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
         else:
             # self.GUs_in_action_dim = self.n_GUs
             self.GUs_in_action_dim = self.max_GUs_in_range
             # self.obs_dim = 3 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range   # 局部obs的dim
+            self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
             # 不要邻居无人机的位置。
-            self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
+            # self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
 
             # self.state_dim = 1 + 3 +  2*self.n_UAVs+6*self.n_GUs +1
             # self.state_dim = self.n_UAVs * (self.obs_dim + int(self.ob_state_with_timestep))
@@ -375,17 +400,26 @@ class MEC(gym.Env):
         self.coverage_mask = None
 
         # 初始化UAV位置
-        self.uav_positions = np.random.uniform(0, self.x_max, (self.n_UAVs, 2))
-        self.uav_positions = np.hstack((self.uav_positions, self.H_UAV * np.ones((self.n_UAVs, 1))))
-        self.drones = [DroneInfo(i) for i in range(self.n_UAVs)]
-        # 修改1: 初始化时每个无人机知道所有其他无人机的初始位置
-        for i, drone in enumerate(self.drones):
-            for j in range(self.n_UAVs):
-                drone.known_positions[j] = (self.uav_positions[j][:2].copy(), 0, 0 if i == j else 1)
+        uav_x = np.random.uniform(self.x_min_uav, self.x_max_uav, self.n_UAVs)
+        uav_y = np.random.uniform(self.y_min_uav, self.y_max_uav, self.n_UAVs)
+        uav_z = np.full(self.n_UAVs, self.H_UAV)
+        self.uav_positions = np.column_stack((uav_x, uav_y, uav_z))
+        # self.uav_positions = np.random.uniform(0, self.x_max, (self.n_UAVs, 2))
+        # self.uav_positions = np.hstack((self.uav_positions, self.H_UAV * np.ones((self.n_UAVs, 1))))
+        # self.drones = [DroneInfo(i) for i in range(self.n_UAVs)]
+        # # 修改1: 初始化时每个无人机知道所有其他无人机的初始位置
+        # for i, drone in enumerate(self.drones):
+        #     for j in range(self.n_UAVs):
+        #         drone.known_positions[j] = (self.uav_positions[j][:2].copy(), 0, 0 if i == j else 1)
 
         # Initialize ground user positions with fixed height of 1m
-        self.gu_positions = np.random.uniform(0, self.x_max, (self.n_GUs, 2))
-        self.gu_positions = np.hstack((self.gu_positions, self.H_GU * np.ones((self.n_GUs, 1))))
+        # 用的是reset的办法。这里没啥用。
+        gu_x = np.random.uniform(self.x_min_gu, self.x_max_gu, self.n_GUs)
+        gu_y = np.random.uniform(self.y_min_gu, self.y_max_gu, self.n_GUs)
+        gu_z = np.full(self.n_GUs, self.H_GU)
+        self.gu_positions = np.column_stack((gu_x, gu_y, gu_z))
+        # self.gu_positions = np.random.uniform(0, self.x_max, (self.n_GUs, 2))
+        # self.gu_positions = np.hstack((self.gu_positions, self.H_GU * np.ones((self.n_GUs, 1))))
         # Gauss-Markov Model parameters
         # self.alpha_gaussian = 0.95
         self.alpha_gaussian = 0.7
@@ -404,7 +438,7 @@ class MEC(gym.Env):
         self.system_performance_true_all_GUs = np.zeros((self.n_agents,))
         self.system_performance_coverd_GUs = np.zeros((self.n_agents,))
         self.delay_true_all_GUs = np.zeros((self.n_agents,))
-        self.delay_true_coverd_GUs = np.zeros((self.n_agents,))
+        self.delay_true_coverd_GUs = np.zeros((self.n_agents, 2))
         self.energy_true_all_GUs = np.zeros((self.n_agents,))
         self.energy_all_GUs_UAVs = np.zeros((self.n_agents,))
         self.n_GUs_by_coverd = 0
@@ -422,6 +456,11 @@ class MEC(gym.Env):
         # get_local_obs()里边，是重新挨个计算的距离。
         self.average_neighbor_advantage = args.average_neighbor_advantage
         self.Metropolis_weights = None      # Metropolis_weights，用来对邻居的Adv进行加权求和。
+        self.proposed_offload_actions = np.zeros((self.n_UAVs, self.n_GUs))     # 用来画render。
+        # self.proposed_offload_actions_all_time = np.zeros((self.MAX_SIMULATION_TIME+1, self.n_UAVs, self.n_GUs))     # 用来画render。
+        # self.uav_positions_all_time = np.zeros((self.MAX_SIMULATION_TIME+1, self.n_UAVs, 2))
+        # self.gu_positions_all_time = np.zeros((self.MAX_SIMULATION_TIME+1, self.n_GUs, 4))    # 位置(x, y)和速度，方向
+        # self.system_performance_all_uavs = np.zeros((self.MAX_SIMULATION_TIME+1, self.n_UAVs))
 
     def generate_tasks(self):
         tasks = np.zeros((self.n_GUs, 3))
@@ -457,19 +496,26 @@ class MEC(gym.Env):
         #     if x_pos >= self.x_max:
         #         x_pos = x_start
         #         y_pos += y_spacing
-        if self.n_UAVs == 9 and self.x_max == 600 and self.n_GUs == 80:
+        if self.n_UAVs == 9 and self.x_min_gu == 0 and self.x_max_gu == 600 and self.n_GUs == 80:
             self.uav_positions = np.array([[120, 120, self.H_UAV], [300,120, self.H_UAV], [480, 120, self.H_UAV],
                                            [120, 300, self.H_UAV], [300, 300, self.H_UAV], [480, 300, self.H_UAV],
                                            [120, 480, self.H_UAV],[300, 480, self.H_UAV], [480, 480, self.H_UAV]], dtype=np.float32)
-        # if self.n_UAVs == 4 and self.x_max == 400 and self.n_GUs == 40:
-        #     self.uav_positions = np.array([[25, 25, self.H_UAV], [375, 25, self.H_UAV], [25, 375, self.H_UAV],
-        #                                    [375, 375, self.H_UAV]], dtype=np.float32)
-        elif self.n_UAVs == 4 and self.x_max == 400 and self.n_GUs == 40:
-            self.uav_positions = np.array([[100, 100, self.H_UAV], [300, 100, self.H_UAV], [100, 300, self.H_UAV],
-                                           [300, 300, self.H_UAV]], dtype=np.float32)
+        elif self.n_UAVs == 4 and self.x_min_gu == 0 and self.x_max_gu == 400 and self.n_GUs == 40:
+            self.uav_positions = np.array([[50, 25, self.H_UAV], [100, 25, self.H_UAV], [150, 25, self.H_UAV],
+                                           [200, 25, self.H_UAV]], dtype=np.float32)
+        # elif self.n_UAVs == 4 and self.x_min_gu == 0 and self.x_max_gu == 400 and self.n_GUs == 40:
+        #     self.uav_positions = np.array([[100, 100, self.H_UAV], [300, 100, self.H_UAV], [100, 300, self.H_UAV],
+        #                                    [300, 300, self.H_UAV]], dtype=np.float32)
             # # 添加上随机性。
             # np.random.shuffle(self.uav_positions)
-        elif self.n_UAVs == 16 and self.x_max == 900 and self.n_GUs == 200:
+        elif self.n_UAVs == 4 and self.x_min_gu == 0 and self.x_max_gu == 300 and self.n_GUs == 40 and self.x_max_uav==600:
+            self.uav_positions = np.array([[75, 150, self.H_UAV], [225, 150, self.H_UAV], [600, 500, self.H_UAV],
+                                           [500, 600, self.H_UAV]], dtype=np.float32)
+        elif self.n_UAVs == 9 and self.x_min_gu == 0 and self.x_max_gu == 650 and self.n_GUs == 100 and self.x_max_uav==650:
+            self.uav_positions = np.array([[110, 110, self.H_UAV], [330, 110, self.H_UAV], [550, 110, self.H_UAV],
+                     [110, 330, self.H_UAV], [330, 330, self.H_UAV], [550, 330, self.H_UAV],
+                     [110, 550, self.H_UAV], [330, 550, self.H_UAV], [550, 550, self.H_UAV]], dtype=np.float32)
+        elif self.n_UAVs == 16 and self.x_min_gu == 0 and self.x_max_gu == 900 and self.n_GUs == 200:
             self.uav_positions = np.array(
                     [[112.5, 112.5, self.H_UAV], [337.5, 112.5, self.H_UAV], [562.5, 112.5, self.H_UAV], [787.5, 112.5, self.H_UAV],
                      [112.5, 337.5, self.H_UAV], [337.5, 337.5, self.H_UAV], [562.5, 337.5, self.H_UAV], [787.5, 337.5, self.H_UAV],
@@ -485,7 +531,15 @@ class MEC(gym.Env):
             #                                [731.25, 731.25, self.H_UAV], [843.75, 731.25, self.H_UAV], [731.25, 843.75, self.H_UAV], [843.75, 843.75, self.H_UAV]], dtype=np.float32)
             # 添加上随机性。
             np.random.shuffle(self.uav_positions)
-        elif self.n_UAVs == 25 and self.x_max == 900 and self.n_GUs == 200:
+        elif self.n_UAVs == 16 and self.x_min_gu == 0 and self.x_max_gu == 800 and self.n_GUs == 160:
+            self.uav_positions = np.array(
+                [[80, 50, self.H_UAV], [160, 50, self.H_UAV], [240, 50, self.H_UAV], [320, 50, self.H_UAV],
+                 [400, 50, self.H_UAV], [480, 50, self.H_UAV], [560, 50, self.H_UAV], [640, 50, self.H_UAV],
+                 [50, 80, self.H_UAV], [50, 160, self.H_UAV], [50, 240, self.H_UAV], [50, 320, self.H_UAV],
+                 [50, 400, self.H_UAV], [50, 480, self.H_UAV], [50, 560, self.H_UAV], [50, 640, self.H_UAV]],
+                    dtype=np.float32)
+            # np.random.shuffle(self.uav_positions)
+        elif self.n_UAVs == 25 and self.x_min_gu == 0 and self.x_max_gu == 900 and self.n_GUs == 200:
             self.uav_positions = np.array(
                     [[90, 90, self.H_UAV], [270, 90, self.H_UAV], [450, 90, self.H_UAV], [630, 90, self.H_UAV], [810, 90, self.H_UAV],
                      [90, 270, self.H_UAV], [270, 270, self.H_UAV], [450, 270, self.H_UAV], [630, 270, self.H_UAV], [810, 270, self.H_UAV],
@@ -495,7 +549,7 @@ class MEC(gym.Env):
             # 添加上随机性。
             np.random.shuffle(self.uav_positions)
 
-        elif self.n_UAVs in [5,10,15,20,25] and self.x_max==1000 and self.n_GUs==220:
+        elif self.n_UAVs in [5,10,15,20,25] and self.x_min_gu == 0 and self.x_max_gu==1000 and self.n_GUs==220:
             if self.n_UAVs == 5:
                 self.uav_positions = np.array([[250, 250, self.H_UAV], [750, 250, self.H_UAV], [500, 500, self.H_UAV],
                                                [250, 750, self.H_UAV], [750, 750, self.H_UAV]], dtype=np.float32)
@@ -536,13 +590,22 @@ class MEC(gym.Env):
                 drone.known_positions[j] = (self.uav_positions[j][:2].copy(), 0, 0 if i == j else 1)
 
         # np.random.seed(0)
-        # Initialize ground user positions with fixed height of 1m
-        self.gu_positions = np.random.uniform(0, self.x_max, (self.n_GUs, 2))
-        distances = np.sqrt(np.sum(self.gu_positions ** 2, axis=1))
+        # # Initialize ground user positions with fixed height of 1m
+        # self.gu_positions = np.random.uniform(0, self.x_max, (self.n_GUs, 2))
+        # distances = np.sqrt(np.sum(self.gu_positions ** 2, axis=1))
+        # sorted_indices = np.argsort(distances)
+        # self.gu_positions = self.gu_positions[sorted_indices]
+        # self.gu_positions = np.hstack((self.gu_positions, self.H_GU * np.ones((self.n_GUs, 1))))
+        gu_x = np.random.uniform(self.x_min_gu, self.x_max_gu, self.n_GUs)
+        gu_y = np.random.uniform(self.y_min_gu, self.y_max_gu, self.n_GUs)
+        if self.x_max_gu == 300 and self.n_GUs == 40:
+            gu_x[-5:] =  np.random.uniform(100, 200, 5)
+            gu_y[-5:] =  np.random.uniform(100, 200, 5)
+        gu_z = np.full(self.n_GUs, self.H_GU)
+        self.gu_positions = np.column_stack((gu_x, gu_y, gu_z))
+        distances = np.linalg.norm(self.gu_positions, axis=1)
         sorted_indices = np.argsort(distances)
         self.gu_positions = self.gu_positions[sorted_indices]
-
-        self.gu_positions = np.hstack((self.gu_positions, self.H_GU * np.ones((self.n_GUs, 1))))
         self.gu_velocities = np.random.normal(self.mean_velocity, 0.3*self.std_dev_gaussian, self.n_GUs)
         self.gu_velocities = np.clip(self.gu_velocities, 0.7* self.mean_velocity, 1.3 * self.mean_velocity)
         self.gu_directions = np.random.uniform(0, 2 * np.pi, self.n_GUs)
@@ -627,7 +690,7 @@ class MEC(gym.Env):
         self.system_performance_true_all_GUs = np.zeros((self.n_agents,))
         self.system_performance_coverd_GUs = np.zeros((self.n_agents,))
         self.delay_true_all_GUs = np.zeros((self.n_agents,))
-        self.delay_true_coverd_GUs = np.zeros((self.n_agents,))
+        self.delay_true_coverd_GUs = np.zeros((self.n_agents, 2))
         self.energy_true_all_GUs = np.zeros((self.n_agents,))
         self.energy_all_GUs_UAVs = np.zeros((self.n_agents,))
         self.n_GUs_by_coverd = 0
@@ -638,6 +701,18 @@ class MEC(gym.Env):
         self.n_GUs_per_uav_served = np.zeros((self.n_UAVs,))  # 每架无人机每个时刻服务的用户数目，再对step求平均
         self.cumulative_individual_reward_wo_cover = np.zeros((self.n_UAVs,))
         self.cumulative_reward_wo_cover = np.zeros((self.n_UAVs,))
+        self.env_id = np.random.randn()
+        # if self.env_id in [0.2645712998311468, -0.39160536737987467, -0.05837604037964826, 0.2307092654537442, 1.428101796849161, -0.7050493998306726]:
+        # if self.env_id == -0.7050493998306726:
+        # # if self.env_id:
+        #     self.uav_positions_all_time[0] = self.uav_positions[:, :2]
+        #     self.gu_positions_all_time[0, :, :2] = self.gu_positions[:, :2]
+        #     self.gu_positions_all_time[0, :, 2] = self.gu_velocities
+        #     self.gu_positions_all_time[0, :, 3] = self.gu_directions
+        #     if self.time_step % 5 == 0:
+        #         self.render(timestep=self.time_step, title=str(np.round(self.env_id, 4))+'-'+'185')
+        #         # # # # # # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
+        #         time.sleep(0.05)
         return self.obs, self.state, self.avail_actions, self.Metropolis_weights, self.attention_active_mask
 
     def _update_distance_matrices(self):
@@ -1242,6 +1317,11 @@ class MEC(gym.Env):
                         total = np.sum(actions[2][m])
                         if total > 1:
                             actions[2][m] = actions[2][m] / total
+        if actions[0].shape[1] == 2:
+            self.proposed_offload_actions = actions[1]
+        else:
+            self.proposed_offload_actions = actions[0]
+        # self.proposed_offload_actions_all_time[self.time_step] = self.proposed_offload_actions
         return np.concatenate(actions, axis=-1)
 
     def step(self, action):   # acts是一个(n_agents, )的数组，每个元素代表动作序号
@@ -1335,16 +1415,35 @@ class MEC(gym.Env):
             self.Metropolis_weights = self.get_neighbor_weights()
         else:
             self.Metropolis_weights = self.get_Metropolis_weights()
+        # # if self.env_id in [0.2645712998311468, -0.39160536737987467, -0.05837604037964826, 0.2307092654537442, 1.428101796849161, -0.7050493998306726]:
+        # #     if self.time_step % 5 == 0:
+        # #         self.render(timestep=self.time_step, title=str(np.round(self.env_id, 4)) + '-' + '185', acts=self.proposed_offload_actions)
+        # #         # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
+        # #         time.sleep(0.05)
+        # if self.env_id == -0.7050493998306726:
+        # # # if self.env_id:
+        #     self.uav_positions_all_time[self.time_step] = self.uav_positions[:, :2]
+        #     self.gu_positions_all_time[self.time_step, :, :2] = self.gu_positions[:, :2]
+        #     self.gu_positions_all_time[self.time_step, :, 2] = self.gu_velocities
+        #     self.gu_positions_all_time[self.time_step, :, 3] = self.gu_directions
+        # #     if self.time_step in [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110]:
+        # #         self.render(timestep=self.time_step, title=str(np.round(self.env_id, 4)) + '-' + '185',
+        # #                     acts=self.proposed_offload_actions)
+        # #         # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
+        # #         time.sleep(0.05)
         # if self.time_step % 5 == 0:
-        #     if self.not_process_action:
-        #         transformed_action_components = self.transform_uav_actions(action)
-        #         processed_actions = self.process_actions(transformed_action_components)
-        #     else:
-        #         processed_actions = self.transform_uav_actions(action)
-        #     self.render(timestep=self.time_step, title='24', acts=processed_actions[:, 2:2+self.n_GUs])
-        #     # # # # # # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
+        #     self.render(timestep=self.time_step, title='200', acts=self.proposed_offload_actions)
+        #     # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
         #     time.sleep(0.05)
         if self.time_step >= self.MAX_SIMULATION_TIME:
+            # if self.env_id == -0.7050493998306726:
+            #     np.save('-0.705uav_positions_all_time' + '.npy', self.uav_positions_all_time)
+            #     np.save('-0.705gu_positions_all_time' + '.npy', self.gu_positions_all_time)
+            #     np.save('-0.705system_performance_all_uavs' + '.npy', self.system_performance_all_uavs)
+            #     np.save('-0.705proposed_offload_actions_all_time' + '.npy', self.proposed_offload_actions_all_time)
+            #     print('save successfully.')
+            # # if self.env_id:
+            #     # np.save('system_performance_all_uavs'+str(np.round(self.env_id, 4)) + '.npy', self.system_performance_all_uavs)
             dones = 1 - dones
             info = {'cumulative_reward': self.cumulative_reward, 'n_GUs_per_uav_served': self.n_GUs_per_uav_served/self.MAX_SIMULATION_TIME,
                     'uav_m_toal_energy_consumption': self.uav_energy_consumption, 'user_in_m_average_delay': self.user_average_delay/self.MAX_SIMULATION_TIME,
@@ -1354,7 +1453,7 @@ class MEC(gym.Env):
                     'system_performance_individual': self.system_performance_individual,
                     'system_performance_true_all_GUs': self.system_performance_true_all_GUs,
                     'delay_true_all_GUs':self.delay_true_all_GUs/self.MAX_SIMULATION_TIME,
-                    'delay_true_coverd_GUs':self.delay_true_coverd_GUs/self.MAX_SIMULATION_TIME,
+                    'delay_true_coverd_GUs':self.delay_true_coverd_GUs[:, 0] / self.delay_true_coverd_GUs[:, 1] /self.MAX_SIMULATION_TIME,
                     'energy_true_all_GUs':self.energy_true_all_GUs/self.MAX_SIMULATION_TIME,
                     'energy_all_GUs_UAVs':self.energy_all_GUs_UAVs/self.MAX_SIMULATION_TIME,
                     'system_performance_coverd_GUs': self.system_performance_coverd_GUs,
@@ -1485,7 +1584,7 @@ class MEC(gym.Env):
                 total_delay = self.gu_tasks[n, 1] / self.F_n
 
                 if self.gu_tasks[n, 2] > total_delay:
-                    per_GU_delay_reward_others[n] = self.gamma_r * (self.gu_tasks[n, 2] - total_delay)
+                    per_GU_delay_reward_others[n] = self.gamma_r * (1+self.gu_tasks[n, 2] - total_delay)
                     self.complete_task[n] = 1
                     self.self_complete_task[n] = 1
                 else:
@@ -1501,13 +1600,13 @@ class MEC(gym.Env):
                 if self.not_served_rew_to_ave:
                     # 未被服务的用户奖励平分给覆盖的无人机。
                     if len(uav_indices) > 0:
-                        R_task_delay[uav_indices] += self.gamma_r * (self.gu_tasks[n, 2] - total_delay) / len(uav_indices) if self.gu_tasks[n, 2] > total_delay else -1 * self.delta_r / len(uav_indices)
+                        R_task_delay[uav_indices] += self.gamma_r * (1 + self.gu_tasks[n, 2] - total_delay) / len(uav_indices) if self.gu_tasks[n, 2] > total_delay else -1 * self.delta_r / len(uav_indices)
                         R_task_energy[uav_indices] += -1 * self.lambda_r * np.clip(total_energy, 0, 10) / len(uav_indices)
                 if self.not_served_rew_to_nearest:
                     # 未被服务的用户奖励只给距离最近的那个无人机。
                     if len(uav_indices) > 0:
                         nearest_uav = np.argmin(uav_gu_distances_2d[:, n])
-                        R_task_delay[nearest_uav] += self.gamma_r * (self.gu_tasks[n, 2] - total_delay) if self.gu_tasks[n, 2] > total_delay else -1 * self.delta_r
+                        R_task_delay[nearest_uav] += self.gamma_r * (1 + self.gu_tasks[n, 2] - total_delay) if self.gu_tasks[n, 2] > total_delay else -1 * self.delta_r
                         R_task_energy[nearest_uav] += -1 * self.lambda_r * np.clip(total_energy, 0, 10)
             else:
                 # 记录自己能不能完成任务。
@@ -1533,11 +1632,11 @@ class MEC(gym.Env):
                 total_energy = E_trans + E_exe
                 total_delay = tau_trans + tau_exe
                 # 指服务的无人机有奖励。
-                R_task_delay[m] += self.gamma_r * (gu_n_task[2] - total_delay) if gu_n_task[2] > total_delay else -1 * self.delta_r
+                R_task_delay[m] += self.gamma_r * (1+gu_n_task[2] - total_delay) if gu_n_task[2] > total_delay else -1 * self.delta_r
                 R_task_energy[m] += -1 * self.lambda_r * np.clip(total_energy, 0, 10)  # 这里10，自己加的规定，由于大于1才重新分配动作，某些很少的资源导致计算的时延和能量巨大！ 通常情况下仅为10以内（其实看到的最大只有1.8）。
 
                 if self.gu_tasks[n, 2] > total_delay:
-                    per_GU_delay_reward[n] = self.gamma_r * (self.gu_tasks[n, 2] - total_delay)
+                    per_GU_delay_reward[n] = self.gamma_r * (1+self.gu_tasks[n, 2] - total_delay)
                     self.complete_task[n] = 1
                 else:
                     per_GU_delay_reward[n] = -1 * self.delta_r
@@ -1574,7 +1673,9 @@ class MEC(gym.Env):
             self.uav_positions[:, 1] += dy
 
             # 确保在边界内
-            self.uav_positions[:, :2] = np.clip(self.uav_positions[:, :2], 0, self.x_max)
+            # self.uav_positions[:, :2] = np.clip(self.uav_positions[:, :2], 0, self.x_max)
+            self.uav_positions[:, 0] = np.clip(self.uav_positions[:, 0], self.x_min_uav, self.x_max_uav)
+            self.uav_positions[:, 1] = np.clip(self.uav_positions[:, 1], self.y_min_uav, self.y_max_uav)
         # 更新用户位置。 Update GU positions
         # Update ground user velocities and directions using Gauss-Markov Model
         random_normal_vel = np.random.normal(0, 0.01 * self.std_dev_gaussian, self.n_GUs)
@@ -1584,17 +1685,30 @@ class MEC(gym.Env):
         # Update ground user positions
         self.gu_positions[:, 0] += self.gu_velocities * np.cos(self.gu_directions) * self.Delta_t
         self.gu_positions[:, 1] += self.gu_velocities * np.sin(self.gu_directions) * self.Delta_t
-        # 向量化处理边界碰撞
-        x_out_min = self.gu_positions[:, 0] < 0
-        x_out_max = self.gu_positions[:, 0] > self.x_max
-        y_out_min = self.gu_positions[:, 1] < 0
-        y_out_max = self.gu_positions[:, 1] > self.x_max
 
-        # 反射位置
-        self.gu_positions[x_out_min, 0] = -self.gu_positions[x_out_min, 0]
-        self.gu_positions[x_out_max, 0] = 2 * self.x_max - self.gu_positions[x_out_max, 0]
-        self.gu_positions[y_out_min, 1] = -self.gu_positions[y_out_min, 1]
-        self.gu_positions[y_out_max, 1] = 2 * self.x_max - self.gu_positions[y_out_max, 1]
+        if self.x_max_gu == 300 and self.n_GUs == 40:
+            # 在[0, 0]到[300, 300]的区域内有40个用户
+            x_out_min = self.gu_positions[:, 0] < self.x_min_all_gus
+            x_out_max = self.gu_positions[:, 0] > self.x_max_all_gus
+            y_out_min = self.gu_positions[:, 1] < self.y_min_all_gus
+            y_out_max = self.gu_positions[:, 1] > self.y_max_all_gus
+            # 反射位置
+            self.gu_positions[x_out_min, 0] = 2 * self.x_min_all_gus[x_out_min] - self.gu_positions[x_out_min, 0]
+            self.gu_positions[x_out_max, 0] = 2 * self.x_max_all_gus[x_out_max] - self.gu_positions[x_out_max, 0]
+            self.gu_positions[y_out_min, 1] = 2 * self.y_min_all_gus[y_out_min] - self.gu_positions[y_out_min, 1]
+            self.gu_positions[y_out_max, 1] = 2 * self.y_max_all_gus[y_out_max] - self.gu_positions[y_out_max, 1]
+        else:
+            # 向量化处理边界碰撞
+            x_out_min = self.gu_positions[:, 0] < self.x_min_gu
+            x_out_max = self.gu_positions[:, 0] > self.x_max_gu
+            y_out_min = self.gu_positions[:, 1] < self.y_min_gu
+            y_out_max = self.gu_positions[:, 1] > self.y_max_gu
+
+            # 反射位置
+            self.gu_positions[x_out_min, 0] = 2 * self.x_min_gu - self.gu_positions[x_out_min, 0]
+            self.gu_positions[x_out_max, 0] = 2 * self.x_max_gu - self.gu_positions[x_out_max, 0]
+            self.gu_positions[y_out_min, 1] = 2 * self.y_min_gu - self.gu_positions[y_out_min, 1]
+            self.gu_positions[y_out_max, 1] = 2 * self.y_max_gu - self.gu_positions[y_out_max, 1]
 
         # 处理方向反射
         hit_vertical = x_out_min | x_out_max
@@ -1618,6 +1732,10 @@ class MEC(gym.Env):
 
         self._update_distance_matrices()
 
+        # if self.env_id == -0.7050493998306726:
+        # # if self.env_id:
+        #     self.system_performance_all_uavs[self.time_step] = R_task_delay + R_task_energy + R_fly_energy
+
         R_collision = -1 * self.mu_r * (np.sum(self.uav_uav_distances_2d < self.Dis_min, axis=1) - 1)
         rewards = R_task_delay + R_task_energy + R_fly_energy + R_collision
         # has_neighbors = np.any((uav_uav_distances < self.neighbor_distance) &  (np.eye(self.n_UAVs) == 0), axis=1)
@@ -1626,14 +1744,18 @@ class MEC(gym.Env):
 
         self.cumulative_individual_reward_wo_cover += rewards
         self.cumulative_reward_wo_cover += np.mean(rewards) * np.ones_like(rewards)
+        # if self.x_max_gu == 300 and self.n_GUs == 40:
+        #     uav_distance_to_150 = np.linalg.norm(self.uav_positions[:, :2] - np.array([150, 150]), axis=1)
+        #     rewards[uav_distance_to_150 > 220] -= uav_distance_to_150[uav_distance_to_150 > 220] / 640
+        #     # (np.sqrt(2)*150+110)**2 = 103769.  np.sqrt(2)*150=213   (150, 150)到(600,600)的距离np.sqrt(2)*450=636
 
         # 一、加上未覆盖用户的惩罚。
-        if self.alpha_r != 0:
-            # 一、1 利用所有无人机、用户的真实位置计算奖励
-            uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)    #（n_UAVs, n_GUs）
-            coverd_gu = np.any(uav_gu_distances<=self.Cover_R, axis=0)      # (n_GUs,)
-            R_cover_all = -1 * self.alpha_r * (self.n_GUs - np.sum(coverd_gu)) / self.n_GUs
-            rewards += R_cover_all
+        # if self.alpha_r != 0:
+            # # 一、1 利用所有无人机、用户的真实位置计算奖励
+            # uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)    #（n_UAVs, n_GUs）
+            # coverd_gu = np.any(uav_gu_distances<=self.Cover_R, axis=0)      # (n_GUs,)
+            # R_cover_all = -1 * self.alpha_r * (self.n_GUs - np.sum(coverd_gu)) / self.n_GUs
+            # rewards += R_cover_all
             # # 一、2 根据{M_i^1}邻居之间通信，利用1跳无人机的s_{i,t} 估计覆盖的总用户数目
             # uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)  # （n_UAVs, n_GUs）
             # # update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_R)
@@ -1653,36 +1775,48 @@ class MEC(gym.Env):
             #     coverd_gu_estimated_i = min(np.sum(coverd_gu_i) * self.n_UAVs / num_knowledge_id_i, self.n_GUs)
             #     R_cover_all[i] = -1 * self.alpha_r * (self.n_GUs - coverd_gu_estimated_i) / self.n_GUs
             # rewards += R_cover_all
+            # # 3. 用和邻居的覆盖信息来计算奖励
+            # R_cover_all = np.zeros(self.n_UAVs)
+            # for n in range(self.n_GUs):
+            #     uav_indices = np.where(coverage_mask[:, n])[0]
+            #     if len(uav_indices) > 0:
+            #         R_cover_all[uav_indices] += self.alpha_r * 1 / len(uav_indices)
+            # rewards += R_cover_all
+            # # 4.新的全局覆盖奖励
+            # uav_gu_distances = np.linalg.norm(self.uav_positions[:, :2, np.newaxis] - self.gu_positions[:, :2].T[np.newaxis, :], axis=1)    #（n_UAVs, n_GUs）
+            # coverd_gu = np.any(uav_gu_distances<=self.Cover_R, axis=0)      # (n_GUs,)
+            # R_cover_all = self.alpha_r * np.sum(coverd_gu)
+            # rewards += R_cover_all
 
-        # 二、加上覆盖面积的惩罚
-        if self.epsilon_r != 0:
-            # 二、1 利用真实位置计算奖励
-            R_cover_areas = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, true_positions = self.uav_positions[:, :2])) / (self.x_max**2)
-            rewards += R_cover_areas
-            # # 二、2 根据邻居之间通信，利用延迟的位置计算奖励。     （这些都不符合R(s_{M_i^1}, a_{M_i^1})或者不符合p(s_{i,t+1} | s_{M_i^1}, a_{M_i^1})）
-            # update_drone_knowledge(self.drones, self.uav_positions[:, :2], self.time_step, self.neighbor_distance)
-            # R_cover_areas = np.zeros(self.n_UAVs)
-            # for i in range(self.n_UAVs):
-            #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, known_positions = self.drones[i].known_positions)) / (self.x_max**2)
-            # rewards += R_cover_areas
-            # # 二、3 根据{M_i^1}邻居之间通信，根据1跳邻居所知道的无人机位置 估计覆盖的总面积。
-            # # update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_R)
-            # update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_distance)
-            # R_cover_areas = np.zeros(self.n_UAVs)
-            # for i in range(self.n_UAVs):
-            #     knowledge_position_i = self.uav_positions[np.array(list(self.drones[i].drone_knowledge)), :2]
-            #     num_knwoledge_i = len(knowledge_position_i)
-            #     # if num_knwoledge_i <= 1:
-            #     #     # 如果就没有一跳邻居。
-            #     #     R_cover_areas[i] = -1 * self.epsilon_r
-            #     # else:
-            #     #     coverage_area_estimated = min(calculate_coverage_area(self.Cover_R, self.x_max, true_positions = knowledge_position_i) * self.n_UAVs / num_knwoledge_i, self.x_max**2)
-            #     #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max**2 - coverage_area_estimated) / (self.x_max**2)
-            #     coverage_area_estimated = min(calculate_coverage_area(self.Cover_R, self.x_max,
-            #                                                           true_positions=knowledge_position_i) * self.n_UAVs / num_knwoledge_i,
-            #                                   self.x_max ** 2)
-            #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max ** 2 - coverage_area_estimated) / (self.x_max ** 2)
-            # rewards += R_cover_areas
+        # # 二、加上覆盖面积的惩罚
+        # if self.epsilon_r != 0:
+        #     # 二、1 利用真实位置计算奖励
+        #     R_cover_areas = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, true_positions = self.uav_positions[:, :2])) / (self.x_max**2)
+        #     rewards += R_cover_areas
+        #     # # 二、2 根据邻居之间通信，利用延迟的位置计算奖励。     （这些都不符合R(s_{M_i^1}, a_{M_i^1})或者不符合p(s_{i,t+1} | s_{M_i^1}, a_{M_i^1})）
+        #     # update_drone_knowledge(self.drones, self.uav_positions[:, :2], self.time_step, self.neighbor_distance)
+        #     # R_cover_areas = np.zeros(self.n_UAVs)
+        #     # for i in range(self.n_UAVs):
+        #     #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max**2 - calculate_coverage_area(self.Cover_R, self.x_max, known_positions = self.drones[i].known_positions)) / (self.x_max**2)
+        #     # rewards += R_cover_areas
+        #     # # 二、3 根据{M_i^1}邻居之间通信，根据1跳邻居所知道的无人机位置 估计覆盖的总面积。
+        #     # # update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_R)
+        #     # update_drone_knowledge_id(self.drones, self.uav_positions[:, :2], self.Cover_R, self.neighbor_distance)
+        #     # R_cover_areas = np.zeros(self.n_UAVs)
+        #     # for i in range(self.n_UAVs):
+        #     #     knowledge_position_i = self.uav_positions[np.array(list(self.drones[i].drone_knowledge)), :2]
+        #     #     num_knwoledge_i = len(knowledge_position_i)
+        #     #     # if num_knwoledge_i <= 1:
+        #     #     #     # 如果就没有一跳邻居。
+        #     #     #     R_cover_areas[i] = -1 * self.epsilon_r
+        #     #     # else:
+        #     #     #     coverage_area_estimated = min(calculate_coverage_area(self.Cover_R, self.x_max, true_positions = knowledge_position_i) * self.n_UAVs / num_knwoledge_i, self.x_max**2)
+        #     #     #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max**2 - coverage_area_estimated) / (self.x_max**2)
+        #     #     coverage_area_estimated = min(calculate_coverage_area(self.Cover_R, self.x_max,
+        #     #                                                           true_positions=knowledge_position_i) * self.n_UAVs / num_knwoledge_i,
+        #     #                                   self.x_max ** 2)
+        #     #     R_cover_areas[i] = -1 * self.epsilon_r * (self.x_max ** 2 - coverage_area_estimated) / (self.x_max ** 2)
+        #     # rewards += R_cover_areas
 
         self.cumulative_individual_reward += rewards
         # 无人机角度出发每架无人机自己从服务用户获得的性能。 求和是system_performance。
@@ -1692,7 +1826,7 @@ class MEC(gym.Env):
         self.system_performance_coverd_GUs += np.sum(R_fly_energy) + np.sum(per_GU_task_reward)
         self.system_performance_true_all_GUs += np.sum(R_fly_energy) + np.sum(per_GU_task_reward) + np.sum(per_GU_task_reward_others)
         self.delay_true_all_GUs += (np.sum(per_GU_delay_true) + np.sum(per_GU_delay_true_others))/self.n_GUs
-        self.delay_true_coverd_GUs += np.sum(per_GU_delay_true)/np.sum(per_GU_delay_true != 0)
+        self.delay_true_coverd_GUs += np.array([[np.sum(per_GU_delay_true), np.sum(per_GU_delay_true != 0)]])
         self.energy_true_all_GUs += np.sum(per_GU_energy_true) + np.sum(per_GU_energy_true_others)
         self.energy_all_GUs_UAVs += np.sum(per_GU_energy_true) + np.sum(per_GU_energy_true_others) + np.sum(E_fly)
         self.complete_task_ratio += np.sum(self.complete_task) / self.n_GUs
@@ -1999,34 +2133,39 @@ class MEC(gym.Env):
                 local_obs[i, idx] = self.time_step
                 idx += 1
 
-            # local_obs[i, idx:idx + 3] = np.array([self.n_UAVs, self.n_GUs, self.x_max])
+            # # local_obs[i, idx:idx + 3] = np.array([self.n_UAVs, self.n_GUs, self.x_max])
+            # local_obs[i, idx:idx + 3] = np.array([self.n_UAVs, self.n_GUs, self.x_max_gu])
             # idx += 3
+            # 只有一位的用户中心
+            local_obs[i, idx] = self.x_max_gu/2
+            idx += 1
 
             # 2. UAV's own position
             local_obs[i, idx:idx + 2] = self.uav_positions[i, :2]
             idx += 2
 
-            # # 3. Find neighboring UAVs (excluding self)
+            # 3. Find neighboring UAVs (excluding self)
             # neighbor_mask = (uav_uav_distances[i] <= self.Cover_R) & (np.arange(self.n_UAVs) != i)
-            # neighbor_indices = np.where(neighbor_mask)[0]
-            # neighbor_count = len(neighbor_indices)
-            # # 4. Number of neighboring UAVs
-            # local_obs[i, idx] = neighbor_count
-            # idx += 1
-            # # 5. Get closest neighbors
-            # if neighbor_count > 0:
-            #     # Sort neighbors by distance
-            #     neighbor_distances = uav_uav_distances[i, neighbor_indices]
-            #     sorted_idx = np.argsort(neighbor_distances)
-            #     closest_neighbors = neighbor_indices[sorted_idx[:self.max_UAVs_in_neighbor]]
-            #     # Add positions of closest neighbors
-            #     for j, neighbor_idx in enumerate(closest_neighbors):
-            #         if j < self.max_UAVs_in_neighbor:
-            #             local_obs[i, idx:idx + 2] = self.uav_positions[neighbor_idx, :2]
-            #             idx += 2
-            # # Pad with zeros if there are fewer than max_UAVs_in_neighbor
-            # padding_neighbors = self.max_UAVs_in_neighbor - min(neighbor_count, self.max_UAVs_in_neighbor)
-            # idx += padding_neighbors * 2
+            neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
+            neighbor_indices = np.where(neighbor_mask)[0]
+            neighbor_count = len(neighbor_indices)
+            # 4. Number of neighboring UAVs
+            local_obs[i, idx] = neighbor_count
+            idx += 1
+            # 5. Get closest neighbors
+            if neighbor_count > 0:
+                # Sort neighbors by distance
+                neighbor_distances = uav_uav_distances[i, neighbor_indices]
+                sorted_idx = np.argsort(neighbor_distances)
+                closest_neighbors = neighbor_indices[sorted_idx[:self.max_UAVs_in_neighbor]]
+                # Add positions of closest neighbors
+                for j, neighbor_idx in enumerate(closest_neighbors):
+                    if j < self.max_UAVs_in_neighbor:
+                        local_obs[i, idx:idx + 2] = self.uav_positions[neighbor_idx, :2]
+                        idx += 2
+            # Pad with zeros if there are fewer than max_UAVs_in_neighbor
+            padding_neighbors = self.max_UAVs_in_neighbor - min(neighbor_count, self.max_UAVs_in_neighbor)
+            idx += padding_neighbors * 2
 
             in_range_count = np.sum(self.nearby_gus_of_uavs[i] != -1)
             in_range_indices = self.nearby_gus_of_uavs[i, :in_range_count]
@@ -2236,51 +2375,147 @@ class MEC(gym.Env):
                 'action_space': self.action_space}
 
     def render(self, mode="human", acts=None, timestep=None, title=None):
-        fig = plt.figure()
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111)
+        # ax.set_xlim(0, self.x_max)
+        # ax.set_ylim(0, self.x_max)
+        # ax.set_xlabel('X (m)')
+        # ax.set_ylabel('Y (m)')
+        # # Plot UAVs and annotate their IDs
+        # for i in range(self.n_UAVs):
+        #     ax.scatter(self.uav_positions[i, 0], self.uav_positions[i, 1], c='r', label='UAV' if i == 0 else "")
+        #     ax.annotate(f'UAV {i}', (self.uav_positions[i, 0], self.uav_positions[i, 1]))
+        #     # Draw service range
+        #     circle = plt.Circle((self.uav_positions[i, 0], self.uav_positions[i, 1]), self.Cover_R, color='r',
+        #                         fill=False, linestyle='--')
+        #     ax.add_patch(circle)
+        #
+        # # Plot GUs and annotate their IDs
+        # for j in range(self.n_GUs):
+        #     if acts is not None:
+        #         if self.complete_task[j] == 1:
+        #             ax.scatter(self.gu_positions[j, 0], self.gu_positions[j, 1], c='b', label='GU' if j == 0 else "")
+        #         else:
+        #             ax.scatter(self.gu_positions[j, 0], self.gu_positions[j, 1], c='k', label='GU' if j == 0 else "")
+        #
+        #         column = acts[:, j]
+        #         if np.any(column == 1):  # 检查是否有1
+        #             # 如果是无人机帮忙卸载的任务。 记录无人机的id。
+        #             serving_uavs = np.argmax(column == 1)  # 找到第一个1的位置
+        #             annotation_text = f'{serving_uavs}'
+        #             if self.self_complete_task[j] == 0: # 如果是本来不能完成任务的。这样就太好了
+        #                 annotation_text += f'!'
+        #             ax.annotate(annotation_text, (self.gu_positions[j, 0], self.gu_positions[j, 1]))
+        #     else:
+        #         ax.scatter(self.gu_positions[j, 0], self.gu_positions[j, 1], c='b', label='GU' if j == 0 else "")
+        #         annotation_text = f'{j}'
+        #         ax.annotate(annotation_text, (self.gu_positions[j, 0], self.gu_positions[j, 1]))
+        # if title is not None:
+        #     plt.title(title)
+        #
+        # ax.legend()
+        # if timestep is not None:
+        #     if title is not None:
+        #         save_path = title + '-timestep' + str(timestep) + ".png"
+        #     else:
+        #         save_path = str(timestep) + ".png"
+        #     plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        #     print(f"图表已保存到: {save_path}")
+        #     plt.close()
+        # else:
+        #     plt.show()
+        fig = plt.figure(figsize=(5, 5))
         ax = fig.add_subplot(111)
-        ax.set_xlim(0, self.x_max)
-        ax.set_ylim(0, self.x_max)
+        ax.set_xlim(0, self.x_max_uav)
+        ax.set_ylim(0, self.y_max_uav)
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
-        # Plot UAVs and annotate their IDs
-        for i in range(self.n_UAVs):
-            ax.scatter(self.uav_positions[i, 0], self.uav_positions[i, 1], c='r', label='UAV' if i == 0 else "")
-            ax.annotate(f'UAV {i}', (self.uav_positions[i, 0], self.uav_positions[i, 1]))
-            # Draw service range
-            circle = plt.Circle((self.uav_positions[i, 0], self.uav_positions[i, 1]), self.Cover_R, color='r',
-                                fill=False, linestyle='--')
-            ax.add_patch(circle)
+        # Add grid with light color
+        ax.grid(True, alpha=0.3, linestyle='--')
+        # Define colors for each UAV
+        # colors = ['#1f77b4', '#2ca02c', '#d62728', '#9467bd']  # Blue, Green, Red, Purple
+        colors = [
+            '#1f77b4',  # Blue (original)
+            '#2ca02c',  # Green (original)
+            '#d62728',  # Red (original)
+            '#9467bd',  # Purple (original)
+            '#ff7f0e',  # Orange
+            '#17becf',  # Cyan
+            '#e377c2',  # Pink
+            '#bcbd22',  # Lime
+            '#8c564b',  # Brown
+            '#ff9e1f',  # Golden Yellow
+            '#1a237e',  # Navy Blue
+            '#006064',  # Dark Teal
+            '#c2185b',  # Magenta
+            '#33691e',  # Forest Green
+            '#ff5722',  # Deep Orange
+            '#7b1fa2'  # Violet
+        ]
+        # Plot UAVs
+        for i, (x, y) in enumerate(self.uav_positions[:, :2]):
+            # Draw coverage area
+            coverage = Circle((x, y), self.Cover_R, color=colors[i], alpha=0.1)
+            ax.add_patch(coverage)
 
-        # Plot GUs and annotate their IDs
-        for j in range(self.n_GUs):
+            # Draw UAV with a black edge instead of using PathEffects
+            ax.scatter(x, y, marker='X', color=colors[i], s=200)
+
+            # Add UAV label with a white background instead of using PathEffects
+            ax.text(x + 2*i, y + 2*i, f"UAV{i + 1}", color=colors[i], size=12)
+                    # bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.2',
+                    #           edgecolor='none')
+        # Plot ground users
+        for j, (x, y) in enumerate(self.gu_positions[:, :2]):
             if acts is not None:
-                if self.complete_task[j] == 1:
-                    ax.scatter(self.gu_positions[j, 0], self.gu_positions[j, 1], c='b', label='GU' if j == 0 else "")
-                else:
-                    ax.scatter(self.gu_positions[j, 0], self.gu_positions[j, 1], c='k', label='GU' if j == 0 else "")
-
                 column = acts[:, j]
                 if np.any(column == 1):  # 检查是否有1
-                    # 如果是无人机帮忙卸载的任务。 记录无人机的id。
                     serving_uavs = np.argmax(column == 1)  # 找到第一个1的位置
-                    annotation_text = f'{serving_uavs}'
-                    if self.self_complete_task[j] == 0: # 如果是本来不能完成任务的。这样就太好了
-                        annotation_text += f'!'
-                    ax.annotate(annotation_text, (self.gu_positions[j, 0], self.gu_positions[j, 1]))
+                    ax.scatter(x, y, marker='o', color=colors[serving_uavs], s=50)
+                else:
+                    # Unserved users are black
+                    ax.scatter(x, y, marker='o', color='black', s=50)
+                # if self.self_complete_task[j] == 0:
+                #     annotation_text = f'0'
+                #     if self.complete_task[j] == 1:
+                #         annotation_text += f'!'
+                #     ax.text(x + 2, y + 2, annotation_text)
+                # ax.text(300, 100, f"Not C{np.sum(self.complete_task==0)}", fontweight='bold', color=colors[i],
+                #     bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.2',
+                #               edgecolor='none'))
             else:
-                ax.scatter(self.gu_positions[j, 0], self.gu_positions[j, 1], c='b', label='GU' if j == 0 else "")
-                annotation_text = f'{j}'
-                ax.annotate(annotation_text, (self.gu_positions[j, 0], self.gu_positions[j, 1]))
-        if title is not None:
-            plt.title(title)
+                ax.scatter(x, y, marker='o', color='black', s=50)
+        # Create legend entries manually
+        legend_elements = []
+        if timestep == 0:
+            legend_elements.append(plt.Line2D([0], [0], marker='o', color='w',
+                                              markerfacecolor='black', markersize=8,
+                                              label='MDs'))
+        else:
+            for i in range(4):
+                # Add UEs served by each UAV
+                legend_elements.append(plt.Line2D([0], [0], marker='o', color='w',
+                                                  markerfacecolor=colors[i], markersize=8,
+                                                  label=f'MDs served by UAV {i + 1}'))
+            # Add locally computing users to legend
+            legend_elements.append(plt.Line2D([0], [0], marker='o', color='w',
+                                              markerfacecolor='black', markersize=8,
+                                              label='MDs compute locally'))
+        # Add legend with shadow effect
+        ax.legend(handles=legend_elements, loc='upper right', framealpha=0.6)
 
-        ax.legend()
+        # if title is not None:
+        #     plt.title(title+'-UAV Service Assignment', fontsize=16, pad=20)
+        plt.tight_layout()
+
         if timestep is not None:
             if title is not None:
-                save_path = title + '-timestep' + str(timestep) + ".png"
+                save_path = title + '-timestep' + str(timestep)
             else:
-                save_path = str(timestep) + ".png"
-            plt.savefig(save_path, dpi=200, bbox_inches='tight')
+                save_path = str(timestep)
+            plt.savefig(save_path+".png", dpi=300, bbox_inches='tight', pad_inches=0.05)
+            plt.savefig(save_path+".pdf", bbox_inches="tight", pad_inches=0.05)
+            plt.savefig(save_path + ".eps", bbox_inches="tight", pad_inches=0.05, format='eps')
             print(f"图表已保存到: {save_path}")
             plt.close()
         else:

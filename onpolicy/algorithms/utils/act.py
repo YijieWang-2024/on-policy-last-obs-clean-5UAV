@@ -62,6 +62,8 @@ class ACTLayer(nn.Module):
         else:   # discrete + continous
             actions = []
             action_log_probs = []
+            if available_actions is not None:
+                flags_origin = torch.sum(available_actions, dim=1)
             for i, action_out in enumerate(self.action_outs):
                 if available_actions is not None:
                     if self.action_dims[i] != available_actions.shape[-1]:
@@ -88,10 +90,17 @@ class ACTLayer(nn.Module):
                     else:
                         if i == 1:
                             available_actions = available_actions * (action>=0.5)
-
+            if available_actions is not None:
+                flags_later = torch.sum(available_actions, dim=1)
             actions = torch.cat(actions, -1)
-            action_log_probs = torch.sum(torch.cat(action_log_probs, -1), -1, keepdim=True)
-        return actions, action_log_probs
+            action_log_probs = torch.cat(action_log_probs, -1)
+            action_log_probs_0 = action_log_probs[:, 0]     # 直接flags_origin为0，就没有用户在覆盖
+            action_log_probs_0_1 = torch.sum(action_log_probs[:, :2], dim=1)  # flags_origin不为0，但是flags_later为0。有用户在覆盖，但是没有卸载上
+            action_log_probs_all = torch.sum(action_log_probs, dim=1)
+            action_log_probs = torch.where(flags_later == 0, action_log_probs_0_1, action_log_probs_all)
+            action_log_probs = torch.where(flags_origin == 0, action_log_probs_0, action_log_probs)
+            # action_log_probs = torch.sum(torch.cat(action_log_probs, -1), -1, keepdim=True)
+        return actions, action_log_probs.unsqueeze(-1)
 
     # def get_probs(self, x, available_actions=None):
     #     if self.mixed_action
@@ -124,6 +133,8 @@ class ACTLayer(nn.Module):
             action = action.split(self.action_dims, dim=-1)
             action_log_probs = [] 
             dist_entropy = []
+            if available_actions is not None:
+                flags_origin = torch.sum(available_actions, dim=1)
             for i, action_out in enumerate(self.action_outs):
                 if self.action_dims[i] != available_actions.shape[-1]:
                     available_action = None
@@ -144,12 +155,20 @@ class ACTLayer(nn.Module):
                     else:
                         if i == 1:
                             available_actions = available_actions * (action[i]>=0.5)
-            action_log_probs = torch.sum(torch.cat(action_log_probs, -1), -1, keepdim=True)
+            if available_actions is not None:
+                flags_later = torch.sum(available_actions, dim=1)
+            action_log_probs = torch.cat(action_log_probs, -1)
+            action_log_probs_0 = action_log_probs[:, 0]     # 直接flags_origin为0，就没有用户在覆盖
+            action_log_probs_0_1 = torch.sum(action_log_probs[:, :2], dim=1)  # flags_origin不为0，但是flags_later为0。有用户在覆盖，但是没有卸载上
+            action_log_probs_all = torch.sum(action_log_probs, dim=1)
+            action_log_probs = torch.where(flags_later == 0, action_log_probs_0_1, action_log_probs_all)
+            action_log_probs = torch.where(flags_origin == 0, action_log_probs_0, action_log_probs)
+            # action_log_probs = torch.sum(torch.cat(action_log_probs, -1), -1, keepdim=True)
             if active_masks is not None:
-                dist_entropy = (torch.sum(torch.cat(dist_entropy, -1), -1) * active_masks.squeeze(-1)).sum() / active_masks.sum()
+                dist_entropy = (torch.sum(torch.cat(dist_entropy[:2], -1), -1) * active_masks.squeeze(-1)).sum() / active_masks.sum()
             else:
-                dist_entropy = torch.sum(torch.cat(dist_entropy, -1), -1).mean()
-        return action_log_probs, dist_entropy
+                dist_entropy = torch.sum(torch.cat(dist_entropy[:2], -1), -1).mean()
+        return action_log_probs.unsqueeze(-1), dist_entropy
 
 
 class AddBias(nn.Module):
