@@ -370,10 +370,14 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run201/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run202/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run203/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run204/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run205/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run206/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run207/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run204/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run205/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run206/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run207/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run208/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run209/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run210/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run211/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run356/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run150/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run143/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
@@ -782,11 +786,17 @@ if __name__ == "__main__":
         # "202-3-hops",      # k=3
         # "203-5-hops",      # k=5
 
-        # 9UAVs，650m，观测120m..多观测，不shuffle
-        "204-1-hops",      # k=1
-        "205-2-hops",      # k=2
-        "206-3-hops",      # k=3
-        "207-4-hops",      # k=4
+        # # 9UAVs，650m，观测120m..多观测，不shuffle
+        # "204-1-hops",      # k=1
+        # "205-2-hops",      # k=2
+        # "206-3-hops",      # k=3
+        # "207-4-hops",      # k=4
+
+        # 9UAVs， 650m，120m的少观测，shuffle。角落起飞
+        "208-1-hops",
+        "209-2-hops",
+        "210-3-hops",
+        "211-4-hops",
 
 
         #

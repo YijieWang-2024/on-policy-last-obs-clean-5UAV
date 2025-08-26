@@ -5,6 +5,8 @@ import torch
 from onpolicy.runner.separated.base_runner import Runner
 from onpolicy.envs.mec.vec_normalize import Normer
 from onpolicy.utils.util import get_shape_from_obs_space
+from scipy.sparse.csgraph import connected_components
+from scipy.spatial.distance import cdist
 
 def _t2n(x):
     return x.detach().cpu().numpy()
@@ -31,7 +33,8 @@ class MECRunner(Runner):
         if self.whether_average_network_parameters:
             self.average_network_parameters()
         # self.n_UAVs = config['all_args'].n_UAVs
-        # self.uav_positions = np.zeros((self.n_rollout_threads, self.n_UAVs, 2))
+        self.uav_positions = np.zeros((self.n_rollout_threads, self.num_agents, 2))
+        self.neighbor_distance = config['all_args'].neighbor_distance
         # self.local_advantages = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
         # # self.uav_positions[0] = np.array(
         # #             [[90, 90], [270, 90], [450, 90], [630, 90], [810, 90],
@@ -84,6 +87,8 @@ class MECRunner(Runner):
             #     for agent_id in range(self.num_agents):
             #         self.local_advantages[agent_id] = self.buffer[agent_id].returns[:-1] - self.buffer[agent_id].value_preds[:-1]
             #     np.save(str(self.run_dir) + '/local_advantages_' + str(episode) + '.npy', self.local_advantages)
+            for i, info in enumerate(infos):
+                self.uav_positions[i] = info['uav_positions']
 
             # compute return and update network
             self.compute()
@@ -272,6 +277,18 @@ class MECRunner(Runner):
                 mean_advantage = np.mean(local_advantage, axis=0)
                 for agent_id in range(self.num_agents):
                     self.buffer[agent_id].advantages += mean_advantage
+                cluster_mean_advantage = self.compute_average_advantages_directed(self.uav_positions, local_advantage, self.neighbor_distance)
+                numerator = np.abs(cluster_mean_advantage - mean_advantage)
+                denominator = np.abs(local_advantage - mean_advantage)
+                noise_magnitude = np.divide(
+                    numerator,
+                    denominator,
+                    out=np.ones_like(numerator),  # 当分母为0时，输出1
+                    where=denominator != 0  # 只在分母不为0的地方执行除法
+                )
+                std_advantage = np.std(local_advantage, axis=0)
+                for agent_id in range(self.num_agents):
+                    self.buffer[agent_id].advantages += noise_magnitude[agent_id] * std_advantage * np.random.randn(*self.buffer[agent_id].advantages.shape)
             elif self.whether_local_add_ave_adadvantage:
                 # buffer更新。local+updated_mean
                 local_advantage = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
@@ -585,3 +602,46 @@ class MECRunner(Runner):
         # 转置回原始格式: (n_UAVs, episode_length, n_rollout_threads, 1)
         result = np.transpose(consensus_estimates, (1, 2, 0, 3))
         return result
+
+    def compute_average_advantages_directed(self, uav_positions, local_advantages, neighbor_distance):
+        """
+        Compute average advantages for UAVs based on connectivity.
+        Parameters:
+            uav_positions : Array of UAV positions, shape (n_rollout_threads, num_agents, 2)
+            local_advantages : Array of local advantage estimates, shape (num_agents, episode_length, n_rollout_threads, 1)
+            neighbor_distance : Distance threshold for UAVs to be considered neighbors
+        Returns:
+            Array of average advantages, shape (num_agents, episode_length, n_rollout_threads, 1)
+        """
+        # Reshape local_advantages for more efficient processing
+        # From (num_agents, episode_length, n_rollout_threads, 1)
+        # to (n_rollout_threads, episode_length, num_agents)
+        reshaped_advantages = np.transpose(local_advantages, (2, 1, 0, 3)).squeeze(-1)
+
+        # Initialize output array
+        average_advantages = np.zeros_like(reshaped_advantages)
+
+        # Process all environments at once using adjacency matrices
+        for env_idx in range(self.n_rollout_threads):
+            # Calculate adjacency matrix - UAVs are neighbors if distance <= neighbor_distance
+            positions = uav_positions[env_idx]
+            distances = cdist(positions, positions)  # More efficient than pdist + squareform
+            adjacency_matrix = distances <= neighbor_distance
+
+            # Find connected components
+            n_components, labels = connected_components(adjacency_matrix, directed=False)
+
+            # Pre-compute component indices for all agents
+            component_indices = [np.where(labels == i)[0] for i in range(n_components)]
+
+            # Create a mapping from agent to its component average for all time steps
+            for comp_idx, agent_indices in enumerate(component_indices):
+                cluster_advantages = reshaped_advantages[env_idx, :, agent_indices]
+                assert cluster_advantages.shape[1] == self.episode_length
+                # Calculate average advantages for all time steps at once
+                component_mean = np.mean(cluster_advantages, axis=0, keepdims=True)
+                # Assign to all agents in this component (broadcasting over time steps)
+                average_advantages[env_idx, :, agent_indices] = component_mean
+
+        # Reshape back to original format (num_agents, episode_length, n_rollout_threads, 1)
+        return np.transpose(average_advantages, (2, 1, 0))[:, :, :, np.newaxis]

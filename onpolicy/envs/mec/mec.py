@@ -291,34 +291,34 @@ class MEC(gym.Env):
             self.GUs_in_action_dim = self.max_GUs_in_range
             # self.obs_dim = 3 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 3 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
-            self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
-            self.state_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
+            # self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
+            # self.state_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
 
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            # self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
-            # self.state_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            self.state_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
         elif self.state_is_k_hops:  # last-obs的k跳。自己的s_{i,t}是包括覆盖范围内的无人机的。
             self.GUs_in_action_dim = self.max_GUs_in_range
             # # 包括覆盖范围内d_cov的无人机信息。
             # self.obs_dim = 3 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 3 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
-            self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
-            self.state_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
+            # self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
+            # self.state_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            # self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
-            # self.state_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            self.state_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
         else:
             # self.GUs_in_action_dim = self.n_GUs
             self.GUs_in_action_dim = self.max_GUs_in_range
             # self.obs_dim = 3 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range   # 局部obs的dim
-            self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
+            # self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            # self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
 
             # self.state_dim = 1 + 3 +  2*self.n_UAVs+6*self.n_GUs +1
             # self.state_dim = self.n_UAVs * (self.obs_dim + int(self.ob_state_with_timestep))
@@ -512,9 +512,14 @@ class MEC(gym.Env):
             self.uav_positions = np.array([[75, 150, self.H_UAV], [225, 150, self.H_UAV], [600, 500, self.H_UAV],
                                            [500, 600, self.H_UAV]], dtype=np.float32)
         elif self.n_UAVs == 9 and self.x_min_gu == 0 and self.x_max_gu == 650 and self.n_GUs == 100 and self.x_max_uav==650:
-            self.uav_positions = np.array([[110, 110, self.H_UAV], [330, 110, self.H_UAV], [550, 110, self.H_UAV],
-                     [110, 330, self.H_UAV], [330, 330, self.H_UAV], [550, 330, self.H_UAV],
-                     [110, 550, self.H_UAV], [330, 550, self.H_UAV], [550, 550, self.H_UAV]], dtype=np.float32)
+            # self.uav_positions = np.array([[110, 110, self.H_UAV], [330, 110, self.H_UAV], [550, 110, self.H_UAV],
+            #          [110, 330, self.H_UAV], [330, 330, self.H_UAV], [550, 330, self.H_UAV],
+            #          [110, 550, self.H_UAV], [330, 550, self.H_UAV], [550, 550, self.H_UAV]], dtype=np.float32)
+            self.uav_positions = np.array([[50, 100, self.H_UAV], [100, 100, self.H_UAV], [150, 100, self.H_UAV],
+                                           [200, 100, self.H_UAV], [250, 100, self.H_UAV], [300, 100, self.H_UAV],
+                                           [350, 100, self.H_UAV], [400, 100, self.H_UAV], [450, 100, self.H_UAV]],
+                                          dtype=np.float32)
+            np.random.shuffle(self.uav_positions)
         elif self.n_UAVs == 16 and self.x_min_gu == 0 and self.x_max_gu == 900 and self.n_GUs == 200:
             self.uav_positions = np.array(
                     [[112.5, 112.5, self.H_UAV], [337.5, 112.5, self.H_UAV], [562.5, 112.5, self.H_UAV], [787.5, 112.5, self.H_UAV],
@@ -531,14 +536,14 @@ class MEC(gym.Env):
             #                                [731.25, 731.25, self.H_UAV], [843.75, 731.25, self.H_UAV], [731.25, 843.75, self.H_UAV], [843.75, 843.75, self.H_UAV]], dtype=np.float32)
             # 添加上随机性。
             np.random.shuffle(self.uav_positions)
-        elif self.n_UAVs == 16 and self.x_min_gu == 0 and self.x_max_gu == 800 and self.n_GUs == 160:
+        elif self.n_UAVs == 16 and self.x_min_gu == 0 and self.x_max_gu == 850 and self.n_GUs == 200:
             self.uav_positions = np.array(
-                [[80, 50, self.H_UAV], [160, 50, self.H_UAV], [240, 50, self.H_UAV], [320, 50, self.H_UAV],
-                 [400, 50, self.H_UAV], [480, 50, self.H_UAV], [560, 50, self.H_UAV], [640, 50, self.H_UAV],
-                 [50, 80, self.H_UAV], [50, 160, self.H_UAV], [50, 240, self.H_UAV], [50, 320, self.H_UAV],
-                 [50, 400, self.H_UAV], [50, 480, self.H_UAV], [50, 560, self.H_UAV], [50, 640, self.H_UAV]],
+                [[110, 110, self.H_UAV], [330, 110, self.H_UAV], [550, 110, self.H_UAV], [770, 110, self.H_UAV],
+                 [110, 330, self.H_UAV], [330, 330, self.H_UAV], [550, 330, self.H_UAV], [770, 330, self.H_UAV],
+                 [110, 550, self.H_UAV], [330, 550, self.H_UAV], [550, 550, self.H_UAV], [770, 550, self.H_UAV],
+                 [110, 770, self.H_UAV], [330, 770, self.H_UAV], [550, 770, self.H_UAV], [770, 770, self.H_UAV]],
                     dtype=np.float32)
-            # np.random.shuffle(self.uav_positions)
+            np.random.shuffle(self.uav_positions)
         elif self.n_UAVs == 25 and self.x_min_gu == 0 and self.x_max_gu == 900 and self.n_GUs == 200:
             self.uav_positions = np.array(
                     [[90, 90, self.H_UAV], [270, 90, self.H_UAV], [450, 90, self.H_UAV], [630, 90, self.H_UAV], [810, 90, self.H_UAV],
@@ -2137,35 +2142,35 @@ class MEC(gym.Env):
             # local_obs[i, idx:idx + 3] = np.array([self.n_UAVs, self.n_GUs, self.x_max_gu])
             # idx += 3
             # 只有一位的用户中心
-            local_obs[i, idx] = self.x_max_gu/2
-            idx += 1
+            # local_obs[i, idx] = self.x_max_gu/2
+            # idx += 1
 
             # 2. UAV's own position
             local_obs[i, idx:idx + 2] = self.uav_positions[i, :2]
             idx += 2
 
-            # 3. Find neighboring UAVs (excluding self)
-            # neighbor_mask = (uav_uav_distances[i] <= self.Cover_R) & (np.arange(self.n_UAVs) != i)
-            neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
-            neighbor_indices = np.where(neighbor_mask)[0]
-            neighbor_count = len(neighbor_indices)
-            # 4. Number of neighboring UAVs
-            local_obs[i, idx] = neighbor_count
-            idx += 1
-            # 5. Get closest neighbors
-            if neighbor_count > 0:
-                # Sort neighbors by distance
-                neighbor_distances = uav_uav_distances[i, neighbor_indices]
-                sorted_idx = np.argsort(neighbor_distances)
-                closest_neighbors = neighbor_indices[sorted_idx[:self.max_UAVs_in_neighbor]]
-                # Add positions of closest neighbors
-                for j, neighbor_idx in enumerate(closest_neighbors):
-                    if j < self.max_UAVs_in_neighbor:
-                        local_obs[i, idx:idx + 2] = self.uav_positions[neighbor_idx, :2]
-                        idx += 2
-            # Pad with zeros if there are fewer than max_UAVs_in_neighbor
-            padding_neighbors = self.max_UAVs_in_neighbor - min(neighbor_count, self.max_UAVs_in_neighbor)
-            idx += padding_neighbors * 2
+            # # 3. Find neighboring UAVs (excluding self)
+            # # neighbor_mask = (uav_uav_distances[i] <= self.Cover_R) & (np.arange(self.n_UAVs) != i)
+            # neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
+            # neighbor_indices = np.where(neighbor_mask)[0]
+            # neighbor_count = len(neighbor_indices)
+            # # 4. Number of neighboring UAVs
+            # local_obs[i, idx] = neighbor_count
+            # idx += 1
+            # # 5. Get closest neighbors
+            # if neighbor_count > 0:
+            #     # Sort neighbors by distance
+            #     neighbor_distances = uav_uav_distances[i, neighbor_indices]
+            #     sorted_idx = np.argsort(neighbor_distances)
+            #     closest_neighbors = neighbor_indices[sorted_idx[:self.max_UAVs_in_neighbor]]
+            #     # Add positions of closest neighbors
+            #     for j, neighbor_idx in enumerate(closest_neighbors):
+            #         if j < self.max_UAVs_in_neighbor:
+            #             local_obs[i, idx:idx + 2] = self.uav_positions[neighbor_idx, :2]
+            #             idx += 2
+            # # Pad with zeros if there are fewer than max_UAVs_in_neighbor
+            # padding_neighbors = self.max_UAVs_in_neighbor - min(neighbor_count, self.max_UAVs_in_neighbor)
+            # idx += padding_neighbors * 2
 
             in_range_count = np.sum(self.nearby_gus_of_uavs[i] != -1)
             in_range_indices = self.nearby_gus_of_uavs[i, :in_range_count]
