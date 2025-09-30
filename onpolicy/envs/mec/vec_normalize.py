@@ -7,6 +7,13 @@ class Normer():
         self.ob_norm = args.ob_norm
         self.ret_norm = args.ret_norm
         self.ob_state_with_timestep = getattr(args, 'ob_state_with_timestep', False)
+        self.ob_state_with_id = getattr(args, 'ob_state_with_id', False)
+        self.n_UAVs = getattr(args, 'n_UAVs', 1)
+        self.not_norm = 0
+        if self.ob_state_with_timestep:
+            self.not_norm += 1
+        if self.ob_state_with_id:
+            self.not_norm += self.n_UAVs
 
         if self.ob_norm or self.ret_norm:
             self.ob_rms = RunningMeanStd(shape=obs_space) if self.ob_norm else None
@@ -49,19 +56,13 @@ class Normer():
     def _obfilt(self, obs):
         if self.ob_rms:
             self.ob_rms.update(obs)
-            if self.ob_state_with_timestep:
-                obs[..., 1:] = np.clip((obs[..., 1:] - self.ob_rms.mean[..., 1:]) / np.sqrt(self.ob_rms.var[..., 1:] + self.epsilon), -self.clipob, self.clipob)
-            else:
-                obs = np.clip((obs - self.ob_rms.mean) / np.sqrt(self.ob_rms.var + self.epsilon), -self.clipob, self.clipob)
+            obs[..., self.not_norm:] = np.clip((obs[..., self.not_norm:] - self.ob_rms.mean[..., self.not_norm:]) / np.sqrt(self.ob_rms.var[..., self.not_norm:] + self.epsilon), -self.clipob, self.clipob)
         return obs
 
     def _statefilt(self, states):
         if self.state_rms:
             self.state_rms.update(states)
-            if self.ob_state_with_timestep:
-                states[..., 1:] = np.clip((states[..., 1:] - self.state_rms.mean[..., 1:]) / np.sqrt(self.state_rms.var[..., 1:] + self.epsilon), -self.clipob, self.clipob)
-            else:
-                states = np.clip((states - self.state_rms.mean) / np.sqrt(self.state_rms.var + self.epsilon), -self.clipob, self.clipob)
+            states[..., self.not_norm:] = np.clip((states[..., self.not_norm:] - self.state_rms.mean[..., self.not_norm:]) / np.sqrt(self.state_rms.var[..., self.not_norm:] + self.epsilon), -self.clipob, self.clipob)
         return states
 
     def save(self, file_path):

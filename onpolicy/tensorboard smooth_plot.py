@@ -284,14 +284,14 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run168/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run169/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run170/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run171/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run172/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run173/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run171/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run172/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run173/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run174/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run175/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run176/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run177/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run178/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run176/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run177/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run178/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run179/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run180/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run181/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
@@ -317,6 +317,9 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run206/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run207/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run208/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run301/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run304/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        "./scripts/results/mec/mappo/check/run30901/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
 
         # "./scripts/results/mec/mappo/check/run19/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run20/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
@@ -635,15 +638,15 @@ if __name__ == "__main__":
         # "170",  # 部分资源的 所有动作。
         # 带平均A的不同k
         # "175",
-        "171",
-        "172",
-        "173",
+        # "171",
+        # "172",
+        # "173",
         # "174",
         # 不带平均A的不同k
-        # "175",
-        "176",    # 1跳
-        "177",    # 2跳
-        "178",    # 3跳
+        # # "175",
+        # "176",    # 1跳
+        # "177",    # 2跳
+        # "178",    # 3跳
         # 不带平均A的不同k。 inidvidual-state中不要无人机
         # "179",
         # "180",    # 1跳
@@ -674,6 +677,11 @@ if __name__ == "__main__":
         # "206",      # 2跳
         # "207",      # 3跳
         # "208",      # 4跳
+
+        # DC-PPO1跳的三次实验
+        "301",
+        "304",
+        "30901",
 
 
         # 看103的轨迹图

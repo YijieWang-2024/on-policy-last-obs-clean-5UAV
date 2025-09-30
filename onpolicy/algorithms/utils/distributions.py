@@ -73,6 +73,10 @@ class FixedDirichlet(torch.distributions.Dirichlet):
 
         return samples
 
+    def mode(self):
+        mode_values = super().mean
+        return mode_values
+
     def log_probs(self, actions):
         """
         计算动作的对数概率

@@ -10,6 +10,7 @@ class RunningMeanStd(object):
         self.count = epsilon
 
     def update(self, x):
+        x = np.reshape(x, (-1, x.shape[-1]))
         batch_mean = np.mean(x, axis=0)
         batch_var = np.var(x, axis=0)
         batch_count = x.shape[0]

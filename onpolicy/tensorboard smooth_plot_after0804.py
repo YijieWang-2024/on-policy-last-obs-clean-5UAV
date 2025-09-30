@@ -68,6 +68,9 @@ def load_tensorboard_data(log_dir, tag='system_performance'):
     # # 查看数据。取前5e-7步数
     # steps = steps[:996]
     # values = values[:996]
+    # # 查看数据。取前5e-7步数
+    # steps = steps[:625]
+    # values = values[:625]
 
     if tag.split('/')[-1] == 'delay_true_all_GUs':
         print(log_dir, np.mean(values[-200:]) * 1000)
@@ -76,7 +79,7 @@ def load_tensorboard_data(log_dir, tag='system_performance'):
     else:
         # print(log_dir, np.mean(values[-30:])) # UAVs
         # print(log_dir, np.mean(values[-200:])) # 带宽
-        print(log_dir, np.mean(values[-3:])) # 随意
+        print(log_dir, np.mean(values[-10:])) # 随意
     return steps, values
 
 
@@ -374,14 +377,75 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run205/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run206/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run207/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run208/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run209/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run210/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
-        "./scripts/results/mec/mappo/check/run211/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run208/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run209/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run210/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run211/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run212/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run213/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run214/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run215/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run216/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run217/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run218/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run219/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run220/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run221/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run222/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run223/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run224/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run225/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # # "./scripts/results/mec/mappo/check/run226/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run227/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run228/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run229/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run230/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run231/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run232/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run233/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run234/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run235/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run236/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run237/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run238/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run239/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run240/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run241/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run242/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run246/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run248/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run249/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run250/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run251/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run252/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run253/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run261/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run262/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run254/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run255/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run256/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run243/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run244/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run245/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run247/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run263/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run266/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run267/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run270/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run272/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run273/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run298/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run301/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run302/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run303/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run356/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run150/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run143/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
         # "./scripts/results/mec/mappo/check/run155/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # # 组会画图
+        # "./scripts/results/mec/mappo/check/run253/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run251/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
+        # "./scripts/results/mec/mappo/check/run252/logs/agent0/system_performance_true_all_GUs/agent0/system_performance_true_all_GUs",
 
         # "./scripts/results/mec/mappo/check/run60/logs/agent0/system_utility/agent0/system_utility",
         # "./scripts/results/mec/mappo/check/run61/logs/agent0/system_utility/agent0/system_utility",
@@ -408,6 +472,57 @@ if __name__ == "__main__":
         # "./scripts/results/mec/mappo/check/run192/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
         # "./scripts/results/mec/mappo/check/run193/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
         # "./scripts/results/mec/mappo/check/run194/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run242/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run253/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run257/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run258/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run252/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run259/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run260/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run261/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run262/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run263/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run264/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run265/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run266/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run267/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run268/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run269/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run270/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run271/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run272/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run273/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run274/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run277/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run278/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run279/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run280/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run281/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run282/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run283/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run284/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run285/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run286/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run287/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run288/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run289/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run290/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run291/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run292/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run293/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run294/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run295/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run296/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run297/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run298/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run299/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run300/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        "./scripts/results/mec/mappo/check/run301/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        "./scripts/results/mec/mappo/check/run302/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        "./scripts/results/mec/mappo/check/run303/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run304/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run305/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
+        # "./scripts/results/mec/mappo/check/run306/logs/agent0/complete_task_ratio/agent0/complete_task_ratio",
 
 
         # "./scripts/results/mec/mappo/check/run164/logs/agent0/delay_true_all_GUs/agent0/delay_true_all_GUs",
@@ -792,15 +907,148 @@ if __name__ == "__main__":
         # "206-3-hops",      # k=3
         # "207-4-hops",      # k=4
 
-        # 9UAVs， 650m，120m的少观测，shuffle。角落起飞
-        "208-1-hops",
-        "209-2-hops",
-        "210-3-hops",
-        "211-4-hops",
+        # # 9UAVs， 650m，120m的少观测，shuffle。角落起飞。        没区别
+        # "208-1-hops",
+        # "209-2-hops",
+        # "210-3-hops",
+        # "211-4-hops",
 
+        # # 9UAVs， 650m，120m的少观测，shuffle。角落起飞。添加声        没区别
+        # "212-1-hops",
+        # "213-2-hops",
+        # "214-3-hops",
+        # "215-4-hops",
+
+        # # 算法对比
+        # # "216",          # FPPO，mec_runner.py里的声. 太差
+        # # "217",          # FPPO，r_mappo.py里0.8的声。 太差
+        # "218",          # MAPPO.。就多点观测
+        # "219",          # 自己也跑个带点声的。
+        # # "220",          # 带点声的。平均资源.熵0.01  太差
+        # # "221",          # FPPO，mec_runner.py里的声。 增大距离，260m。interval4. 太差
+        # # "222",          # FPPO，mec_runner.py里的声。 增大距离，260m。interval2    太差
+        # # "223",          # # 带点声的。平均资源.熵0                        太好
+
+        # # mec_runner.py里的声减小。0.4
+        # "224-FPPO",     # FPPO，mec_runner.py里的声.
+        # "225-DC-PPO",  # 自己也跑个带点声的。
+        # # "226",          # 带点声的。平均资源.熵0    太好。
+        # "227-ARA",          # 带点声的。平均资源.熵0.01
+        # "228-MAPPO",          # MAPPO。全距离，多观察
+
+        # # 4UAVs，固定热点
+        # "229",      # 0-hops
+        # "230",      # 1-hops
+        # "231",      # 2-hops
+        # # 4UAVs， 随机热点
+        # "232",      # 1-hops
+        # "233",      # 2-hops
+        # # 9UAVs，固定热点
+        # "234",  # 1-hops
+        # "235",  # 2-hops
+        # "236",  # 3-hops
+        # # 9UAVs，随机热点
+        # "237",  # 1-hops
+        # "238",  # 2-hops
+        # "239",  # 3-hops
+
+        # # 5UAVs， 固定热点，带声
+        # "240",  # 1-hops
+        # "241",  # 2-hops
+        # "242",  # 3-hops
+        # "246",  # 1-hops不带噪声
+
+        # # 5UAVs，固定热点，带声。gamma=20
+        # "251-1-hops",  # 1-hops
+        # "252-2-hops",  # 2-hops
+        # "253-3-hops",  # 3-hops
+        # # 1跳，layer_n2调gamma。
+        # "257_gamma_8",
+        # "258_gamma_16",
+        # "252_gamma_20",
+        # "259_gamma_26",
+        # "260_gamma_36",
+
+        # "261",
+        # "262",
+
+        # # # 5UAVs，在200m的位置（中间）起飞，带声。gamma仍为4
+        # # "254",  # 1-hops
+        # # "255",  # 2-hops
+        # # "256",  # 3-hops
+
+        # # 5UAVs， 固定热点，带声，使用了atten_actor
+        # # "243",  # 1-hops
+        # # "244",  # 2-hops
+        # # "245",  # 3-hops
+        # # "247",  # 1-hops不带噪声
+
+        # # 不带声，一架飞机在上，看下边三架能否飞过去
+        # "248",  # 1-hops
+        # # "249",  # 2-hops
+        # # "250",  # 3-hops
+
+        # 就1架在下，4架在上。搞0.3的声。分别gamma8和26
+        # "263-h1-l1",
+        # "264-h1-l2",
+        # "265-h2-l1",
+        # "266-h2-l2",
+        # "267-h3-l2",
+        # "268-h3-l3",
+        # # gamma 26
+        # "269-h1-l1",
+        # "270-h1-l2",
+        # "271-h2-l1",
+        # "272-h2-l2",
+        # "273-h3-l2",
+        # "274-h3-l3",
+        #
+        # # 5架都从左下角起飞0，50开始。
+        # "275-h2-l2",     # gamma8
+        # "276-h2-l2",     # gamma26
+
+        # # noise_0.2，gamma8
+        # "277",
+        # "278",
+        # "279",
+        # "280",
+        # "281",
+        # "282",
+        # noise_0.2，gamma26
+        # "283",
+        # "284",
+        # "285",
+        # "286",
+        # "287",
+        # "288",
+
+        # # L+M,noise_0
+        # "289",
+        # "290",
+        # "291",
+        # # L+Cluster_Mean
+        # "292",
+        # "293",
+        # "294",
+
+        # "295",
+        # "296",
+        # "297",
+        # "298",
+        # "299",
+        # "300",
+
+
+        #  0908. 晚，右移从[70,70]开始，30m/s.seed2
+        "301",  # 1-hops
+        "302",  # 2-hops
+        "303",  # 3-hops
+        #  seed12
+        # "304",  # 1-hops
+        # "305",  # 2-hops
+        # "306",  # 3-hops
 
         #
-
         # "356",
         # "143",
         # "155",

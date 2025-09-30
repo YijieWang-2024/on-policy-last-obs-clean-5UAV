@@ -195,6 +195,7 @@ class MEC(gym.Env):
     def __init__(self, args=None):
         assert args is not None
         self.ob_state_with_timestep = args.ob_state_with_timestep
+        self.ob_state_with_id = args.ob_state_with_id
         self.n_UAVs = args.n_UAVs
         self.n_GUs = args.n_GUs
         self.max_GUs_in_range = args.max_GUs_in_range   # 无人机的服务范围内距离由近到远，保留信息的最大用户数目。
@@ -224,12 +225,8 @@ class MEC(gym.Env):
         self.y_min_gu = args.y_min_gu  # 15km*15km的范围
         self.y_max_gu = args.y_max_gu  # 15km*15km的范围
 
-        if self.x_max_gu == 300 and self.n_GUs == 40:
-            # 在[0, 0]到[300, 300]的区域内有40个用户
-            self.x_min_all_gus = np.array([self.x_min_gu]*35+[100]*5)
-            self.x_max_all_gus = np.array([self.x_max_gu]*35+[200]*5)
-            self.y_min_all_gus = np.array([self.y_min_gu] * 35 + [100] * 5)
-            self.y_max_all_gus = np.array([self.y_max_gu] * 35 + [200] * 5)
+        self.fix_hotspot = args.fix_hotspot
+        self.random_hotspot = args.random_hotspot
         self.alpha_r = args.alpha_r
         self.beta_r = args.beta_r
         self.gamma_r = args.gamma_r
@@ -329,6 +326,11 @@ class MEC(gym.Env):
             self.obs_dim += 1
         if self.ob_state_with_timestep and (self.perform_with_local_state or self.state_is_k_hops):
             self.state_dim += 1
+
+        if self.ob_state_with_id:
+            self.obs_dim += self.n_UAVs
+        if self.ob_state_with_id and (self.perform_with_local_state or self.state_is_k_hops):
+            self.state_dim += self.n_UAVs
 
         # 不管怎么决策，obs是不变了。就是自己的s_{i,t}
         # if self.concat_neighbor_obs:    # obs也拼接？？？
@@ -457,9 +459,9 @@ class MEC(gym.Env):
         self.average_neighbor_advantage = args.average_neighbor_advantage
         self.Metropolis_weights = None      # Metropolis_weights，用来对邻居的Adv进行加权求和。
         self.proposed_offload_actions = np.zeros((self.n_UAVs, self.n_GUs))     # 用来画render。
-        # self.proposed_offload_actions_all_time = np.zeros((self.MAX_SIMULATION_TIME+1, self.n_UAVs, self.n_GUs))     # 用来画render。
-        # self.uav_positions_all_time = np.zeros((self.MAX_SIMULATION_TIME+1, self.n_UAVs, 2))
-        # self.gu_positions_all_time = np.zeros((self.MAX_SIMULATION_TIME+1, self.n_GUs, 4))    # 位置(x, y)和速度，方向
+        self.proposed_offload_actions_all_time = np.zeros((self.MAX_SIMULATION_TIME+1, self.n_UAVs, self.n_GUs))     # 用来画render。
+        self.uav_positions_all_time = np.zeros((self.MAX_SIMULATION_TIME+1, self.n_UAVs, 2))
+        self.gu_positions_all_time = np.zeros((self.MAX_SIMULATION_TIME+1, self.n_GUs, 4))    # 位置(x, y)和速度，方向
         # self.system_performance_all_uavs = np.zeros((self.MAX_SIMULATION_TIME+1, self.n_UAVs))
 
     def generate_tasks(self):
@@ -497,17 +499,115 @@ class MEC(gym.Env):
         #         x_pos = x_start
         #         y_pos += y_spacing
         if self.n_UAVs == 9 and self.x_min_gu == 0 and self.x_max_gu == 600 and self.n_GUs == 80:
-            self.uav_positions = np.array([[120, 120, self.H_UAV], [300,120, self.H_UAV], [480, 120, self.H_UAV],
-                                           [120, 300, self.H_UAV], [300, 300, self.H_UAV], [480, 300, self.H_UAV],
-                                           [120, 480, self.H_UAV],[300, 480, self.H_UAV], [480, 480, self.H_UAV]], dtype=np.float32)
+            # self.uav_positions = np.array([[120, 120, self.H_UAV], [300,120, self.H_UAV], [480, 120, self.H_UAV],
+            #                                [120, 300, self.H_UAV], [300, 300, self.H_UAV], [480, 300, self.H_UAV],
+            #                                [120, 480, self.H_UAV],[300, 480, self.H_UAV], [480, 480, self.H_UAV]], dtype=np.float32)
+            self.uav_positions = np.array([[100, 100, self.H_UAV], [300, 100, self.H_UAV], [500, 100, self.H_UAV],
+                                           [100, 300, self.H_UAV], [300, 300, self.H_UAV], [500, 300, self.H_UAV],
+                                           [100, 500, self.H_UAV], [300, 500, self.H_UAV], [500, 500, self.H_UAV]],
+                                          dtype=np.float32)
+            if self.fix_hotspot:
+                self.x_min_all_gus = np.array([self.x_min_gu] * 50 + [350] * 30)
+                self.x_max_all_gus = np.array([self.x_max_gu] * 50 + [600] * 30)
+                self.y_min_all_gus = np.array([self.y_min_gu] * 50 + [350] * 30)
+                self.y_max_all_gus = np.array([self.y_max_gu] * 50 + [600] * 30)
+            elif self.random_hotspot:
+                x_min_gu_hotspot = random.choice([0, 350])
+                y_min_gu_hotspot = random.choice([0, 350])
+                self.x_min_all_gus = np.array([self.x_min_gu] * 50 + [x_min_gu_hotspot] * 30)
+                self.x_max_all_gus = np.array([self.x_max_gu] * 50 + [x_min_gu_hotspot+250] * 30)
+                self.y_min_all_gus = np.array([self.y_min_gu] * 50 + [y_min_gu_hotspot] * 30)
+                self.y_max_all_gus = np.array([self.y_max_gu] * 50 + [y_min_gu_hotspot+250] * 30)
+            else:
+                self.x_min_all_gus = np.array([self.x_min_gu] * 80)
+                self.x_max_all_gus = np.array([self.x_max_gu] * 80)
+                self.y_min_all_gus = np.array([self.y_min_gu] * 80)
+                self.y_max_all_gus = np.array([self.y_max_gu] * 80)
         elif self.n_UAVs == 4 and self.x_min_gu == 0 and self.x_max_gu == 400 and self.n_GUs == 40:
             self.uav_positions = np.array([[50, 25, self.H_UAV], [100, 25, self.H_UAV], [150, 25, self.H_UAV],
                                            [200, 25, self.H_UAV]], dtype=np.float32)
+            # self.uav_positions = np.array([[100, 100, self.H_UAV], [300, 100, self.H_UAV], [100, 300, self.H_UAV],
+            #                                    [300, 300, self.H_UAV]], dtype=np.float32)
+            if self.fix_hotspot:
+                self.x_min_all_gus = np.array([self.x_min_gu] * 20 + [250] * 20)
+                self.x_max_all_gus = np.array([self.x_max_gu] * 20 + [400] * 20)
+                self.y_min_all_gus = np.array([self.y_min_gu] * 20 + [250] * 20)
+                self.y_max_all_gus = np.array([self.y_max_gu] * 20 + [400] * 20)
+            elif self.random_hotspot:
+                x_min_gu_hotspot = random.choice([0, 250])
+                y_min_gu_hotspot = random.choice([0, 250])
+                self.x_min_all_gus = np.array([self.x_min_gu] * 20 + [x_min_gu_hotspot] * 20)
+                self.x_max_all_gus = np.array([self.x_max_gu] * 20 + [x_min_gu_hotspot+150] * 20)
+                self.y_min_all_gus = np.array([self.y_min_gu] * 20 + [y_min_gu_hotspot] * 20)
+                self.y_max_all_gus = np.array([self.y_max_gu] * 20 + [y_min_gu_hotspot+150] * 20)
+            else:
+                self.x_min_all_gus = np.array([self.x_min_gu] * 40)
+                self.x_max_all_gus = np.array([self.x_max_gu] * 40)
+                self.y_min_all_gus = np.array([self.y_min_gu] * 40)
+                self.y_max_all_gus = np.array([self.y_max_gu] * 40)
+        elif self.n_UAVs == 4 and self.x_min_gu == 0 and self.x_max_gu == 600 and self.n_GUs == 40:
+            self.uav_positions = np.array([[400, 400, self.H_UAV], [50, 50, self.H_UAV], [100, 50, self.H_UAV],
+                                               [150, 50, self.H_UAV]], dtype=np.float32)
+            if self.fix_hotspot:
+                self.x_min_all_gus = np.array([200] * 40)
+                self.x_max_all_gus = np.array([600] * 40)
+                self.y_min_all_gus = np.array([200] * 40)
+                self.y_max_all_gus = np.array([600] * 40)
+        elif self.n_UAVs == 5 and self.x_min_gu == 0 and self.x_max_gu == 600:
+            self.uav_positions = np.array([[400, 400, self.H_UAV], [70, 70, self.H_UAV], [140, 70, self.H_UAV],
+                                           [210, 70, self.H_UAV], [280, 70, self.H_UAV]], dtype=np.float32)
+            if self.n_GUs == 40:
+                if self.fix_hotspot:
+                    self.x_min_all_gus = np.array([0] * 7 + [200] * 33)
+                    self.x_max_all_gus = np.array([175] * 7 + [600] * 33)
+                    self.y_min_all_gus = np.array([0] * 7 + [200] * 33)
+                    self.y_max_all_gus = np.array([175] * 7 + [600] * 33)
+            elif self.n_GUs == 50:
+                if self.fix_hotspot:
+                    self.x_min_all_gus = np.array([0] * 9 + [200] * 41)
+                    self.x_max_all_gus = np.array([175] * 9 + [600] * 41)
+                    self.y_min_all_gus = np.array([0] * 9 + [200] * 41)
+                    self.y_max_all_gus = np.array([175] * 9 + [600] * 41)
+            elif self.n_GUs == 60:
+                if self.fix_hotspot:
+                    self.x_min_all_gus = np.array([0] * 10 + [200] * 50)
+                    self.x_max_all_gus = np.array([175] * 10 + [600] * 50)
+                    self.y_min_all_gus = np.array([0] * 10 + [200] * 50)
+                    self.y_max_all_gus = np.array([175] * 10 + [600] * 50)
+            elif self.n_GUs == 70:
+                if self.fix_hotspot:
+                    self.x_min_all_gus = np.array([0] * 12 + [200] * 58)
+                    self.x_max_all_gus = np.array([175] * 12 + [600] * 58)
+                    self.y_min_all_gus = np.array([0] * 12 + [200] * 58)
+                    self.y_max_all_gus = np.array([175] * 12 + [600] * 58)
+            elif self.n_GUs == 80:
+                if self.fix_hotspot:
+                    self.x_min_all_gus = np.array([0] * 14 + [200] * 66)
+                    self.x_max_all_gus = np.array([175] * 14 + [600] * 66)
+                    self.y_min_all_gus = np.array([0] * 14 + [200] * 66)
+                    self.y_max_all_gus = np.array([175] * 14 + [600] * 66)
         # elif self.n_UAVs == 4 and self.x_min_gu == 0 and self.x_max_gu == 400 and self.n_GUs == 40:
         #     self.uav_positions = np.array([[100, 100, self.H_UAV], [300, 100, self.H_UAV], [100, 300, self.H_UAV],
         #                                    [300, 300, self.H_UAV]], dtype=np.float32)
             # # 添加上随机性。
             # np.random.shuffle(self.uav_positions)
+        elif self.n_UAVs in [3, 4, 6, 7] and self.x_min_gu == 0 and self.x_max_gu == 600 and self.n_GUs == 60:
+            if self.fix_hotspot:
+                self.x_min_all_gus = np.array([0] * 10 + [200] * 50)
+                self.x_max_all_gus = np.array([175] * 10 + [600] * 50)
+                self.y_min_all_gus = np.array([0] * 10 + [200] * 50)
+                self.y_max_all_gus = np.array([175] * 10 + [600] * 50)
+            if self.n_UAVs == 3:
+                self.uav_positions = np.array([[400, 400, self.H_UAV], [70, 70, self.H_UAV], [140, 70, self.H_UAV]], dtype=np.float32)
+            elif self.n_UAVs == 4:
+                self.uav_positions = np.array([[400, 400, self.H_UAV], [70, 70, self.H_UAV], [140, 70, self.H_UAV],
+                                           [210, 70, self.H_UAV]], dtype=np.float32)
+            elif self.n_UAVs == 6:
+                self.uav_positions = np.array([[400, 400, self.H_UAV], [70, 70, self.H_UAV], [140, 70, self.H_UAV],
+                                           [210, 70, self.H_UAV], [280, 70, self.H_UAV], [70, 140, self.H_UAV]], dtype=np.float32)
+            elif self.n_UAVs == 7:
+                self.uav_positions = np.array([[400, 400, self.H_UAV], [70, 70, self.H_UAV], [140, 70, self.H_UAV],
+                                           [210, 70, self.H_UAV], [280, 70, self.H_UAV], [70, 140, self.H_UAV], [140, 140, self.H_UAV]], dtype=np.float32)
         elif self.n_UAVs == 4 and self.x_min_gu == 0 and self.x_max_gu == 300 and self.n_GUs == 40 and self.x_max_uav==600:
             self.uav_positions = np.array([[75, 150, self.H_UAV], [225, 150, self.H_UAV], [600, 500, self.H_UAV],
                                            [500, 600, self.H_UAV]], dtype=np.float32)
@@ -601,16 +701,24 @@ class MEC(gym.Env):
         # sorted_indices = np.argsort(distances)
         # self.gu_positions = self.gu_positions[sorted_indices]
         # self.gu_positions = np.hstack((self.gu_positions, self.H_GU * np.ones((self.n_GUs, 1))))
-        gu_x = np.random.uniform(self.x_min_gu, self.x_max_gu, self.n_GUs)
-        gu_y = np.random.uniform(self.y_min_gu, self.y_max_gu, self.n_GUs)
-        if self.x_max_gu == 300 and self.n_GUs == 40:
-            gu_x[-5:] =  np.random.uniform(100, 200, 5)
-            gu_y[-5:] =  np.random.uniform(100, 200, 5)
+
+        # gu_x = np.random.uniform(self.x_min_gu, self.x_max_gu, self.n_GUs)
+        # gu_y = np.random.uniform(self.y_min_gu, self.y_max_gu, self.n_GUs)
+        # if self.x_max_gu == 300 and self.n_GUs == 40:
+        #     gu_x[-5:] =  np.random.uniform(100, 200, 5)
+        #     gu_y[-5:] =  np.random.uniform(100, 200, 5)
+
+        gu_x = self.x_min_all_gus + np.random.uniform(0, 1, self.n_GUs)*(self.x_max_all_gus - self.x_min_all_gus)
+        gu_y = self.y_min_all_gus + np.random.uniform(0, 1, self.n_GUs)*(self.y_max_all_gus - self.y_min_all_gus)
         gu_z = np.full(self.n_GUs, self.H_GU)
         self.gu_positions = np.column_stack((gu_x, gu_y, gu_z))
         distances = np.linalg.norm(self.gu_positions, axis=1)
         sorted_indices = np.argsort(distances)
         self.gu_positions = self.gu_positions[sorted_indices]
+        self.x_min_all_gus = self.x_min_all_gus[sorted_indices]
+        self.x_max_all_gus = self.x_max_all_gus[sorted_indices]
+        self.y_min_all_gus = self.y_min_all_gus[sorted_indices]
+        self.y_max_all_gus = self.y_max_all_gus[sorted_indices]
         self.gu_velocities = np.random.normal(self.mean_velocity, 0.3*self.std_dev_gaussian, self.n_GUs)
         self.gu_velocities = np.clip(self.gu_velocities, 0.7* self.mean_velocity, 1.3 * self.mean_velocity)
         self.gu_directions = np.random.uniform(0, 2 * np.pi, self.n_GUs)
@@ -707,15 +815,19 @@ class MEC(gym.Env):
         self.cumulative_individual_reward_wo_cover = np.zeros((self.n_UAVs,))
         self.cumulative_reward_wo_cover = np.zeros((self.n_UAVs,))
         self.env_id = np.random.randn()
+        if self.env_id:
+            self.uav_positions_all_time[0] = self.uav_positions[:, :2]
+            self.gu_positions_all_time[0, :, :2] = self.gu_positions[:, :2]
+            self.gu_positions_all_time[0, :, 2] = self.gu_velocities
+            self.gu_positions_all_time[0, :, 3] = self.gu_directions
+        # 测试
         # if self.env_id in [0.2645712998311468, -0.39160536737987467, -0.05837604037964826, 0.2307092654537442, 1.428101796849161, -0.7050493998306726]:
         # if self.env_id == -0.7050493998306726:
-        # # if self.env_id:
-        #     self.uav_positions_all_time[0] = self.uav_positions[:, :2]
-        #     self.gu_positions_all_time[0, :, :2] = self.gu_positions[:, :2]
-        #     self.gu_positions_all_time[0, :, 2] = self.gu_velocities
-        #     self.gu_positions_all_time[0, :, 3] = self.gu_directions
-        #     if self.time_step % 5 == 0:
-        #         self.render(timestep=self.time_step, title=str(np.round(self.env_id, 4))+'-'+'185')
+        # if self.env_id == -0.020948109923857535:
+        # if self.env_id == 0.8320153446702446:
+        # # # # if self.env_id:
+        #     if self.time_step % 4 == 0:
+        #         self.render(timestep=self.time_step, title=str(np.round(self.env_id, 4))+'-'+'30901')
         #         # # # # # # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
         #         time.sleep(0.05)
         return self.obs, self.state, self.avail_actions, self.Metropolis_weights, self.attention_active_mask
@@ -1326,7 +1438,7 @@ class MEC(gym.Env):
             self.proposed_offload_actions = actions[1]
         else:
             self.proposed_offload_actions = actions[0]
-        # self.proposed_offload_actions_all_time[self.time_step] = self.proposed_offload_actions
+        self.proposed_offload_actions_all_time[self.time_step] = self.proposed_offload_actions
         return np.concatenate(actions, axis=-1)
 
     def step(self, action):   # acts是一个(n_agents, )的数组，每个元素代表动作序号
@@ -1425,30 +1537,43 @@ class MEC(gym.Env):
         # #         self.render(timestep=self.time_step, title=str(np.round(self.env_id, 4)) + '-' + '185', acts=self.proposed_offload_actions)
         # #         # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
         # #         time.sleep(0.05)
+        if self.env_id:
+            self.uav_positions_all_time[self.time_step] = self.uav_positions[:, :2]
+            self.gu_positions_all_time[self.time_step, :, :2] = self.gu_positions[:, :2]
+            self.gu_positions_all_time[self.time_step, :, 2] = self.gu_velocities
+            self.gu_positions_all_time[self.time_step, :, 3] = self.gu_directions
+        # 测试
         # if self.env_id == -0.7050493998306726:
-        # # # if self.env_id:
-        #     self.uav_positions_all_time[self.time_step] = self.uav_positions[:, :2]
-        #     self.gu_positions_all_time[self.time_step, :, :2] = self.gu_positions[:, :2]
-        #     self.gu_positions_all_time[self.time_step, :, 2] = self.gu_velocities
-        #     self.gu_positions_all_time[self.time_step, :, 3] = self.gu_directions
-        # #     if self.time_step in [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110]:
-        # #         self.render(timestep=self.time_step, title=str(np.round(self.env_id, 4)) + '-' + '185',
-        # #                     acts=self.proposed_offload_actions)
-        # #         # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
-        # #         time.sleep(0.05)
+        # if self.env_id == -0.020948109923857535:
+        # if self.env_id == 0.6345626069494656:
+        # if self.env_id == 0.8320153446702446:
+        # # # # if self.env_id:
+        #     if (self.time_step % 4 == 0) or (self.time_step in [185, 187, 189, 191, 193, 195, 197, 199, 201, 203, 205, 207, 209, 211, 213, 215]):
+        #         self.render(timestep=self.time_step, title=str(np.round(self.env_id, 4)) + '-' + '30901',
+        #                     acts=self.proposed_offload_actions)
+        #         time.sleep(0.05)
         # if self.time_step % 5 == 0:
-        #     self.render(timestep=self.time_step, title='200', acts=self.proposed_offload_actions)
+        #     self.render(timestep=self.time_step, title='301', acts=self.proposed_offload_actions)
         #     # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
         #     time.sleep(0.05)
         if self.time_step >= self.MAX_SIMULATION_TIME:
+            # 测试
             # if self.env_id == -0.7050493998306726:
             #     np.save('-0.705uav_positions_all_time' + '.npy', self.uav_positions_all_time)
             #     np.save('-0.705gu_positions_all_time' + '.npy', self.gu_positions_all_time)
             #     np.save('-0.705system_performance_all_uavs' + '.npy', self.system_performance_all_uavs)
             #     np.save('-0.705proposed_offload_actions_all_time' + '.npy', self.proposed_offload_actions_all_time)
             #     print('save successfully.')
-            # # if self.env_id:
-            #     # np.save('system_performance_all_uavs'+str(np.round(self.env_id, 4)) + '.npy', self.system_performance_all_uavs)
+            # if self.env_id == -0.020948109923857535:
+            #     np.save('-0.0209uav_positions_all_time' + '.npy', self.uav_positions_all_time)
+            #     np.save('-0.0209gu_positions_all_time' + '.npy', self.gu_positions_all_time)
+            #     np.save('-0.0209proposed_offload_actions_all_time' + '.npy', self.proposed_offload_actions_all_time)
+            #     print('save successfully.')
+            # if self.env_id == 0.8320153446702446:
+            #     np.save('-0.8320uav_positions_all_time' + '.npy', self.uav_positions_all_time)
+            #     np.save('-0.8320gu_positions_all_time' + '.npy', self.gu_positions_all_time)
+            #     np.save('-0.8320proposed_offload_actions_all_time' + '.npy', self.proposed_offload_actions_all_time)
+            #     print('save successfully.')
             dones = 1 - dones
             info = {'cumulative_reward': self.cumulative_reward, 'n_GUs_per_uav_served': self.n_GUs_per_uav_served/self.MAX_SIMULATION_TIME,
                     'uav_m_toal_energy_consumption': self.uav_energy_consumption, 'user_in_m_average_delay': self.user_average_delay/self.MAX_SIMULATION_TIME,
@@ -1466,7 +1591,6 @@ class MEC(gym.Env):
                     'complete_task_ratio':self.complete_task_ratio/self.MAX_SIMULATION_TIME,
                     'uav_positions': self.uav_positions[:, :2],
                     }
-        # info['uav_positions'] = self.uav_positions[:, :2]
         return self.obs, rewards, dones, self.state, self.avail_actions, info, self.Metropolis_weights, self.attention_active_mask
 
     def calculate_local_reward_raw_action(self, action):
@@ -1691,29 +1815,29 @@ class MEC(gym.Env):
         self.gu_positions[:, 0] += self.gu_velocities * np.cos(self.gu_directions) * self.Delta_t
         self.gu_positions[:, 1] += self.gu_velocities * np.sin(self.gu_directions) * self.Delta_t
 
-        if self.x_max_gu == 300 and self.n_GUs == 40:
-            # 在[0, 0]到[300, 300]的区域内有40个用户
-            x_out_min = self.gu_positions[:, 0] < self.x_min_all_gus
-            x_out_max = self.gu_positions[:, 0] > self.x_max_all_gus
-            y_out_min = self.gu_positions[:, 1] < self.y_min_all_gus
-            y_out_max = self.gu_positions[:, 1] > self.y_max_all_gus
-            # 反射位置
-            self.gu_positions[x_out_min, 0] = 2 * self.x_min_all_gus[x_out_min] - self.gu_positions[x_out_min, 0]
-            self.gu_positions[x_out_max, 0] = 2 * self.x_max_all_gus[x_out_max] - self.gu_positions[x_out_max, 0]
-            self.gu_positions[y_out_min, 1] = 2 * self.y_min_all_gus[y_out_min] - self.gu_positions[y_out_min, 1]
-            self.gu_positions[y_out_max, 1] = 2 * self.y_max_all_gus[y_out_max] - self.gu_positions[y_out_max, 1]
-        else:
-            # 向量化处理边界碰撞
-            x_out_min = self.gu_positions[:, 0] < self.x_min_gu
-            x_out_max = self.gu_positions[:, 0] > self.x_max_gu
-            y_out_min = self.gu_positions[:, 1] < self.y_min_gu
-            y_out_max = self.gu_positions[:, 1] > self.y_max_gu
-
-            # 反射位置
-            self.gu_positions[x_out_min, 0] = 2 * self.x_min_gu - self.gu_positions[x_out_min, 0]
-            self.gu_positions[x_out_max, 0] = 2 * self.x_max_gu - self.gu_positions[x_out_max, 0]
-            self.gu_positions[y_out_min, 1] = 2 * self.y_min_gu - self.gu_positions[y_out_min, 1]
-            self.gu_positions[y_out_max, 1] = 2 * self.y_max_gu - self.gu_positions[y_out_max, 1]
+        # if self.x_max_gu == 300 and self.n_GUs == 40:
+        #     # 在[0, 0]到[300, 300]的区域内有40个用户
+        x_out_min = self.gu_positions[:, 0] < self.x_min_all_gus
+        x_out_max = self.gu_positions[:, 0] > self.x_max_all_gus
+        y_out_min = self.gu_positions[:, 1] < self.y_min_all_gus
+        y_out_max = self.gu_positions[:, 1] > self.y_max_all_gus
+        # 反射位置
+        self.gu_positions[x_out_min, 0] = 2 * self.x_min_all_gus[x_out_min] - self.gu_positions[x_out_min, 0]
+        self.gu_positions[x_out_max, 0] = 2 * self.x_max_all_gus[x_out_max] - self.gu_positions[x_out_max, 0]
+        self.gu_positions[y_out_min, 1] = 2 * self.y_min_all_gus[y_out_min] - self.gu_positions[y_out_min, 1]
+        self.gu_positions[y_out_max, 1] = 2 * self.y_max_all_gus[y_out_max] - self.gu_positions[y_out_max, 1]
+        # else:
+        #     # 向量化处理边界碰撞
+        #     x_out_min = self.gu_positions[:, 0] < self.x_min_gu
+        #     x_out_max = self.gu_positions[:, 0] > self.x_max_gu
+        #     y_out_min = self.gu_positions[:, 1] < self.y_min_gu
+        #     y_out_max = self.gu_positions[:, 1] > self.y_max_gu
+        #
+        #     # 反射位置
+        #     self.gu_positions[x_out_min, 0] = 2 * self.x_min_gu - self.gu_positions[x_out_min, 0]
+        #     self.gu_positions[x_out_max, 0] = 2 * self.x_max_gu - self.gu_positions[x_out_max, 0]
+        #     self.gu_positions[y_out_min, 1] = 2 * self.y_min_gu - self.gu_positions[y_out_min, 1]
+        #     self.gu_positions[y_out_max, 1] = 2 * self.y_max_gu - self.gu_positions[y_out_max, 1]
 
         # 处理方向反射
         hit_vertical = x_out_min | x_out_max
@@ -2133,10 +2257,15 @@ class MEC(gym.Env):
         local_obs = np.zeros((self.n_UAVs, obs_dim))
 
         idx = 0
+        if self.ob_state_with_id:
+            agent_id = np.eye(self.n_UAVs)
         for i in range(self.n_UAVs):
             if self.ob_state_with_timestep:
                 local_obs[i, idx] = self.time_step
                 idx += 1
+            if self.ob_state_with_id:
+                local_obs[i, idx:idx + self.n_UAVs] = agent_id[i]
+                idx += self.n_UAVs
 
             # # local_obs[i, idx:idx + 3] = np.array([self.n_UAVs, self.n_GUs, self.x_max])
             # local_obs[i, idx:idx + 3] = np.array([self.n_UAVs, self.n_GUs, self.x_max_gu])
@@ -2507,7 +2636,7 @@ class MEC(gym.Env):
                                               markerfacecolor='black', markersize=8,
                                               label='MDs compute locally'))
         # Add legend with shadow effect
-        ax.legend(handles=legend_elements, loc='upper right', framealpha=0.6)
+        ax.legend(handles=legend_elements, loc='lower right', framealpha=0.6)
 
         # if title is not None:
         #     plt.title(title+'-UAV Service Assignment', fontsize=16, pad=20)
@@ -2519,8 +2648,8 @@ class MEC(gym.Env):
             else:
                 save_path = str(timestep)
             plt.savefig(save_path+".png", dpi=300, bbox_inches='tight', pad_inches=0.05)
-            plt.savefig(save_path+".pdf", bbox_inches="tight", pad_inches=0.05)
-            plt.savefig(save_path + ".eps", bbox_inches="tight", pad_inches=0.05, format='eps')
+            # plt.savefig(save_path+".pdf", bbox_inches="tight", pad_inches=0.05)
+            # plt.savefig(save_path + ".eps", bbox_inches="tight", pad_inches=0.05, format='eps')
             print(f"图表已保存到: {save_path}")
             plt.close()
         else:

@@ -35,6 +35,8 @@ class MECRunner(Runner):
         # self.n_UAVs = config['all_args'].n_UAVs
         self.uav_positions = np.zeros((self.n_rollout_threads, self.num_agents, 2))
         self.neighbor_distance = config['all_args'].neighbor_distance
+        # 测评、记录效果的。 把训练的注释掉，这个打开。
+        self.system_gain = np.zeros(15)
         # self.local_advantages = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
         # # self.uav_positions[0] = np.array(
         # #             [[90, 90], [270, 90], [450, 90], [630, 90], [810, 90],
@@ -79,6 +81,12 @@ class MECRunner(Runner):
                 
                 # insert data into buffer
                 self.insert(data, step)
+            # self.system_gain[episode] = np.mean(np.mean([info['system_performance_true_all_GUs'] for info in infos], axis=0)).round(5)
+            # if episode == 14:
+            #     # np.savetxt('./plot_data/system_gain_7UAVs.txt', self.system_gain)
+            #     np.savetxt('./plot_data/system_gain_run316.txt', self.system_gain)
+            #     print(np.mean(self.system_gain))
+            #     print('over')
 
             # if (episode % self.save_interval == 0 or episode == episodes - 1):
             #     for i, info in enumerate(infos):
@@ -101,7 +109,7 @@ class MECRunner(Runner):
             total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads           
             # save model
             if (episode % self.save_interval == 0 or episode == episodes - 1):
-                self.save()
+                self.save(episode)
 
             # log information
             if episode % self.log_interval == 0:
@@ -131,6 +139,7 @@ class MECRunner(Runner):
                         train_infos[agent_id].update({'n_GUs_by_coverd': np.mean([info['n_GUs_by_coverd'] for info in infos]).round(5)})
                         train_infos[agent_id].update({'complete_task_ratio': np.mean([info['complete_task_ratio'] for info in infos]).round(5)})
 
+                # print(episode)
                 print('cumulative_reward is ', np.mean([info['cumulative_reward'] for info in infos], axis=0).round(5))
                 print('system_performance is ', np.mean([info['system_performance'] for info in infos], axis=0).round(5))
                 print('system_performance_true_all_GUs is ', np.mean([info['system_performance_true_all_GUs'] for info in infos], axis=0).round(5))
@@ -274,6 +283,11 @@ class MECRunner(Runner):
                 for agent_id in range(self.num_agents):
                     self.buffer[agent_id].advantages = self.buffer[agent_id].returns[:-1] - self.buffer[agent_id].value_preds[:-1]
                     local_advantage[agent_id] = self.buffer[agent_id].advantages.copy()
+                # # L + Cluster_Mean
+                # cluster_mean_advantage = self.compute_average_advantages_directed(self.uav_positions, local_advantage, self.neighbor_distance)
+                # for agent_id in range(self.num_agents):
+                #     self.buffer[agent_id].advantages += cluster_mean_advantage[agent_id]
+                # L+M + /(Noi)
                 mean_advantage = np.mean(local_advantage, axis=0)
                 for agent_id in range(self.num_agents):
                     self.buffer[agent_id].advantages += mean_advantage
@@ -288,7 +302,7 @@ class MECRunner(Runner):
                 )
                 std_advantage = np.std(local_advantage, axis=0)
                 for agent_id in range(self.num_agents):
-                    self.buffer[agent_id].advantages += noise_magnitude[agent_id] * std_advantage * np.random.randn(*self.buffer[agent_id].advantages.shape)
+                    self.buffer[agent_id].advantages += noise_magnitude[agent_id] * 0.12*std_advantage * np.random.randn(*self.buffer[agent_id].advantages.shape)
             elif self.whether_local_add_ave_adadvantage:
                 # buffer更新。local+updated_mean
                 local_advantage = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
@@ -408,6 +422,26 @@ class MECRunner(Runner):
         Average network parameters across all trainers.
         Each trainer in self.trainer is an instance of R_MAPPO.
         """
+        # def _reset_momentum(opt):
+        #     if opt is None: return
+        #     for st in opt.state.values():
+        #         if 'exp_avg' in st: st['exp_avg'].zero_()
+        #         if 'exp_avg_sq' in st: st['exp_avg_sq'].zero_()
+        # tau = 0.05
+        # if len(self.trainer) <= 1: return
+        # # 1) 计算全局平均 actor
+        # ref = self.trainer[0].policy.actor.state_dict()
+        # avg = {k: sum(tr.policy.actor.state_dict()[k] for tr in self.trainer) / len(self.trainer) for k in ref}
+        # # 2) Polyak 软同步 + 同步旧策略 + 清零动量
+        # for tr in self.trainer:
+        #     sd = tr.policy.actor.state_dict()
+        #     for k in sd: sd[k].lerp_(avg[k], tau)
+        #     tr.policy.actor.load_state_dict(sd)
+        #     if hasattr(tr.policy, "actor_old"):
+        #         tr.policy.actor_old.load_state_dict(sd)
+        #     _reset_momentum(getattr(tr.policy, "actor_optimizer", None))
+        # # critic 不平均；若要平均，用很小 tau 对 critic 做同样 lerp，并重置其动量
+
         if len(self.trainer) <= 1:
             return
         # Use the first trainer as a reference for parameter keys
@@ -537,7 +571,7 @@ class MECRunner(Runner):
                 #     self.writter.add_scalars("eval_win_rate", {"eval_win_rate": eval_win_rate}, total_num_steps)
                 break
 
-    def save(self):
+    def save(self, episode):
         for agent_id in range(self.num_agents):
             policy_actor = self.trainer[agent_id].policy.actor
             torch.save(policy_actor.state_dict(), str(self.save_dir) + "/actor_agent" + str(agent_id) + ".pt")
@@ -547,6 +581,15 @@ class MECRunner(Runner):
             # 保存 normer 对象
             normer_path = str(self.save_dir) + "/normer"+ str(agent_id) +".pkl"
             self.normer[agent_id].save(normer_path)
+        # if episode % 100 == 0:
+        #     for agent_id in range(self.num_agents):
+        #         policy_actor = self.trainer[agent_id].policy.actor
+        #         torch.save(policy_actor.state_dict(), str(self.save_dir) + "/actor_agent" + str(agent_id) +"_"+str(episode)+ ".pt")
+        #         policy_critic = self.trainer[agent_id].policy.critic
+        #         torch.save(policy_critic.state_dict(), str(self.save_dir) + "/critic_agent" + str(agent_id) +"_"+str(episode)+ ".pt")
+        #         # 保存 normer 对象
+        #         normer_path = str(self.save_dir) + "/normer" + str(agent_id) +"_"+str(episode)+ ".pkl"
+        #         self.normer[agent_id].save(normer_path)
         # # 保存 normer 对象
         # normer_path = str(self.save_dir)+ "/normer.pkl"
         # self.normer.save(normer_path)

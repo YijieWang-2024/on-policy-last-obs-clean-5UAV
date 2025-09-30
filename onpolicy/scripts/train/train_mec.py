@@ -85,6 +85,8 @@ def parse_args(args, parser):
     parser.add_argument("--B", type=int, default=20 * 10 ** 6, help="Channel bandwidth in Hz, default is 20MHz")
     parser.add_argument("--H_UAV", type=int, default=120, help="UAV server fixed flight height in meters")
     parser.add_argument("--H_GU", type=int, default=1, help="Ground user height in meters")
+    parser.add_argument("--fix_hotspot", action='store_true', default=False, help=" if true, has a fixed hotpot at upper_right corner")
+    parser.add_argument("--random_hotspot", action='store_true', default=False, help="If true, has a random hotpot")
 
     parser.add_argument("--alpha_r", type=float, default=0.0, help="Weight of coverage")      # When 1，覆盖用户数目的奖励。 正常0到10的数字。
     parser.add_argument("--beta_r", type=float, default=0.5, help="Weight of overlapping")  # When 1， 再减去0.5*重复用户数目的惩罚。
@@ -124,7 +126,7 @@ def parse_args(args, parser):
     parser.add_argument("--delay_max", type=float, default=0.5, help="Maximum delay requirement of generated tasks in 0.3 seconds")
     # 设置的经验：delay*F_n=750*10**6，所以设置[C_min,C_max]围绕着750。 D_min和D_max设置的越小，越有助于卸载任务到无人机。
 
-    parser.add_argument("--Dis_min", type=int, default=5, help="Minimum collision avoidance distance between UAV servers in meters")
+    parser.add_argument("--Dis_min", type=int, default=3, help="Minimum collision avoidance distance between UAV servers in meters")
     parser.add_argument("--Cover_R", type=int, default=120, help="2D communication coverage radius of UAV server in meters")
     parser.add_argument("--w1", type=float, default=20, help="Weight of delay part in reward calculation")
     parser.add_argument("--w2", type=float, default=1, help="Weight of energy consumption part in reward calculation")
@@ -171,6 +173,7 @@ def parse_args(args, parser):
     # 测试使用tanh来处理下动作会不会有影响。
     parser.add_argument("--tanh_gaussian", action='store_true', default=False, help="If true, act.py use (tanh(u)+1)/2 to process action")
     parser.add_argument("--average_network_parameters_interval", type=int, default=10, help="interval of average_network_parameters, /episodes")
+    parser.add_argument("--ob_state_with_id", action='store_true', default=False, help="whether the state and obs with agent_id in env_maker.py")
 
     default_parser = parser.parse_args([])
     assert default_parser.alpha_r==0 and default_parser.epsilon_r==0, "这两个参数要默认为0。哪个输入了新的值，不为零，就是考虑了对应的惩罚。"

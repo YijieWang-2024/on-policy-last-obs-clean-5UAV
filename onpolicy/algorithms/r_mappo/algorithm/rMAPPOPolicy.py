@@ -59,6 +59,8 @@ class R_MAPPOPolicy:
 
     def get_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, masks, available_actions=None,
                     deterministic=False,attention_active_mask=None):
+        # # 测试
+        # deterministic = True
         # 在mec_runner里调用了这个，运行得到动作。只用了return的 _, actions, _, rnn_states_actor, rnn_states_critic
         if self.use_atten_actor:
             actions, action_log_probs, rnn_states_actor = self.actor(obs,
