@@ -9,6 +9,10 @@
 
 The historical directory `on-policy-separated-last-obs` remains unchanged. This workspace is a clean worktree created from the final 5-UAV commit, with the minimum plotting scripts and processed data copied in for paper-figure traceability.
 
+## Code Documentation
+
+See `CODE_WALKTHROUGH_5UAV.md` for the Chinese walkthrough of the MEC environment, action projection, neighborhood-attention critic, advantage aggregation, final `run30901` configuration, and the paper/code consistency audit.
+
 ## Paper Figure Map
 
 | Paper figure | Script/data in this workspace | Status |
