@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.idea/
+.vscode/
+wandb/
+onpolicy/scripts/results/
+**/logs/
+**/models/
+events.out.tfevents.*
+*.pt
+*.pth
+*.pkl
+onpolicy/figures/
+onpolicy/*.png
+onpolicy/*.pdf
+onpolicy/*.eps
+onpolicy/scripts/train/*-timestep*.png
