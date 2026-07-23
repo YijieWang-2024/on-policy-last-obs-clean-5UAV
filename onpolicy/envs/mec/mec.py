@@ -45,6 +45,21 @@ LOG_TERM = 20 * np.log10(4 * np.pi * f_c / 3e8)
 CONST_TERM_LoS = LOG_TERM + eta_LoS
 CONST_TERM_NLoS = LOG_TERM + eta_NLoS
 
+
+def _offload_delay(tasks, uav_ids, gu_ids, bandwidth, computation, channel_gains):
+    """Calculate offloading delays for selected UAV-GU pairs."""
+    selected_tasks = tasks[gu_ids]
+    selected_bandwidth = bandwidth[uav_ids, gu_ids]
+    selected_computation = computation[uav_ids, gu_ids]
+    selected_gains = channel_gains[uav_ids, gu_ids]
+    rates = selected_bandwidth * np.log2(
+        1 + p_t * selected_gains / (N_0 * (selected_bandwidth + 1e-10))
+    )
+    transmission_delay = selected_tasks[:, 0] / rates
+    execution_delay = selected_tasks[:, 1] / selected_computation
+    return transmission_delay, execution_delay
+
+
 class DroneInfo:
     def __init__(self, drone_id: int):
         self.drone_id = drone_id
@@ -1268,36 +1283,21 @@ class MEC(gym.Env):
                     # 为了防止最大值为0的存在，导致取到多个不存在的无人机。把0变为不可能出现的99
                     col_max = np.where(col_max, col_max, 99.0)
                     actions[1] = (actions[1] == col_max).astype(int)
-                    for n in range(self.n_GUs):
-                        user_selection = actions[1][:, n].copy()
-                        bandwidth_allocation = actions[2][:, n].copy()
-                        computation_allocation = actions[3][:, n].copy()
-                        sum_selection = np.sum(user_selection)
-                        if sum_selection == 0:
-                            actions[1][:, n] = 0
-                            actions[2][:, n] = 0
-                            actions[3][:, n] = 0
-                        elif sum_selection == 1:
-                            best_uav = np.argmax(actions[1][:, n])  # UAV m is offloading task n
-                            actions[1][:, n] = 0
-                            actions[1][best_uav, n] = 1
-                            actions[2][:, n] = 0
-                            actions[2][best_uav, n] = bandwidth_allocation[best_uav]
-                            actions[3][:, n] = 0
-                            actions[3][best_uav, n] = computation_allocation[best_uav]
-                        else:
-                            active_mask = user_selection == 1
-                            distances = self.uav_gu_distances_3d[:, n]
-                            # 只考虑活跃无人机的距离，非活跃无人机距离设为无穷大
-                            distances_masked = np.where(active_mask, distances, np.inf)
-                            # 找到距离最近的无人机索引
-                            nearest_uav_idx = np.argmin(distances_masked)
-                            actions[1][:, n] = 0
-                            actions[1][nearest_uav_idx, n] = 1
-                            actions[2][:, n] = 0
-                            actions[2][nearest_uav_idx, n] = bandwidth_allocation[nearest_uav_idx]
-                            actions[3][:, n] = 0
-                            actions[3][nearest_uav_idx, n] = computation_allocation[nearest_uav_idx]
+                    selection_counts = np.sum(actions[1], axis=0)
+                    duplicate_gu_ids = np.flatnonzero(selection_counts > 1)
+                    if duplicate_gu_ids.size:
+                        active_distances = np.where(
+                            actions[1][:, duplicate_gu_ids] == 1,
+                            self.uav_gu_distances_3d[:, duplicate_gu_ids],
+                            np.inf,
+                        )
+                        nearest_uav_ids = np.argmin(active_distances, axis=0)
+                        actions[1][:, duplicate_gu_ids] = 0
+                        actions[1][nearest_uav_ids, duplicate_gu_ids] = 1
+
+                    selected_mask = actions[1].astype(bool)
+                    actions[2] *= selected_mask
+                    actions[3] *= selected_mask
                     # 标准化资源
                     for m in range(self.n_UAVs):
                         total_bw = np.sum(actions[2][m])
@@ -1311,27 +1311,23 @@ class MEC(gym.Env):
                     # 判断卸载分配的资源能不能完成任务..
                     bandwidth_actions = actions[2] * self.B
                     computation_actions = actions[3] * self.F_m
-                    for n in range(self.n_GUs):
-                        if np.any(actions[1][:, n]):
-                            m = np.argmax(actions[1][:, n])
-                            gu_n_task = self.gu_tasks[n]
-
-                            # 计算传输速率
-                            h_nm = self.channel_gains[m, n]
-                            bw = bandwidth_actions[m, n]
-                            R_nm = bw * np.log2(1 + p_t * h_nm / (N_0 * (bw + 1e-10)))
-
-                            epsilon = 0
-                            tau_trans = gu_n_task[0] / (R_nm + epsilon)
-                            tau_exe = gu_n_task[1] / (computation_actions[m, n] + epsilon)
-                            total_delay = tau_trans + tau_exe
-                            if total_delay > self.gu_tasks[n, 2]:
-
-                            # if gu_n_task[1] / computation_actions[m, n] > self.gu_tasks[n, 2]:
-
-                                actions[1][m, n] = 0
-                                actions[2][m, n] = 0
-                                actions[3][m, n] = 0
+                    selected_gu_ids = np.flatnonzero(np.any(actions[1], axis=0))
+                    if selected_gu_ids.size:
+                        selected_uav_ids = np.argmax(actions[1][:, selected_gu_ids], axis=0)
+                        tau_trans, tau_exe = _offload_delay(
+                            self.gu_tasks,
+                            selected_uav_ids,
+                            selected_gu_ids,
+                            bandwidth_actions,
+                            computation_actions,
+                            self.channel_gains,
+                        )
+                        overdue = tau_trans + tau_exe > self.gu_tasks[selected_gu_ids, 2]
+                        overdue_gu_ids = selected_gu_ids[overdue]
+                        overdue_uav_ids = selected_uav_ids[overdue]
+                        actions[1][overdue_uav_ids, overdue_gu_ids] = 0
+                        actions[2][overdue_uav_ids, overdue_gu_ids] = 0
+                        actions[3][overdue_uav_ids, overdue_gu_ids] = 0
                     # 重新标准化资源
                     for m in range(self.n_UAVs):
                         total_bw = np.sum(actions[2][m])
@@ -1693,7 +1689,100 @@ class MEC(gym.Env):
         R_task = np.zeros(self.n_UAVs)
         R_task_delay = np.zeros(self.n_UAVs)
         R_task_energy = np.zeros(self.n_UAVs)
-        for n in range(self.n_GUs):
+        use_vectorized_task_rewards = (
+            self.continuous_associate
+            and not self.fix_uav_pos
+            and not self.nearest_associate
+            and not self.ave_resource
+            and not self.ave_bandwidth
+            and self.not_served_rew_to_nearest
+        )
+        if use_vectorized_task_rewards:
+            offloaded_mask = np.any(offloading_actions, axis=0)
+            local_gu_ids = np.flatnonzero(~offloaded_mask)
+            offloaded_gu_ids = np.flatnonzero(offloaded_mask)
+            credited_uav_ids = np.full(self.n_GUs, -1, dtype=int)
+            credited_delay_rewards = np.zeros(self.n_GUs)
+            credited_energy_rewards = np.zeros(self.n_GUs)
+
+            if local_gu_ids.size:
+                local_tasks = self.gu_tasks[local_gu_ids]
+                local_delay = local_tasks[:, 1] / self.F_n
+                local_energy = k_local * (self.F_n ** 2) * local_tasks[:, 1]
+                local_energy_clipped = np.clip(local_energy, 0, 10)
+                local_complete = local_tasks[:, 2] > local_delay
+                local_delay_reward = np.where(
+                    local_complete,
+                    self.gamma_r * (1 + local_tasks[:, 2] - local_delay),
+                    -self.delta_r,
+                )
+                local_energy_reward = -self.lambda_r * local_energy_clipped
+
+                self.complete_task[local_gu_ids] = local_complete
+                self.self_complete_task[local_gu_ids] = local_complete
+                per_GU_delay_reward_others[local_gu_ids] = local_delay_reward
+                per_GU_energy_reward_others[local_gu_ids] = local_energy_reward
+                per_GU_task_reward_others[local_gu_ids] = local_delay_reward + local_energy_reward
+                per_GU_delay_true_others[local_gu_ids] = local_delay
+                per_GU_energy_true_others[local_gu_ids] = local_energy_clipped
+
+                covered_local = np.any(coverage_mask[:, local_gu_ids], axis=0)
+                covered_gu_ids = local_gu_ids[covered_local]
+                if covered_gu_ids.size:
+                    nearest_uav_ids = np.argmin(uav_gu_distances_2d[:, covered_gu_ids], axis=0)
+                    credited_uav_ids[covered_gu_ids] = nearest_uav_ids
+                    credited_delay_rewards[covered_gu_ids] = local_delay_reward[covered_local]
+                    credited_energy_rewards[covered_gu_ids] = local_energy_reward[covered_local]
+
+            if offloaded_gu_ids.size:
+                serving_uav_ids = np.argmax(offloading_actions[:, offloaded_gu_ids], axis=0)
+                transmission_delay, execution_delay = _offload_delay(
+                    self.gu_tasks,
+                    serving_uav_ids,
+                    offloaded_gu_ids,
+                    bandwidth_actions,
+                    computation_actions,
+                    self.channel_gains,
+                )
+                offloaded_tasks = self.gu_tasks[offloaded_gu_ids]
+                total_delay = transmission_delay + execution_delay
+                allocated_computation = computation_actions[serving_uav_ids, offloaded_gu_ids]
+                total_energy = (
+                    p_t * transmission_delay
+                    + k_server * allocated_computation ** 2 * offloaded_tasks[:, 1]
+                )
+                energy_clipped = np.clip(total_energy, 0, 10)
+                complete = offloaded_tasks[:, 2] > total_delay
+                delay_reward = np.where(
+                    complete,
+                    self.gamma_r * (1 + offloaded_tasks[:, 2] - total_delay),
+                    -self.delta_r,
+                )
+                energy_reward = -self.lambda_r * energy_clipped
+
+                self.complete_task[offloaded_gu_ids] = complete
+                self.self_complete_task[offloaded_gu_ids] = (
+                    offloaded_tasks[:, 2] > offloaded_tasks[:, 1] / self.F_n
+                )
+                per_GU_delay_reward[offloaded_gu_ids] = delay_reward
+                per_GU_energy_reward[offloaded_gu_ids] = energy_reward
+                per_GU_task_reward[offloaded_gu_ids] = delay_reward + energy_reward
+                per_GU_delay_true[offloaded_gu_ids] = total_delay
+                per_GU_energy_true[offloaded_gu_ids] = energy_clipped
+                credited_uav_ids[offloaded_gu_ids] = serving_uav_ids
+                credited_delay_rewards[offloaded_gu_ids] = delay_reward
+                credited_energy_rewards[offloaded_gu_ids] = energy_reward
+
+            for gu_id in np.flatnonzero(credited_uav_ids >= 0):
+                uav_id = credited_uav_ids[gu_id]
+                R_task_delay[uav_id] += credited_delay_rewards[gu_id]
+                R_task_energy[uav_id] += credited_energy_rewards[gu_id]
+
+            task_gu_ids = ()
+        else:
+            task_gu_ids = range(self.n_GUs)
+
+        for n in task_gu_ids:
             uav_indices = np.where(coverage_mask[:, n])[0]
             if self.nearest_associate and (self.ave_resource is False): # nearest_associate的还有问题呢。
                 active_mask = (bandwidth_actions[:, n] > 0) & (computation_actions[:, n] > 0)

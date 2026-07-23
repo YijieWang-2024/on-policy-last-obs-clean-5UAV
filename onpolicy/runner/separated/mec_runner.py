@@ -3,7 +3,7 @@ import time
 import numpy as np
 import torch
 from onpolicy.runner.separated.base_runner import Runner
-from onpolicy.envs.mec.vec_normalize import Normer
+from onpolicy.envs.mec.vec_normalize import Normer, normalize_batch
 from onpolicy.utils.util import get_shape_from_obs_space
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial.distance import cdist
@@ -64,10 +64,7 @@ class MECRunner(Runner):
 
                 # Obser reward and next obs
                 obs, share_obs, rewards, dones, infos, available_actions, Metropolis_weights, attention_active_mask = self.envs.step(actions)
-                for i in range(self.n_UAVs):
-                    obs[:, i] = self.normer[i]._obfilt(obs[:, i])
-                    share_obs[:, i] = self.normer[i]._statefilt(share_obs[:, i])
-                    rewards[:, i] = self.normer[i]._rewsfilt(rewards[:, i], dones[:, i])
+                normalize_batch(self.normer, obs, share_obs, rewards, dones)
                 # obs = self.normer._obfilt(obs)
                 # share_obs = self.normer._statefilt(share_obs)
                 # rewards = self.normer._rewsfilt(rewards, dones)
@@ -163,9 +160,7 @@ class MECRunner(Runner):
     def warmup(self):
         # reset env
         obs, share_obs, available_actions, Metropolis_weights, attention_active_mask = self.envs.reset()
-        for i in range(self.n_UAVs):
-            obs[:, i] = self.normer[i]._obfilt(obs[:, i])
-            share_obs[:, i] = self.normer[i]._statefilt(share_obs[:, i])
+        normalize_batch(self.normer, obs, share_obs)
         # obs = self.normer._obfilt(obs)
         # share_obs = self.normer._statefilt(share_obs)
 

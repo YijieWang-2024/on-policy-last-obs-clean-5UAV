@@ -2,6 +2,72 @@ from .running_mean_std import RunningMeanStd
 import numpy as np
 import pickle
 
+
+def normalize_batch(normers, obs, states, rews=None, dones=None):
+    """Normalize all agents while preserving each agent's independent statistics."""
+    if not normers:
+        return obs, states, rews
+
+    first = normers[0]
+    if any(
+        (normer.ob_norm, normer.ret_norm, normer.not_norm, normer.clipob,
+         normer.cliprew, normer.gamma, normer.epsilon)
+        != (first.ob_norm, first.ret_norm, first.not_norm, first.clipob,
+            first.cliprew, first.gamma, first.epsilon)
+        for normer in normers[1:]
+    ):
+        raise ValueError("batched normalization requires identical Normer settings")
+
+    for agent_id, normer in enumerate(normers):
+        if normer.ob_rms:
+            normer.ob_rms.update(obs[:, agent_id])
+            normer.state_rms.update(states[:, agent_id])
+
+        if rews is not None and normer.ret_rms:
+            agent_rews = rews[:, agent_id]
+            if not hasattr(normer, 'returns') or normer.returns is None:
+                normer.returns = np.zeros_like(agent_rews)
+            normer.returns = normer.returns * normer.gamma + agent_rews
+            if dones is not None:
+                agent_dones = dones[:, agent_id]
+                if agent_dones.shape != normer.returns.shape:
+                    agent_dones = agent_dones[..., np.newaxis]
+                normer.returns = normer.returns * (1.0 - agent_dones)
+            normer.ret_rms.update(normer.returns.reshape(-1, 1))
+
+    if first.ob_rms:
+        start = first.not_norm
+        obs_mean = np.stack([normer.ob_rms.mean for normer in normers])
+        obs_var = np.stack([normer.ob_rms.var for normer in normers])
+        state_mean = np.stack([normer.state_rms.mean for normer in normers])
+        state_var = np.stack([normer.state_rms.var for normer in normers])
+        obs[..., start:] = np.clip(
+            (obs[..., start:] - obs_mean[None, :, start:])
+            / np.sqrt(obs_var[None, :, start:] + first.epsilon),
+            -first.clipob,
+            first.clipob,
+        )
+        states[..., start:] = np.clip(
+            (states[..., start:] - state_mean[None, :, start:])
+            / np.sqrt(state_var[None, :, start:] + first.epsilon),
+            -first.clipob,
+            first.clipob,
+        )
+
+    if rews is not None and first.ret_rms:
+        scales = np.asarray([
+            np.sqrt(np.asarray(normer.ret_rms.var) + normer.epsilon).reshape(-1)[0]
+            for normer in normers
+        ])
+        rews[...] = np.clip(
+            rews / scales[None, :, None],
+            -first.cliprew,
+            first.cliprew,
+        )
+
+    return obs, states, rews
+
+
 class Normer():
     def __init__(self, args=None, obs_space=None, states_space=None, clipob=10., cliprew=10., gamma=0.99, epsilon=1e-8):
         self.ob_norm = args.ob_norm

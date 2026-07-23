@@ -181,7 +181,32 @@ class SeparatedReplayBuffer(object):
                 for step in reversed(range(self.rewards.shape[0])):
                     self.returns[step] = self.returns[step + 1] * self.gamma * self.masks[step + 1] + self.rewards[step]
 
-    def feed_forward_generator(self, advantages, num_mini_batch=None, mini_batch_size=None):
+    def _feed_forward_data(self, advantages):
+        return (
+            self.share_obs[:-1].reshape(-1, *self.share_obs.shape[2:]),
+            self.obs[:-1].reshape(-1, *self.obs.shape[2:]),
+            self.rnn_states[:-1].reshape(-1, *self.rnn_states.shape[2:]),
+            self.rnn_states_critic[:-1].reshape(-1, *self.rnn_states_critic.shape[2:]),
+            self.actions.reshape(-1, self.actions.shape[-1]),
+            self.value_preds[:-1].reshape(-1, 1),
+            self.returns[:-1].reshape(-1, 1),
+            self.masks[:-1].reshape(-1, 1),
+            self.active_masks[:-1].reshape(-1, 1),
+            self.action_log_probs.reshape(-1, self.action_log_probs.shape[-1]),
+            None if advantages is None else advantages.reshape(-1, 1),
+            None if self.available_actions is None else self.available_actions[:-1].reshape(
+                -1, self.available_actions.shape[-1]
+            ),
+            self.attention_active_mask[:-1].reshape(-1, self.max_UAVs_obs_concat),
+        )
+
+    def prepare_feed_forward_data(self, advantages, device):
+        """Flatten one agent's rollout and move it to the training device once."""
+        data = self._feed_forward_data(advantages)
+        return tuple(None if item is None else torch.as_tensor(item, device=device) for item in data)
+
+    def feed_forward_generator(self, advantages, num_mini_batch=None, mini_batch_size=None,
+                               prepared_data=None):
         episode_length, n_rollout_threads = self.rewards.shape[0:2]
         batch_size = n_rollout_threads * episode_length
 
@@ -194,23 +219,17 @@ class SeparatedReplayBuffer(object):
                           num_mini_batch))
             mini_batch_size = batch_size // num_mini_batch
 
-        rand = torch.randperm(batch_size).numpy()
-        sampler = [rand[i * mini_batch_size:(i + 1) * mini_batch_size] for i in range(num_mini_batch)]
+        data = self._feed_forward_data(advantages) if prepared_data is None else prepared_data
+        share_obs, obs, rnn_states, rnn_states_critic, actions, value_preds, returns, masks, \
+            active_masks, action_log_probs, advantages, available_actions, \
+            attention_active_mask = data
 
-        share_obs = self.share_obs[:-1].reshape(-1, *self.share_obs.shape[2:])
-        obs = self.obs[:-1].reshape(-1, *self.obs.shape[2:])
-        attention_active_mask = self.attention_active_mask[:-1].reshape(-1, self.max_UAVs_obs_concat)
-        rnn_states = self.rnn_states[:-1].reshape(-1, *self.rnn_states.shape[2:])
-        rnn_states_critic = self.rnn_states_critic[:-1].reshape(-1, *self.rnn_states_critic.shape[2:])
-        actions = self.actions.reshape(-1, self.actions.shape[-1])
-        if self.available_actions is not None:
-            available_actions = self.available_actions[:-1].reshape(-1, self.available_actions.shape[-1])
-        value_preds = self.value_preds[:-1].reshape(-1, 1)
-        returns = self.returns[:-1].reshape(-1, 1)
-        masks = self.masks[:-1].reshape(-1, 1)
-        active_masks = self.active_masks[:-1].reshape(-1, 1)
-        action_log_probs = self.action_log_probs.reshape(-1, self.action_log_probs.shape[-1])
-        advantages = advantages.reshape(-1, 1)
+        rand = torch.randperm(batch_size)
+        if prepared_data is None:
+            rand = rand.numpy()
+        else:
+            rand = rand.to(device=share_obs.device)
+        sampler = [rand[i * mini_batch_size:(i + 1) * mini_batch_size] for i in range(num_mini_batch)]
 
         for indices in sampler:
             # obs size [T+1 N Dim]-->[T N Dim]-->[T*N,Dim]-->[index,Dim]
@@ -220,7 +239,7 @@ class SeparatedReplayBuffer(object):
             rnn_states_batch = rnn_states[indices]
             rnn_states_critic_batch = rnn_states_critic[indices]
             actions_batch = actions[indices]
-            if self.available_actions is not None:
+            if available_actions is not None:
                 available_actions_batch = available_actions[indices]
             else:
                 available_actions_batch = None

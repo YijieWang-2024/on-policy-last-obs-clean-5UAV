@@ -8,7 +8,7 @@ import warnings
 
 class FixedNormal(torch.distributions.Normal):
     def __init__(self, loc, scale, avail_actions=None):
-        super().__init__(loc, scale)
+        super().__init__(loc, scale, validate_args=False)
         self.avail_actions = avail_actions
 
     def log_probs(self, actions):
@@ -56,7 +56,7 @@ class FixedDirichlet(torch.distributions.Dirichlet):
             masked_concentration = concentration * avail_actions + 0.1 * (1 - avail_actions)    # 使用0.1而不是1e-6提高数值稳定性？？？
         else:
             masked_concentration = concentration
-        super().__init__(masked_concentration)
+        super().__init__(masked_concentration, validate_args=False)
         self.masked_concentration = masked_concentration
         # self.avail_actions_0_1 = torch.where(torch.sum(self.avail_actions, dim=-1)<1)[0]
         # self.avail_actions_true_to_times_logp = 1 - (torch.sum(self.avail_actions, dim=-1)<1).float()

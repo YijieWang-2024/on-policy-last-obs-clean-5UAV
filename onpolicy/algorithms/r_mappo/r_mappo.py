@@ -173,7 +173,7 @@ class R_MAPPO():
         log_ratio = action_log_probs - old_action_log_probs_batch
 
         # 检测并处理log_ratio异常值，使用self.log_ratio_clip
-        if torch.isnan(log_ratio).any() or torch.isinf(log_ratio).any():
+        if not torch.isfinite(log_ratio).all():
             warnings.warn(f"检测到log_ratio中有NaN或Inf值，已裁剪到[-{self.log_ratio_clip:.4f}, {self.log_ratio_clip:.4f}]范围内")
         log_ratio = torch.clamp(log_ratio, -self.log_ratio_clip, self.log_ratio_clip)
 
@@ -184,14 +184,6 @@ class R_MAPPO():
         if self.use_ratio_clipping:
             ratio = torch.clamp(ratio, 0.0, self.max_ratio)
         # 记录最大和平均重要性权重，用于监控训练稳定性
-        ratio_max = ratio.max().item()
-        ratio_mean = ratio.mean().item()
-        self.ratio_max_history.append(ratio_max)
-        self.ratio_mean_history.append(ratio_mean)
-        # 使用self.ratio_warning作为警告阈值
-        if ratio_max > self.ratio_warning:
-            warnings.warn(f"重要性权重过大: max={ratio_max:.4f}, mean={ratio_mean:.4f}, 阈值={self.ratio_warning:.4f}")
-
         # 计算PPO目标函数
         surr1 = ratio * adv_targ
         surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
@@ -208,8 +200,6 @@ class R_MAPPO():
             (policy_loss - dist_entropy * self.entropy_coef).backward()
         if self._use_max_grad_norm:
             actor_grad_norm = nn.utils.clip_grad_norm_(self.policy.actor.parameters(), self.max_grad_norm)
-            if actor_grad_norm > 100.0:
-                warnings.warn(f"Actor梯度范数异常: {actor_grad_norm}")
         else:
             actor_grad_norm = get_gard_norm(self.policy.actor.parameters())
         self.policy.actor_optimizer.step()
@@ -220,13 +210,36 @@ class R_MAPPO():
         (value_loss * self.value_loss_coef).backward()
         if self._use_max_grad_norm:
             critic_grad_norm = nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.max_grad_norm)
-            if critic_grad_norm > 100.0:
-                warnings.warn(f"Critic梯度范数异常: {critic_grad_norm}")
         else:
             critic_grad_norm = get_gard_norm(self.policy.critic.parameters())
         self.policy.critic_optimizer.step()
         self.num_updates += 1
-        return value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, ratio
+        # These values are monitoring-only. Copy them to CPU together so PPO
+        # does not synchronize the GPU separately for every statistic.
+        with torch.no_grad():
+            stats = torch.stack((
+                value_loss.detach(),
+                policy_loss.detach(),
+                dist_entropy.detach(),
+                torch.as_tensor(actor_grad_norm, device=self.device),
+                torch.as_tensor(critic_grad_norm, device=self.device),
+                ratio.mean(),
+                ratio.max(),
+            )).cpu().tolist()
+        value_loss_stat, policy_loss_stat, dist_entropy_stat, actor_grad_norm_stat, \
+            critic_grad_norm_stat, ratio_mean, ratio_max = stats
+
+        self.ratio_max_history.append(ratio_max)
+        self.ratio_mean_history.append(ratio_mean)
+        if ratio_max > self.ratio_warning:
+            warnings.warn(f"重要性权重过大: max={ratio_max:.4f}, mean={ratio_mean:.4f}, 阈值={self.ratio_warning:.4f}")
+        if actor_grad_norm_stat > 100.0:
+            warnings.warn(f"Actor梯度范数异常: {actor_grad_norm_stat}")
+        if critic_grad_norm_stat > 100.0:
+            warnings.warn(f"Critic梯度范数异常: {critic_grad_norm_stat}")
+
+        return value_loss_stat, critic_grad_norm_stat, policy_loss_stat, dist_entropy_stat, \
+            actor_grad_norm_stat, (ratio_mean, ratio_max)
 
     def train(self, buffer, update_actor=True):
         """
@@ -269,30 +282,37 @@ class R_MAPPO():
 
         self.num_updates = 0
         self.continue_training = True
+        prepared_feed_forward_data = None
+        if not self._use_recurrent_policy and not self._use_naive_recurrent:
+            prepared_feed_forward_data = buffer.prepare_feed_forward_data(advantages, self.device)
+
         for _ in range(self.ppo_epoch):
             if self._use_recurrent_policy:
                 data_generator = buffer.recurrent_generator(advantages, self.num_mini_batch, self.data_chunk_length)
             elif self._use_naive_recurrent:
                 data_generator = buffer.naive_recurrent_generator(advantages, self.num_mini_batch)
             else:
-                data_generator = buffer.feed_forward_generator(advantages, self.num_mini_batch)
+                data_generator = buffer.feed_forward_generator(
+                    advantages,
+                    self.num_mini_batch,
+                    prepared_data=prepared_feed_forward_data,
+                )
 
             for sample in data_generator:
-                value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, imp_weights \
+                value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, ratio_stats \
                     = self.ppo_update(sample, update_actor)
 
                 if not self.continue_training:
                     break
 
-                train_info['value_loss'] += value_loss.item()
-                train_info['policy_loss'] += policy_loss.item()
-                train_info['dist_entropy'] += dist_entropy.item()
+                train_info['value_loss'] += value_loss
+                train_info['policy_loss'] += policy_loss
+                train_info['dist_entropy'] += dist_entropy
                 train_info['actor_grad_norm'] += actor_grad_norm
                 train_info['critic_grad_norm'] += critic_grad_norm
 
                 # 收集重要性权重统计信息
-                ratio_mean = imp_weights.mean().item()
-                ratio_max = imp_weights.max().item()
+                ratio_mean, ratio_max = ratio_stats
                 train_info['ratio'] += ratio_mean
                 train_info['ratio_max'] = max(train_info['ratio_max'], ratio_max)
 
