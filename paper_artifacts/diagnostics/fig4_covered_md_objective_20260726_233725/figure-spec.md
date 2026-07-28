@@ -1,0 +1,38 @@
+# Figure Spec
+
+- chart_type: four-series training line chart with historical standard-deviation bands
+- data_sources:
+  - historical MAPPO runs 313, 321, 322
+  - historical DC-PPO runs 301, 304, 30901
+  - completed strict-1+5 MAPPO seed2 run
+  - completed strict-1+5 DC-PPO seed2 run
+- rows_in_scope: sum of all five `agent{i}/system_performance_individual` series at every available logged point; historical horizon limited to episode 3499 to match Fig. 4
+- data_columns: series, source_kind, learning_episode, mean, std
+- x_axis:
+  - field: environment step divided by 64 rollout threads and 400 slots
+  - label: Learning episodes
+  - unit: parallel rollout episodes
+  - scale: linear
+  - range: 0 to 3500
+- y_axis:
+  - field: sum of five system_performance_individual values
+  - label: Covered-MD system performance
+  - unit: episode objective
+  - scale: linear
+  - range: automatic and containing all plotted values and bands
+- additional_axes: none
+- series_or_categories: historical MAPPO, historical DC-PPO, strict-1+5 MAPPO, strict-1+5 DC-PPO
+- category_order: historical pair then current pair
+- color_mapping: blue, orange, cyan, brown
+- size_mapping: current single-seed curves are slightly thicker
+- legend: complete four-entry legend in the best open region
+- required_annotations: none
+- forbidden_elements: equivalent-60-MD values, true-all values from uncovered historical MDs, cumulative reward with collision penalties, deterministic-evaluation claims, extrapolation beyond available data
+- layout_constraints: double-column width, 300 dpi opaque PNG
+- source_note: the plotted metric is `sum_i system_performance_individual_i`; it includes covered MD task performance plus UAV flight reward and excludes collision penalties
+- assumptions:
+  - use three-point centered smoothing for every seed before aggregation
+  - historical curves show mean plus or minus one standard deviation over three seeds
+  - current strict-1+5 curves are one training seed and therefore have no uncertainty band
+  - in the dynamic environment every active MD is under union coverage, so this sum equals `system_performance_true_all_GUs` up to float logging error
+  - historical fixed-60 experiments retain uncovered MDs, so this sum intentionally excludes their local-computation contribution

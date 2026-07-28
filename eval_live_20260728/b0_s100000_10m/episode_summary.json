@@ -1,0 +1,256 @@
+{
+  "status": "completed",
+  "run_dir": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\regional_dynamic_strict1p5_cartesian_curriculum_distance_b0_seed2_100m_r64_20260728\\run1",
+  "checkpoint_dir": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\eval_live_20260728\\b0_s100000_10m\\checkpoint_snapshot",
+  "checkpoint_files": {
+    "actor_agent0.pt": {
+      "bytes": 815985,
+      "mtime": 1785223586.7683675,
+      "sha256": "9c3c23b3d17cb213d0e1cde56b4acf9b057f3f8e486d8f42849d680d7b4c8584"
+    },
+    "actor_agent1.pt": {
+      "bytes": 815985,
+      "mtime": 1785223586.7843697,
+      "sha256": "62462283ed18c48f0578bf09030ddaaf99f5797ce2dc13234ad2c03c2c3997fe"
+    },
+    "actor_agent2.pt": {
+      "bytes": 815985,
+      "mtime": 1785223586.7993667,
+      "sha256": "653b976933c5cd44cb2aa16f5ea2a61922ad160afe27bf0beb79bcff816330b4"
+    },
+    "actor_agent3.pt": {
+      "bytes": 815985,
+      "mtime": 1785223586.81992,
+      "sha256": "6627636f41389f2b71868e36ac0754d948cf8323e697d9f657a95fb276d3ad7d"
+    },
+    "actor_agent4.pt": {
+      "bytes": 815985,
+      "mtime": 1785223586.8359275,
+      "sha256": "b278ce0548e4b23cb0b87934f33ca7619437934d65a3b43df67bd044c5d82897"
+    },
+    "args.json": {
+      "bytes": 4659,
+      "mtime": 1785212846.6289454,
+      "sha256": "082a698b0cb5bb4bf87aa4f55b75dedcd29fed19457e129bcf5458d1f3cb2fb7"
+    },
+    "critic_agent0.pt": {
+      "bytes": 3130023,
+      "mtime": 1785223586.7773693,
+      "sha256": "69d8fa878678b8b27a57d7fca077d44c25cba0283eca14dd823cccb8b9b7ce3a"
+    },
+    "critic_agent1.pt": {
+      "bytes": 3130023,
+      "mtime": 1785223586.7923667,
+      "sha256": "cca83bcbb3224d9328812504b4effd2fc88451318c9397b40fd6e7e54fe18618"
+    },
+    "critic_agent2.pt": {
+      "bytes": 3130023,
+      "mtime": 1785223586.808367,
+      "sha256": "35ff6ec3696edcbbe797d963262f9069e25ac616dbaeb06e0b55289141a01422"
+    },
+    "critic_agent3.pt": {
+      "bytes": 3130023,
+      "mtime": 1785223586.827929,
+      "sha256": "66342b1d3dda3b6cc3607383ab97b4a22d3c232224f13ae073ca659ced86367f"
+    },
+    "critic_agent4.pt": {
+      "bytes": 3130023,
+      "mtime": 1785223586.8435934,
+      "sha256": "09d8d338c1e743fbbdeef0f3808f74bfb8f309d4599e2efe4f83a48144673c74"
+    },
+    "normer0.pkl": {
+      "bytes": 20161,
+      "mtime": 1785223586.7783685,
+      "sha256": "1951253260306368ec8f75be5b6e883db005cc5381df2404ad3c6b61d85d428e"
+    },
+    "normer1.pkl": {
+      "bytes": 20161,
+      "mtime": 1785223586.7923667,
+      "sha256": "dd10a8d8777722cd036b34538388be78e0103c1cc8d7a8eb9dc21cc700531668"
+    },
+    "normer2.pkl": {
+      "bytes": 20161,
+      "mtime": 1785223586.808367,
+      "sha256": "6158ec5e693f215f295451fd3af4bb7608c0e449d82bb2dc990d1e912de94368"
+    },
+    "normer3.pkl": {
+      "bytes": 20161,
+      "mtime": 1785223586.82893,
+      "sha256": "8451e24a53234a578d625b6589d2b7896574b305002f5b274c77ff7dc75ca373"
+    },
+    "normer4.pkl": {
+      "bytes": 20161,
+      "mtime": 1785223586.8446002,
+      "sha256": "2048b9924990f6362e18ba1ad2f0c14bed52757a708b76e473c86ae30b4ee965"
+    }
+  },
+  "training_step_at_snapshot": 9907200,
+  "evaluation_seed": 100000,
+  "actor_mode": "deterministic",
+  "normalization": "frozen saved statistics",
+  "episode_length": 400,
+  "frame_interval": 5,
+  "frame_count": 80,
+  "total_reward_per_uav": [
+    90353.77291461566,
+    97629.33860207314,
+    91442.94779156083,
+    82774.4556063165,
+    79138.32333934307
+  ],
+  "final_environment_info": {
+    "cumulative_reward": [
+      88267.76765078181,
+      88267.76765078181,
+      88267.76765078181,
+      88267.76765078181,
+      88267.76765078181
+    ],
+    "n_GUs_per_uav_served": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "uav_m_toal_energy_consumption": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "user_in_m_average_delay": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cumulative_individual_reward": [
+      90353.77291461566,
+      97629.33860207314,
+      91442.94779156083,
+      82774.4556063165,
+      79138.32333934307
+    ],
+    "system_performance": [
+      445086.6585955746,
+      445086.6585955746,
+      445086.6585955746,
+      445086.6585955746,
+      445086.6585955746
+    ],
+    "cumulative_individual_reward_wo_cover": [
+      90353.77291461566,
+      97629.33860207314,
+      91442.94779156083,
+      82774.4556063165,
+      79138.32333934307
+    ],
+    "cumulative_reward_wo_cover": [
+      88267.76765078181,
+      88267.76765078181,
+      88267.76765078181,
+      88267.76765078181,
+      88267.76765078181
+    ],
+    "system_performance_individual": [
+      90353.77291461566,
+      97629.33860207314,
+      91442.94779156083,
+      82774.4556063165,
+      79138.32333934307
+    ],
+    "system_performance_true_all_GUs": [
+      441338.83825390943,
+      441338.83825390943,
+      441338.83825390943,
+      441338.83825390943,
+      441338.83825390943
+    ],
+    "system_performance_equivalent_full_GUs": [
+      457329.71172532946,
+      457329.71172532946,
+      457329.71172532946,
+      457329.71172532946,
+      457329.71172532946
+    ],
+    "delay_true_all_GUs": [
+      0.3455246841054614,
+      0.3455246841054614,
+      0.3455246841054614,
+      0.3455246841054614,
+      0.3455246841054614
+    ],
+    "delay_true_coverd_GUs": [
+      0.0007751054733391993,
+      0.0007751054733391993,
+      0.0007751054733391993,
+      0.0007751054733391993,
+      0.0007751054733391993
+    ],
+    "energy_true_all_GUs": [
+      19.676196087468337,
+      19.676196087468337,
+      19.676196087468337,
+      19.676196087468337,
+      19.676196087468337
+    ],
+    "energy_all_GUs_UAVs": [
+      425.9039652340376,
+      425.9039652340376,
+      425.9039652340376,
+      425.9039652340376,
+      425.9039652340376
+    ],
+    "system_performance_coverd_GUs": [
+      445086.6585955746,
+      445086.6585955746,
+      445086.6585955746,
+      445086.6585955746,
+      445086.6585955746
+    ],
+    "n_GUs_by_coverd": 48.585,
+    "complete_task_ratio": 0.9023708678064131,
+    "uav_positions": [
+      [
+        497.87860107421875,
+        283.7301330566406
+      ],
+      [
+        98.05458068847656,
+        68.70109558105469
+      ],
+      [
+        360.3255920410156,
+        409.545166015625
+      ],
+      [
+        313.9394836425781,
+        281.8135986328125
+      ],
+      [
+        499.1769104003906,
+        455.289306640625
+      ]
+    ],
+    "candidate_md_arrivals": 2400,
+    "admitted_md_arrivals": 1931,
+    "candidate_md_arrivals_lower_left": 400,
+    "candidate_md_arrivals_upper_right": 2000,
+    "admitted_md_arrivals_lower_left": 379,
+    "admitted_md_arrivals_upper_right": 1552,
+    "md_admission_ratio": 0.8045833333333333,
+    "md_admission_ratio_lower_left": 0.9475,
+    "md_admission_ratio_upper_right": 0.776,
+    "expired_md_accesses": 1759,
+    "coverage_departed_md_accesses": 132,
+    "average_active_mds": 45.895,
+    "average_active_mds_second_half": 48.365,
+    "curriculum_random_reset": 0.0,
+    "curriculum_random_probability": 0.0,
+    "flight_proposal_norm_mean": 0.41670577948162707,
+    "flight_disk_projection_ratio": 0.05
+  }
+}

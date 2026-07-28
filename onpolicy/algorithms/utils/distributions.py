@@ -213,8 +213,10 @@ class FixedBeta(torch.distributions.Beta):
 
 
 class DiagGaussian(nn.Module):
-    def __init__(self, num_inputs, num_outputs, use_orthogonal=True, gain=0.01):
+    def __init__(self, num_inputs, num_outputs, use_orthogonal=True, gain=0.01,
+                 sigmoid_mean=True):
         super(DiagGaussian, self).__init__()
+        self.sigmoid_mean = sigmoid_mean
         init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][use_orthogonal]
 
         def init_(m):
@@ -225,7 +227,8 @@ class DiagGaussian(nn.Module):
 
     def forward(self, x, avail_actions=None):
         action_mean = self.fc_mean(x)
-        action_mean = torch.sigmoid(action_mean)
+        if self.sigmoid_mean:
+            action_mean = torch.sigmoid(action_mean)
 
         # An ugly hack for my KFAC implementation.
         zeros = torch.zeros(action_mean.size())

@@ -6,8 +6,8 @@ import socket
 import setproctitle
 import numpy as np
 from pathlib import Path
-import torch
 import json
+import copy
 
 
 # 获取当前文件的绝对路径
@@ -32,7 +32,9 @@ def make_train_env(all_args):
         def init_env():
             if all_args.env_name == "mec":
                 from onpolicy.envs.mec.env_maker import WrappedMECEnv
-                env = WrappedMECEnv(args=all_args)
+                env_args = copy.deepcopy(all_args)
+                env_args.uav_reset_curriculum_training = True
+                env = WrappedMECEnv(args=env_args)
             else:
                 print("Can not support the " + all_args.env_name + "environment.")
                 raise NotImplementedError
@@ -51,7 +53,9 @@ def make_eval_env(all_args):
         def init_env():
             if all_args.env_name == "mec":
                 from onpolicy.envs.mec.env_maker import WrappedMECEnv
-                env = WrappedMECEnv(args=all_args)
+                env_args = copy.deepcopy(all_args)
+                env_args.uav_reset_curriculum_training = False
+                env = WrappedMECEnv(args=env_args)
             else:
                 print("Can not support the " + all_args.env_name + "environment.")
                 raise NotImplementedError
@@ -73,6 +77,19 @@ def parse_args(args, parser):
     parser.add_argument('--d_optimal', type=float, default=210, help="(m), Distance between desired drones based on area size and number of drones")
     parser.add_argument('--n_GUs', type=int, default=20, help="total number of groud users")
     parser.add_argument('--max_GUs_in_range', type=int, default=20, help="max number of groud users in per UAV's range")
+    parser.add_argument("--dynamic_md", action="store_true", default=False,
+                        help="Use bounded exogenous MD arrivals and finite access lifetimes.")
+    parser.add_argument("--md_arrivals_min", type=int, default=2,
+                        help="Minimum candidate MD arrivals per slot in dynamic_md mode.")
+    parser.add_argument("--md_arrivals_max", type=int, default=4,
+                        help="Maximum candidate MD arrivals per slot in dynamic_md mode.")
+    parser.add_argument("--md_arrivals_per_region", type=int, nargs=2, default=None,
+                        metavar=("LOWER_LEFT", "UPPER_RIGHT"),
+                        help="Fixed candidate arrivals in the two 5-UAV hotspot rectangles.")
+    parser.add_argument("--md_lifetime_min", type=int, default=15,
+                        help="Minimum active access lifetime in slots.")
+    parser.add_argument("--md_lifetime_max", type=int, default=25,
+                        help="Maximum active access lifetime in slots.")
     parser.add_argument("--x_max", type=int, default=500, help="A maximum map range of 1 km × 1 km.")
     parser.add_argument("--x_min_uav", type=int, default=0, help="A maximum map range of 1 km × 1 km.")
     parser.add_argument("--x_max_uav", type=int, default=600, help="A maximum map range of 1 km × 1 km.")
@@ -157,6 +174,16 @@ def parse_args(args, parser):
     parser.add_argument("--nearest_avail_actions", action='store_true', default=False, help="If true, get avail_actions for max_GUs_in_range and nearest itself")
     parser.add_argument("--not_process_action", action='store_true', default=False, help="If true, without process_action in env_maker.py and act.py")
     parser.add_argument("--fix_uav_pos", action='store_true', default=False, help="If true, uav's pos is fixed. action_space don't have fly_action")
+    parser.add_argument("--cartesian_flight", action='store_true', default=False,
+                        help="Use an unconstrained Gaussian (vx, vy) proposal followed by speed-disk projection")
+    parser.add_argument("--actor_neighbor_obs", action='store_true', default=False,
+                        help="Add one-hop relative UAV positions and masks to each actor observation")
+    parser.add_argument("--spatial_flight_actor", action='store_true', default=False,
+                        help="Use an independent task-free DeepSets encoder for Cartesian flight")
+    parser.add_argument("--distance_only_user_sort", action='store_true', default=False,
+                        help="Sort observed users only by UAV distance")
+    parser.add_argument("--uav_reset_curriculum", action='store_true', default=False,
+                        help="Train with target-free random UAV resets, annealed to fixed resets by 50%%")
     parser.add_argument("--ave_resource", action='store_true', default=False, help="If true, allocate the resources of UAV equally to the connected users")
     parser.add_argument("--ave_bandwidth", action='store_true', default=False, help="If true, allocate the bandwidth resources only of UAV equally to the connected users")
     parser.add_argument("--not_served_rew_to_ave", action='store_true', default=False, help="If true, Rewards for unserved users are split evenly between covered drones")
@@ -183,6 +210,9 @@ def parse_args(args, parser):
 
 
 def main(args):
+    # Keep torch out of Windows spawn-based environment workers. They import
+    # this module to reconstruct the subprocess target but never train models.
+    import torch
     parser = get_config()
     all_args = parse_args(args, parser)
     assert all_args.use_valuenorm != all_args.ret_norm, 'torch中的valuenorm默认True和tf的retnorm默认False不能一起用'

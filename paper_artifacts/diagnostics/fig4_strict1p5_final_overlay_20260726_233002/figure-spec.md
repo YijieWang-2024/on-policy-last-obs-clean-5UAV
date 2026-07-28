@@ -1,0 +1,36 @@
+# Figure Spec
+
+- chart_type: final strict-1+5 stochastic training curves overlaid on canonical manuscript Fig. 4
+- data_sources:
+  - `paper_artifacts/published_figures/fig4.png`
+  - final MAPPO TensorBoard tag `agent0/system_performance_equivalent_full_GUs`
+  - final DC-PPO TensorBoard tag `agent0/system_performance_equivalent_full_GUs`
+  - archived `mappo.npy`, `dcppo.npy`, and `ara_extended.npy` for numeric same-horizon comparisons
+- rows_in_scope: all 977 points from each completed 50M run
+- data_columns: series, learning_episode, raw_value, three_point_smoothed_value
+- x_axis:
+  - field: environment step divided by 64 rollout threads and 400 slots
+  - label: Learning episodes
+  - unit: parallel rollout episodes
+  - scale: linear
+  - range: 0 to 3500, inherited from Fig. 4
+- y_axis:
+  - field: system_performance_equivalent_full_GUs for added curves
+  - label: System gain, inherited from Fig. 4
+  - unit: episode performance
+  - scale: linear
+  - range: inherited from Fig. 4
+- additional_axes: none
+- series_or_categories: canonical five Fig. 4 curves plus final strict-1+5 MAPPO and DC-PPO stochastic training curves
+- category_order: canonical background unchanged; MAPPO then DC-PPO in the added legend
+- color_mapping: cyan for current MAPPO and brown for current DC-PPO
+- size_mapping: added curves use 2.8-point lines
+- legend: separate lower-right legend identifying the metric and stochastic-training protocol
+- required_annotations: none
+- forbidden_elements: deterministic-evaluation claims, extrapolation beyond episode 1953, fabricated uncertainty bands, endpoint labels
+- layout_constraints: preserve canonical 2964 by 1945 raster geometry and output at 300 dpi
+- source_note: added curves are stochastic training rollouts from one training seed, not deterministic checkpoint evaluations
+- assumptions:
+  - apply the same three-point centered smoothing used in the prior diagnostic
+  - calibrate overlay coordinates from the canonical image's labelled grid ticks
+  - the comparison is diagnostic because strict-1+5 dynamic arrivals differ from the historical fixed-60-MD setting

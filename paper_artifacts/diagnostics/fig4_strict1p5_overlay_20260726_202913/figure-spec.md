@@ -1,0 +1,40 @@
+# Figure Spec
+
+- chart_type: current training-curve overlay on the canonical manuscript Fig. 4 raster
+- data_sources:
+  - `onpolicy/scripts/train/plot_data/mappo.npy`
+  - `onpolicy/scripts/train/plot_data/dcppo.npy`
+  - `onpolicy/scripts/train/plot_data/ara_extended.npy`
+  - `paper_artifacts/published_figures/fig4.png` for the exact five historical manuscript curves
+  - current strict-1+5 MAPPO and DC-PPO TensorBoard event logs listed in `plot.py`
+- rows_in_scope: the complete canonical Fig. 4 background and all current points available at render time
+- data_columns: series, learning_episode, raw_value, three_point_smoothed_value
+- x_axis:
+  - field: learning_episode, computed as environment step divided by 64 rollout threads and 400 slots
+  - label: Learning episodes
+  - unit: parallel rollout episodes
+  - scale: linear
+  - range: 0 to 3500
+- y_axis:
+  - field: system performance
+  - label: preserve the canonical Fig. 4 `System gain` label; the added-curve legend states that current curves use the equivalent-60-MD metric
+  - unit: episode reward-equivalent performance
+  - scale: linear
+  - range: automatic, containing every plotted point and band
+- additional_axes: none
+- series_or_categories: the exact five canonical Fig. 4 raster curves plus current strict-1+5 stochastic-training-rollout MAPPO and DC-PPO
+- category_order: historical Fig. 4 series first, then the two current strict-1+5 curves
+- color_mapping: preserve the canonical Fig. 4 raster unchanged; use cyan and brown for the two current curves
+- size_mapping: current curves are thicker than historical curves
+- legend: preserve the historical five-entry legend and add a separate two-entry current-curve legend in the lower-right empty region
+- required_annotations: none
+- forbidden_elements: regression lines, endpoint value labels, fabricated uncertainty bands for the current single-seed runs, extrapolation beyond available current data
+- layout_constraints: preserve the canonical 2000 by 1333 pixel manuscript image, 300 dpi PNG, opaque white background
+- source_note: the current curves use `agent0/system_performance_equivalent_full_GUs`; the historical Fig. 4 curves come from the archived fixed-60-MD figure sources
+- assumptions:
+  - use the historical Fig. 4 three-point centered smoothing rule for TensorBoard curves
+  - the overlay is calibrated from the canonical image's labelled x/y grid ticks
+  - the current runs are single-training-seed stochastic rollout curves and receive no uncertainty band
+  - these TensorBoard curves are not deterministic checkpoint evaluations
+  - the comparison is diagnostic because the dynamic strict-1+5 environment differs from the historical fixed-60-MD environment
+  - only MAPPO, DC-PPO, and ARA have archived numerical arrays for endpoint calculations; F-PPO and IPPO remain visible in the canonical raster but are not numerically re-extracted

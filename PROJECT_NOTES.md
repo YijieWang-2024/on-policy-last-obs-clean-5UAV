@@ -1,5 +1,7 @@
 # 5-UAV Paper Reproduction Workspace
 
+> 2026-07-28 状态：本文件保留仓库来源与旧论文图复现约束。当前动态用户实验的最新进展、正负结果和运行状态请以 [`RECENT_EXPERIMENT_SUMMARY_20260725_20260728.md`](RECENT_EXPERIMENT_SUMMARY_20260725_20260728.md) 为准。当前工作分支是 `agent/dcppo-runtime-optimization`；下方 `paper-5uav-repro` 是该工作区建立时的历史身份，不代表当前 checkout。
+
 ## Identity
 
 - Git branch: `paper-5uav-repro`

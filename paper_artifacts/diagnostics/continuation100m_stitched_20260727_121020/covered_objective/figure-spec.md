@@ -1,0 +1,29 @@
+# Figure Spec
+
+- chart_type: four-series training line chart
+- data_sources: historical fixed-60 three-seed TensorBoard runs; strict 1+5 0-50M and 50-100M TensorBoard runs
+- rows_in_scope: all scalar records; continuation steps shifted by 50,000,000
+- data_columns: algorithm, cumulative_steps, learning_episode, covered_system_performance
+- x_axis:
+  - field: cumulative learning episodes
+  - label: Learning episodes
+  - unit: episodes of 25,600 environment steps
+  - scale: linear
+  - range: 0-4000
+- y_axis:
+  - field: sum of agent0-agent4 system_performance_individual
+  - label: Covered-MD system performance
+  - unit: objective value
+  - scale: linear
+  - range: data driven
+- additional_axes: none
+- series_or_categories: historical MAPPO; historical DC-PPO; stitched strict 1+5 MAPPO; stitched strict 1+5 DC-PPO; live E1; live E2
+- category_order: historical MAPPO, historical DC-PPO, stitched MAPPO, stitched DC-PPO, E1, E2
+- color_mapping: blue, orange, cyan, brown, pink, black
+- size_mapping: none
+- legend: lower right
+- required_annotations: 50M continuation boundary
+- forbidden_elements: equivalent-60 imputation, cumulative reward, regression fits, point labels
+- layout_constraints: full-width publication chart, 300 dpi
+- source_note: local TensorBoard records
+- assumptions: five individual performance tags sum to the actual covered-MD system objective; continuation step values are shifted by 50,000,000; E1 and E2 retain native from-scratch steps

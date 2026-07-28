@@ -1,0 +1,7 @@
+current_series,latest_learning_episode,latest_raw_value,recent_20_raw_mean,historical_series,historical_value_at_current_endpoint,difference_current_recent20_minus_historical
+"MAPPO (strict 1+5, stochastic train)",1551.0,486335.0625,487133.171875,MAPPO (Fig. 4),550853.8888888889,-63720.717013888876
+"MAPPO (strict 1+5, stochastic train)",1551.0,486335.0625,487133.171875,DC-PPO (Fig. 4),520680.9131944445,-33547.741319444496
+"MAPPO (strict 1+5, stochastic train)",1551.0,486335.0625,487133.171875,ARA (Fig. 4),519058.7118055555,-31925.539930555504
+"DC-PPO (strict 1+5, stochastic train)",1551.0,456045.75,453136.4328125,MAPPO (Fig. 4),550853.8888888889,-97717.45607638889
+"DC-PPO (strict 1+5, stochastic train)",1551.0,456045.75,453136.4328125,DC-PPO (Fig. 4),520680.9131944445,-67544.48038194451
+"DC-PPO (strict 1+5, stochastic train)",1551.0,456045.75,453136.4328125,ARA (Fig. 4),519058.7118055555,-65922.27899305552

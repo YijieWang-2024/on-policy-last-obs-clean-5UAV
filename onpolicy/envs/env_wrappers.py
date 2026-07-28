@@ -2,10 +2,8 @@
 Modified from OpenAI Baselines code to work with multi-agent envs
 """
 import numpy as np
-import torch
 from multiprocessing import Process, Pipe
 from abc import ABC, abstractmethod
-from onpolicy.utils.util import tile_images
 
 class CloudpickleWrapper(object):
     """
@@ -122,6 +120,7 @@ class ShareVecEnv(ABC):
         return self.step_wait()
 
     def render(self, mode='human'):
+        from onpolicy.utils.util import tile_images
         imgs = self.get_images()
         bigimg = tile_images(imgs)
         if mode == 'human':

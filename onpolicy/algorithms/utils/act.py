@@ -16,6 +16,7 @@ class ACTLayer(nn.Module):
         self.ave_resource = args.ave_resource
         self.ave_bandwidth = args.ave_bandwidth
         self.fix_uav_pos = args.fix_uav_pos
+        self.cartesian_flight = getattr(args, "cartesian_flight", False)
         print("在act.py中使用到了连续连接动作的0.5阈值。")
         # self.nearest_associate = args.nearest_associate
         self.not_process_action = args.not_process_action
@@ -23,7 +24,10 @@ class ACTLayer(nn.Module):
             self.mujoco_box = True
             self.action_dim = action_space.shape[0]
             # self.action_out = DiagBeta(inputs_dim, action_dim, use_orthogonal, gain)
-            self.action_out = DiagGaussian(inputs_dim, self.action_dim, use_orthogonal, gain)
+            self.action_out = DiagGaussian(
+                inputs_dim, self.action_dim, use_orthogonal, gain,
+                sigmoid_mean=not self.cartesian_flight,
+            )
         else:  # discrete + continous
             self.mixed_action = True
             self.action_outs = nn.ModuleList()
@@ -31,6 +35,12 @@ class ACTLayer(nn.Module):
             for i, action_space_i in enumerate(action_space):
                 self.action_dims.append(action_space_i.shape[0])
                 if action_space_i.__class__.__name__ == "Box":
+                    if self.cartesian_flight and not self.fix_uav_pos and i == 0:
+                        self.action_outs.append(DiagGaussian(
+                            inputs_dim, action_space_i.shape[0], use_orthogonal, gain,
+                            sigmoid_mean=False,
+                        ))
+                        continue
                     # 后边资源分配选择狄利克雷分布
                     if self.continuous_associate:
                         if self.fix_uav_pos:
@@ -50,7 +60,7 @@ class ACTLayer(nn.Module):
                 else:   # multibonulli
                     self.action_outs.append(Bernoulli(inputs_dim, action_space_i.shape[0], use_orthogonal, gain))
     
-    def forward(self, x, available_actions=None, deterministic=False):
+    def forward(self, x, available_actions=None, deterministic=False, flight_x=None):
         if self.mujoco_box:
             if self.action_dim != available_actions.shape[-1]:
                 available_actions = None
@@ -72,7 +82,8 @@ class ACTLayer(nn.Module):
                         available_action = available_actions
                 else:
                     available_action = None
-                dist = action_out(x, available_action)
+                head_x = flight_x if (flight_x is not None and i == 0) else x
+                dist = action_out(head_x, available_action)
                 if action_out.__class__.__name__ != "Bernoulli":
                     action = dist.mode() if deterministic else dist.sample()  # Sample the action according to the probability distribution
                 else:
@@ -116,7 +127,8 @@ class ACTLayer(nn.Module):
     #
     #     return action_probs
 
-    def evaluate_actions(self, x, action, available_actions=None, active_masks=None):
+    def evaluate_actions(self, x, action, available_actions=None, active_masks=None,
+                         flight_x=None):
         if self.mujoco_box:
             if self.action_dim != available_actions.shape[-1]:
                 available_actions = None
@@ -140,7 +152,8 @@ class ACTLayer(nn.Module):
                     available_action = None
                 else:
                     available_action = available_actions
-                dist = action_out(x, available_action)
+                head_x = flight_x if (flight_x is not None and i == 0) else x
+                dist = action_out(head_x, available_action)
                 log_prob = dist.log_probs(action[i])
                 entropy = dist.entropy()
                 action_log_probs.append(log_prob)

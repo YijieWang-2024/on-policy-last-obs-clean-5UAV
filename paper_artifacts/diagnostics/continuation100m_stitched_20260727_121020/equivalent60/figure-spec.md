@@ -1,0 +1,29 @@
+# Figure Spec
+
+- chart_type: line comparison over the canonical manuscript Figure 4
+- data_sources: canonical Figure 4 PNG; two 0-50M TensorBoard runs; two 50-100M continuation TensorBoard runs
+- rows_in_scope: all scalar records from both segments, with the continuation segment shifted by 50,000,000 environment steps
+- data_columns: algorithm, cumulative_steps, learning_episode, raw_value, three_point_smoothed_value, segment
+- x_axis:
+  - field: cumulative learning episodes
+  - label: Learning episodes
+  - unit: episodes of 25,600 environment steps
+  - scale: linear
+  - range: 0-4000
+- y_axis:
+  - field: system_performance_equivalent_full_GUs
+  - label: System gain
+  - unit: objective value
+  - scale: linear
+  - range: inherited from Figure 4
+- additional_axes: none
+- series_or_categories: original Figure 4 curves; stitched MAPPO and DC-PPO strict 1+5; live E1 and E2 curves
+- category_order: Figure 4 order, then stitched MAPPO, stitched DC-PPO, E1, E2
+- color_mapping: cyan for stitched MAPPO; brown for stitched DC-PPO; pink for E1; black for E2
+- size_mapping: none
+- legend: retain Figure 4 legend and add a compact stitched-run legend
+- required_annotations: vertical dotted marker at the 50M continuation boundary
+- forbidden_elements: regression fits, point labels, invented uncertainty bands
+- layout_constraints: preserve the canonical Figure 4 raster and extend its right side to show the full 100M curves
+- source_note: local TensorBoard records and manuscript Figure 4
+- assumptions: the continuation run restarts TensorBoard step counting at zero and is shifted by exactly 50,000,000; E1 and E2 are from-scratch live runs and retain their native steps

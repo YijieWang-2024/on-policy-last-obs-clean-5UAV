@@ -1,0 +1,5 @@
+series,endpoint_episode,value_at_1953,last20_mean_if_current,last50_mean_if_current
+"MAPPO (fixed 60, 3 seeds)",3499.0,532560.9600694445,,
+"DC-PPO (fixed 60, 3 seeds)",3499.0,516052.73263888893,,
+"MAPPO (strict 1+5, seed2)",1953.0,471079.70703125,469570.171875,467380.52125
+"DC-PPO (strict 1+5, seed2)",1953.0,434019.1640625,435467.681640625,434892.28984375

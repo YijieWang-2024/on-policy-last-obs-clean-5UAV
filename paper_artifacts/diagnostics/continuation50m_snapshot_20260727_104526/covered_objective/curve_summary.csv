@@ -1,0 +1,5 @@
+series,endpoint_local_episode,value_at_own_endpoint,last20_mean_if_current,last50_mean_if_current,comparison_value_at_current_endpoint
+MAPPO continuation (local x),1771.0,489957.3828125,486715.201171875,487396.87578125,
+DC-PPO continuation (local x),1779.0,476208.9453125,475547.094140625,473053.414375,
+"MAPPO (fixed 60, 3 seeds)",3499.0,552187.1360677084,,,520308.08767361107
+"DC-PPO (fixed 60, 3 seeds)",3499.0,529650.54296875,,,505001.72482638893

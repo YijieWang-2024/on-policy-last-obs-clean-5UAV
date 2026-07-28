@@ -1,0 +1,115 @@
+param(
+    [ValidateSet('mappo', 'dcppo')]
+    [string]$Method = 'dcppo',
+    [int]$Seed = 2,
+    [long]$NumEnvSteps = 100000000,
+    [int]$RolloutThreads = 64,
+    [string]$Python = 'python',
+    [string]$ExperimentName = '',
+    [switch]$CartesianFlight,
+    [switch]$ActorNeighborObs,
+    [switch]$SpatialFlightActor,
+    [switch]$DistanceOnlyUserSort,
+    [switch]$UAVResetCurriculum
+)
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+$trainScript = Join-Path $repoRoot 'onpolicy\scripts\train\train_mec.py'
+$env:PYTHONUTF8 = '1'
+$env:OMP_NUM_THREADS = '1'
+$env:MKL_NUM_THREADS = '1'
+$env:OPENBLAS_NUM_THREADS = '1'
+$env:NUMEXPR_NUM_THREADS = '1'
+if (-not $ExperimentName) {
+    $ExperimentName = "regional_dynamic_$Method"
+}
+
+$arguments = @(
+    $trainScript,
+    '--env_name', 'mec',
+    '--algorithm_name', 'mappo',
+    '--experiment_name', $ExperimentName,
+    '--user_name', $env:USERNAME,
+    '--seed', $Seed,
+    '--share_policy',
+    '--n_UAVs', '5',
+    '--n_GUs', '60',
+    '--max_GUs_in_range', '20',
+    '--dynamic_md',
+    '--md_arrivals_min', '6',
+    '--md_arrivals_max', '6',
+    '--md_arrivals_per_region', '1', '5',
+    '--md_lifetime_min', '10',
+    '--md_lifetime_max', '10',
+    '--x_min_uav', '0', '--x_max_uav', '600',
+    '--y_min_uav', '0', '--y_max_uav', '600',
+    '--x_min_gu', '0', '--x_max_gu', '600',
+    '--y_min_gu', '0', '--y_max_gu', '600',
+    '--fix_hotspot',
+    '--max_UAVs_in_neighbor', '5',
+    '--max_UAVs_obs_concat', '5',
+    '--neighbor_R', '260',
+    '--state_is_k_hops',
+    '--all_uav_k_hops',
+    '--use_atten_critic',
+    '--local_reward',
+    '--continuous_associate',
+    '--not_served_rew_to_nearest',
+    '--n_rollout_threads', $RolloutThreads,
+    '--episode_length', '400',
+    '--num_env_steps', $NumEnvSteps,
+    '--hidden_size', '256',
+    '--layer_N', '2',
+    '--lr', '0.0001',
+    '--critic_lr', '0.0005',
+    '--clip_param', '0.15',
+    '--ppo_epoch', '4',
+    '--num_mini_batch', '1',
+    '--entropy_coef', '0',
+    '--B', '30000000',
+    '--F_m', '20000000000',
+    '--v_max', '30',
+    '--mean_velocity', '0.5',
+    '--alpha_r', '32',
+    '--gamma_r', '26',
+    '--delta_r', '32',
+    '--lambda_r', '0.000001',
+    '--mu_r', '64',
+    '--use_valuenorm'
+)
+
+if ($CartesianFlight) {
+    $arguments += '--cartesian_flight'
+}
+if ($ActorNeighborObs) {
+    $arguments += '--actor_neighbor_obs'
+}
+if ($SpatialFlightActor) {
+    $arguments += '--spatial_flight_actor'
+}
+if ($DistanceOnlyUserSort) {
+    $arguments += '--distance_only_user_sort'
+}
+if ($UAVResetCurriculum) {
+    $arguments += '--uav_reset_curriculum'
+}
+
+if ($Method -eq 'dcppo') {
+    $arguments += @(
+        '--neighbor_distance', '260',
+        '--average_local_advantage_timely',
+        '--average_local_advantage',
+        '--whether_local_add_direct_ave_adv'
+    )
+} else {
+    $arguments += @('--neighbor_distance', '1000')
+}
+
+Push-Location $repoRoot
+try {
+    & $Python @arguments
+    exit $LASTEXITCODE
+}
+finally {
+    Pop-Location
+}

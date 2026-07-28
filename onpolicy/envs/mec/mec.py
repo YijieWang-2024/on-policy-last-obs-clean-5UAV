@@ -1,14 +1,21 @@
 import copy
 import numpy as np
-import gym
-import gym.spaces as spaces
+try:
+    import gym
+    import gym.spaces as spaces
+except ImportError:
+    import gymnasium as gym
+    import gymnasium.spaces as spaces
 import matplotlib.pyplot as plt
 import random
 from scipy.spatial.distance import cdist
 import time
 from typing import Dict, Tuple, List, Optional
-from shapely.geometry import Point, Polygon
-from shapely.ops import unary_union
+try:
+    from shapely.geometry import Point, Polygon
+    from shapely.ops import unary_union
+except ImportError:
+    Point = Polygon = unary_union = None
 import warnings
 from matplotlib.patches import Circle
 
@@ -55,9 +62,40 @@ def _offload_delay(tasks, uav_ids, gu_ids, bandwidth, computation, channel_gains
     rates = selected_bandwidth * np.log2(
         1 + p_t * selected_gains / (N_0 * (selected_bandwidth + 1e-10))
     )
-    transmission_delay = selected_tasks[:, 0] / rates
-    execution_delay = selected_tasks[:, 1] / selected_computation
+    transmission_delay = selected_tasks[:, 0] / np.maximum(rates, 1e-10)
+    execution_delay = selected_tasks[:, 1] / np.maximum(selected_computation, 1e-10)
     return transmission_delay, execution_delay
+
+
+def _expected_local_task_reward(c_min, c_max, delay_min, delay_max,
+                                f_local, gamma_r, delta_r, lambda_r):
+    """Expected reward of an i.i.d. task executed locally."""
+    cycles = c_min + (np.arange(4096) + 0.5) * (c_max - c_min) / 4096
+    local_delay = cycles / f_local
+    if delay_max == delay_min:
+        delay_reward = np.where(
+            delay_min > local_delay,
+            gamma_r * (1 + delay_min - local_delay),
+            -delta_r,
+        )
+    else:
+        lower = np.clip(local_delay, delay_min, delay_max)
+        successful_width = delay_max - lower
+        success_probability = successful_width / (delay_max - delay_min)
+        successful_reward = gamma_r * (
+            (1 - local_delay) * successful_width
+            + 0.5 * (delay_max ** 2 - lower ** 2)
+        ) / (delay_max - delay_min)
+        delay_reward = successful_reward - delta_r * (1 - success_probability)
+    local_energy = np.clip(k_local * f_local ** 2 * cycles, 0, 10)
+    return np.mean(delay_reward - lambda_r * local_energy)
+
+
+def _cartesian_flight_velocity(proposals, v_max):
+    """Project unconstrained 2-D velocity proposals onto the unit speed disk."""
+    proposals = np.asarray(proposals, dtype=np.float64)
+    norms = np.linalg.norm(proposals, axis=-1, keepdims=True)
+    return v_max * proposals / np.maximum(norms, 1.0)
 
 
 class DroneInfo:
@@ -92,6 +130,8 @@ def calculate_coverage_area(R_cover: float, area_size: float,
     Returns:
         覆盖面积占总面积的比例
     """
+    if Polygon is None:
+        raise ImportError("calculate_coverage_area requires shapely")
     # 创建区域边界
     area_boundary = Polygon([(0, 0), (area_size, 0), (area_size, area_size), (0, area_size)])
     # 创建所有无人机的覆盖圆
@@ -209,11 +249,34 @@ def update_drone_knowledge(drones: List[DroneInfo], positions: np.ndarray,
 class MEC(gym.Env):
     def __init__(self, args=None):
         assert args is not None
+        self.args = args
         self.ob_state_with_timestep = args.ob_state_with_timestep
         self.ob_state_with_id = args.ob_state_with_id
         self.n_UAVs = args.n_UAVs
         self.n_GUs = args.n_GUs
         self.max_GUs_in_range = args.max_GUs_in_range   # 无人机的服务范围内距离由近到远，保留信息的最大用户数目。
+        self.dynamic_md = args.dynamic_md
+        self.md_arrivals_min = args.md_arrivals_min
+        self.md_arrivals_max = args.md_arrivals_max
+        self.md_arrivals_per_region = getattr(args, "md_arrivals_per_region", None)
+        self.regional_dynamic_md = self.dynamic_md and self.md_arrivals_per_region is not None
+        self.md_lifetime_min = args.md_lifetime_min
+        self.md_lifetime_max = args.md_lifetime_max
+        if self.dynamic_md:
+            assert self.n_UAVs == 5 and args.x_min_gu == 0 and args.x_max_gu == 600, \
+                "dynamic_md is currently defined for the 5-UAV 600m x 600m scenario."
+            assert 0 <= self.md_arrivals_min <= self.md_arrivals_max
+            assert 1 <= self.md_lifetime_min <= self.md_lifetime_max
+            max_arrivals = self.md_arrivals_max
+            if self.regional_dynamic_md:
+                assert args.fix_hotspot and len(self.md_arrivals_per_region) == 2
+                assert all(count >= 0 for count in self.md_arrivals_per_region)
+                max_arrivals = sum(self.md_arrivals_per_region)
+            assert self.n_GUs >= max_arrivals * self.md_lifetime_max, \
+                "dynamic_md requires n_GUs >= maximum arrivals * md_lifetime_max"
+            assert 1 <= self.max_GUs_in_range <= self.n_GUs, \
+                "dynamic_md requires 1 <= max_GUs_in_range <= n_GUs."
+        self.gu_obs_features = 10 if self.dynamic_md else 9
         self.max_UAVs_in_neighbor = args.max_UAVs_in_neighbor  # 只用到自己的观测s_{i,t}中的其他无人机数目。无人机的邻居范围内距离由近到远，保留信息的最大无人机数目。
         self.neighbor_distance = args.neighbor_distance  # 无人机之间定义为通信的k跳的距离。 之前为d_cov*2=240。我的last-obs设为覆盖范围内的无人机数目。因此设置为120
         self.neighbor_R = args.neighbor_R  # 无人机之间定义为1跳的距离。240+20米。用来告诉无人机其一跳范围内的无人机，感知到的无人机位置共享
@@ -222,6 +285,29 @@ class MEC(gym.Env):
         self.state_is_k_hops = args.state_is_k_hops
         self.all_uav_k_hops = args.all_uav_k_hops   # 如果这个为True，就是k跳邻居的状态不再是由近到远排列。直接按所有id排列，邻居的信息补进去。
         self.use_atten_actor = args.use_atten_actor
+        self.cartesian_flight = getattr(args, "cartesian_flight", False)
+        self.actor_neighbor_obs = getattr(args, "actor_neighbor_obs", False)
+        self.actor_neighbor_obs_dim = 3 * (self.n_UAVs - 1) if self.actor_neighbor_obs else 0
+        self.spatial_flight_actor = getattr(args, "spatial_flight_actor", False)
+        self.distance_only_user_sort = (
+            getattr(args, "distance_only_user_sort", False)
+            or self.spatial_flight_actor
+        )
+        self.uav_reset_curriculum = (
+            getattr(args, "uav_reset_curriculum", False)
+            and getattr(args, "uav_reset_curriculum_training", False)
+        )
+        self.curriculum_reset_count = 0
+        self.curriculum_random_reset = False
+        self.curriculum_random_probability = 0.0
+        if self.spatial_flight_actor:
+            assert self.dynamic_md and self.cartesian_flight
+            assert not self.actor_neighbor_obs, \
+                "spatial_flight_actor must not receive neighbor UAV observations"
+        assert not (self.actor_neighbor_obs and self.use_atten_actor), \
+            "actor_neighbor_obs requires local actor observations"
+        if self.uav_reset_curriculum:
+            assert self.dynamic_md and self.n_UAVs == 5
 
         assert not (self.perform_with_local_state and self.state_is_k_hops), "不能同时使用和obs一样的local_state，和k_hops state"
         # self.concat_neighbor_obs = args.concat_neighbor_obs
@@ -266,6 +352,10 @@ class MEC(gym.Env):
         self.C_max = args.C_max
         self.delay_min = args.delay_min
         self.delay_max = args.delay_max
+        self.expected_inactive_md_local_reward = _expected_local_task_reward(
+            self.C_min, self.C_max, self.delay_min, self.delay_max,
+            self.F_n, self.gamma_r, self.delta_r, self.lambda_r,
+        )
         self.Dis_min = args.Dis_min
         self.Cover_R = args.Cover_R
         self.Delta_t = args.Delta_t
@@ -309,8 +399,8 @@ class MEC(gym.Env):
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
-            self.state_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            self.obs_dim = 3 + self.actor_neighbor_obs_dim + self.gu_obs_features * self.max_GUs_in_range
+            self.state_dim = self.obs_dim
         elif self.state_is_k_hops:  # last-obs的k跳。自己的s_{i,t}是包括覆盖范围内的无人机的。
             self.GUs_in_action_dim = self.max_GUs_in_range
             # # 包括覆盖范围内d_cov的无人机信息。
@@ -321,8 +411,8 @@ class MEC(gym.Env):
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
-            self.state_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            self.obs_dim = 3 + self.actor_neighbor_obs_dim + self.gu_obs_features * self.max_GUs_in_range
+            self.state_dim = self.obs_dim
         else:
             # self.GUs_in_action_dim = self.n_GUs
             self.GUs_in_action_dim = self.max_GUs_in_range
@@ -330,7 +420,7 @@ class MEC(gym.Env):
             # self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            self.obs_dim = 3 + 2 + 1 + 9 * self.max_GUs_in_range - 3
+            self.obs_dim = 3 + self.actor_neighbor_obs_dim + self.gu_obs_features * self.max_GUs_in_range
 
             # self.state_dim = 1 + 3 +  2*self.n_UAVs+6*self.n_GUs +1
             # self.state_dim = self.n_UAVs * (self.obs_dim + int(self.ob_state_with_timestep))
@@ -346,6 +436,14 @@ class MEC(gym.Env):
             self.obs_dim += self.n_UAVs
         if self.ob_state_with_id and (self.perform_with_local_state or self.state_is_k_hops):
             self.state_dim += self.n_UAVs
+
+        # One-hop UAV positions are actor-only. Keep the critic state identical
+        # to the no-neighbor baseline so B0/B1 differ in one factor only.
+        self.critic_local_state_dim = self.obs_dim - self.actor_neighbor_obs_dim
+        if self.perform_with_local_state or self.state_is_k_hops:
+            self.state_dim = self.critic_local_state_dim
+        else:
+            self.state_dim = (self.n_UAVs + 1) * self.critic_local_state_dim
 
         # 不管怎么决策，obs是不变了。就是自己的s_{i,t}
         # if self.concat_neighbor_obs:    # obs也拼接？？？
@@ -368,7 +466,12 @@ class MEC(gym.Env):
         if self.fix_uav_pos:
             pass
         else:
-            self.flight_action_space = spaces.Box(low=0.0, high=1.0, shape=(2,), dtype=np.float32)  # 方向和速度都是0-1之间的数
+            if self.cartesian_flight:
+                self.flight_action_space = spaces.Box(
+                    low=-np.inf, high=np.inf, shape=(2,), dtype=np.float32
+                )
+            else:
+                self.flight_action_space = spaces.Box(low=0.0, high=1.0, shape=(2,), dtype=np.float32)  # 方向和速度都是0-1之间的数
         if self.discrete_associate:
             self.task_offloading_space = spaces.MultiBinary(self.GUs_in_action_dim)
         elif self.continuous_associate:
@@ -446,6 +549,21 @@ class MEC(gym.Env):
         # np.random.seed(0)
         self.gu_directions = np.random.uniform(0, 2 * np.pi, self.n_GUs)
         self.gu_directions_0 = self.gu_directions.copy()
+        self.active_md_mask = np.ones(self.n_GUs, dtype=bool)
+        self.md_remaining_lifetime = np.zeros(self.n_GUs, dtype=np.int32)
+        self.md_session_ids = np.full(self.n_GUs, -1, dtype=np.int64)
+        self.next_md_session_id = 0
+        self.dynamic_md_candidates = 0
+        self.dynamic_md_admitted = 0
+        self.dynamic_md_candidates_by_region = np.zeros(2, dtype=np.int64)
+        self.dynamic_md_admitted_by_region = np.zeros(2, dtype=np.int64)
+        self.dynamic_md_expired = 0
+        self.dynamic_md_departed = 0
+        self.dynamic_md_active_sum = 0
+        self.dynamic_md_active_sum_second_half = 0
+        self.cartesian_proposal_norm_sum = 0.0
+        self.cartesian_proposal_count = 0
+        self.cartesian_projection_count = 0
 
         # Initialize ground user tasks
         self.gu_tasks = self.generate_tasks()
@@ -453,6 +571,7 @@ class MEC(gym.Env):
         self.system_performance = np.zeros((self.n_agents,))
         self.system_performance_individual = np.zeros((self.n_agents,))
         self.system_performance_true_all_GUs = np.zeros((self.n_agents,))
+        self.system_performance_equivalent_full_GUs = np.zeros((self.n_agents,))
         self.system_performance_coverd_GUs = np.zeros((self.n_agents,))
         self.delay_true_all_GUs = np.zeros((self.n_agents,))
         self.delay_true_coverd_GUs = np.zeros((self.n_agents, 2))
@@ -481,14 +600,155 @@ class MEC(gym.Env):
 
     def generate_tasks(self):
         tasks = np.zeros((self.n_GUs, 3))
-        tasks[:, 0] = np.random.uniform(self.D_min, self.D_max, self.n_GUs)  # Data size
-        tasks[:, 1] = np.random.uniform(self.C_min, self.C_max, self.n_GUs)  # compute Resource demand
-        tasks[:, 2] = np.random.uniform(self.delay_min, self.delay_max, self.n_GUs)  # Delay requirement
+        gu_ids = np.flatnonzero(self.active_md_mask) if self.dynamic_md else np.arange(self.n_GUs)
+        count = len(gu_ids)
+        tasks[gu_ids, 0] = np.random.uniform(self.D_min, self.D_max, count)  # Data size
+        tasks[gu_ids, 1] = np.random.uniform(self.C_min, self.C_max, count)  # compute Resource demand
+        tasks[gu_ids, 2] = np.random.uniform(self.delay_min, self.delay_max, count)  # Delay requirement
         return tasks
+
+    def _sample_dynamic_md_positions(self, count):
+        positions = np.zeros((count, 3), dtype=np.float64)
+        bounds = np.tile(
+            [self.x_min_gu, self.x_max_gu, self.y_min_gu, self.y_max_gu],
+            (count, 1),
+        )
+        positions[:, 2] = self.H_GU
+        if self.fix_hotspot and self.n_UAVs == 5 and self.x_min_gu == 0 and self.x_max_gu == 600:
+            lower_hotspot = np.random.random(count) < (1.0 / 6.0)
+            positions[lower_hotspot, 0] = np.random.uniform(0, 175, np.sum(lower_hotspot))
+            positions[lower_hotspot, 1] = np.random.uniform(0, 175, np.sum(lower_hotspot))
+            positions[~lower_hotspot, 0] = np.random.uniform(200, 600, np.sum(~lower_hotspot))
+            positions[~lower_hotspot, 1] = np.random.uniform(200, 600, np.sum(~lower_hotspot))
+            bounds[lower_hotspot] = [0, 175, 0, 175]
+            bounds[~lower_hotspot] = [200, 600, 200, 600]
+        else:
+            positions[:, 0] = np.random.uniform(self.x_min_gu, self.x_max_gu, count)
+            positions[:, 1] = np.random.uniform(self.y_min_gu, self.y_max_gu, count)
+        return positions, bounds
+
+    def _admit_dynamic_mds(self):
+        if self.regional_dynamic_md:
+            lower_count, upper_count = self.md_arrivals_per_region
+            candidate_count = lower_count + upper_count
+            candidate_positions = np.zeros((candidate_count, 3), dtype=np.float64)
+            candidate_bounds = np.empty((candidate_count, 4), dtype=np.float64)
+            candidate_positions[:, 2] = self.H_GU
+            candidate_positions[:lower_count, 0] = np.random.uniform(0, 175, lower_count)
+            candidate_positions[:lower_count, 1] = np.random.uniform(0, 175, lower_count)
+            candidate_bounds[:lower_count] = [0, 175, 0, 175]
+            candidate_positions[lower_count:, 0] = np.random.uniform(200, 600, upper_count)
+            candidate_positions[lower_count:, 1] = np.random.uniform(200, 600, upper_count)
+            candidate_bounds[lower_count:] = [200, 600, 200, 600]
+        else:
+            candidate_count = np.random.randint(self.md_arrivals_min, self.md_arrivals_max + 1)
+            candidate_positions, candidate_bounds = self._sample_dynamic_md_positions(candidate_count)
+        covered = np.any(
+            np.linalg.norm(
+                self.uav_positions[:, None, :2] - candidate_positions[None, :, :2],
+                axis=2,
+            ) <= self.Cover_R,
+            axis=0,
+        )
+        admitted_positions = candidate_positions[covered]
+        admitted_bounds = candidate_bounds[covered]
+        free_slots = np.flatnonzero(~self.active_md_mask)
+        assert len(admitted_positions) <= len(free_slots), "Dynamic MD capacity bound was violated."
+        slots = free_slots[:len(admitted_positions)]
+        if len(slots):
+            self.active_md_mask[slots] = True
+            self.gu_positions[slots] = admitted_positions
+            self.x_min_all_gus[slots] = admitted_bounds[:, 0]
+            self.x_max_all_gus[slots] = admitted_bounds[:, 1]
+            self.y_min_all_gus[slots] = admitted_bounds[:, 2]
+            self.y_max_all_gus[slots] = admitted_bounds[:, 3]
+            self.gu_velocities[slots] = np.clip(
+                np.random.normal(self.mean_velocity, 0.3 * self.std_dev_gaussian, len(slots)),
+                0.7 * self.mean_velocity,
+                1.3 * self.mean_velocity,
+            )
+            self.gu_directions[slots] = np.random.uniform(0, 2 * np.pi, len(slots))
+            self.gu_directions_0[slots] = self.gu_directions[slots]
+            self.md_remaining_lifetime[slots] = np.random.randint(
+                self.md_lifetime_min, self.md_lifetime_max + 1, len(slots)
+            )
+            self.md_session_ids[slots] = np.arange(
+                self.next_md_session_id, self.next_md_session_id + len(slots), dtype=np.int64
+            )
+            self.next_md_session_id += len(slots)
+        self.dynamic_md_candidates += candidate_count
+        self.dynamic_md_admitted += len(slots)
+        lower_candidates = candidate_bounds[:, 0] == 0
+        lower_admitted = admitted_bounds[:, 0] == 0
+        self.dynamic_md_candidates_by_region += [np.sum(lower_candidates), np.sum(~lower_candidates)]
+        self.dynamic_md_admitted_by_region += [np.sum(lower_admitted), np.sum(~lower_admitted)]
+
+    def _advance_dynamic_md_population(self):
+        active_slots = np.flatnonzero(self.active_md_mask)
+        self.md_remaining_lifetime[active_slots] -= 1
+        still_covered = np.any(
+            np.linalg.norm(
+                self.uav_positions[:, None, :2] - self.gu_positions[None, :, :2],
+                axis=2,
+            ) <= self.Cover_R,
+            axis=0,
+        )
+        expired = self.active_md_mask & (self.md_remaining_lifetime <= 0)
+        departed = self.active_md_mask & ~expired & ~still_covered
+        removed = expired | departed
+        self.dynamic_md_expired += int(np.sum(expired))
+        self.dynamic_md_departed += int(np.sum(departed))
+        self.active_md_mask[removed] = False
+        self.md_remaining_lifetime[removed] = 0
+        self.md_session_ids[removed] = -1
+        self.gu_positions[removed] = np.array([0.0, 0.0, self.H_GU])
+        self.gu_velocities[removed] = 0
+        self.gu_directions[removed] = 0
+        self.gu_directions_0[removed] = 0
+        self.gu_tasks[removed] = 0
+        if self.time_step < self.MAX_SIMULATION_TIME:
+            self._admit_dynamic_mds()
 
     def seed(self, seed=None):
         random.seed(seed)
         np.random.seed(seed)
+
+    def _curriculum_random_reset_probability(self):
+        """Anneal target-free random starts to the fixed task reset by 50%."""
+        completed_steps = (
+            self.curriculum_reset_count
+            * self.MAX_SIMULATION_TIME
+            * max(int(getattr(self.args, "n_rollout_threads", 1)), 1)
+        )
+        progress = completed_steps / max(float(getattr(self.args, "num_env_steps", 1)), 1.0)
+        if progress < 0.20:
+            return 0.80
+        if progress < 0.50:
+            return 0.80 * (0.50 - progress) / 0.30
+        return 0.0
+
+    def _sample_curriculum_uav_positions(self):
+        """Uniform map resets with no hotspot or target-coordinate information."""
+        positions = np.zeros((self.n_UAVs, 3), dtype=np.float32)
+        positions[:, 2] = self.H_UAV
+        minimum_distance = float(self.Cover_R)
+        for i in range(self.n_UAVs):
+            accepted = False
+            for _ in range(1000):
+                candidate = np.array([
+                    np.random.uniform(self.x_min_uav, self.x_max_uav),
+                    np.random.uniform(self.y_min_uav, self.y_max_uav),
+                ])
+                if i == 0 or np.all(
+                    np.linalg.norm(positions[:i, :2] - candidate, axis=1)
+                    >= minimum_distance
+                ):
+                    positions[i, :2] = candidate
+                    accepted = True
+                    break
+            if not accepted:
+                positions[i, :2] = candidate
+        return positions
 
     def reset(self, seed=None, *args, **kwargs):
         self.time_step = 0
@@ -569,9 +829,15 @@ class MEC(gym.Env):
                 self.y_min_all_gus = np.array([200] * 40)
                 self.y_max_all_gus = np.array([600] * 40)
         elif self.n_UAVs == 5 and self.x_min_gu == 0 and self.x_max_gu == 600:
-            self.uav_positions = np.array([[400, 400, self.H_UAV], [70, 70, self.H_UAV], [140, 70, self.H_UAV],
-                                           [210, 70, self.H_UAV], [280, 70, self.H_UAV]], dtype=np.float32)
-            if self.n_GUs == 40:
+            upper_uav = [200, 525, self.H_UAV] if self.regional_dynamic_md else [400, 400, self.H_UAV]
+            self.uav_positions = np.array([upper_uav, [110, 70, self.H_UAV], [220, 70, self.H_UAV],
+                                           [330, 70, self.H_UAV], [440, 70, self.H_UAV]], dtype=np.float32)
+            if self.dynamic_md:
+                self.x_min_all_gus = np.full(self.n_GUs, self.x_min_gu)
+                self.x_max_all_gus = np.full(self.n_GUs, self.x_max_gu)
+                self.y_min_all_gus = np.full(self.n_GUs, self.y_min_gu)
+                self.y_max_all_gus = np.full(self.n_GUs, self.y_max_gu)
+            elif self.n_GUs == 40:
                 if self.fix_hotspot:
                     self.x_min_all_gus = np.array([0] * 7 + [200] * 33)
                     self.x_max_all_gus = np.array([175] * 7 + [600] * 33)
@@ -700,7 +966,16 @@ class MEC(gym.Env):
                     dtype=np.float32)
 
 
-        # self.uav_positions = np.array([[120, 120, self.H_UAV], [480, 120, self.H_UAV], [120, 480, self.H_UAV],[480, 480, self.H_UAV]], dtype=np.float32)
+        if self.uav_reset_curriculum:
+            self.curriculum_random_probability = self._curriculum_random_reset_probability()
+            self.curriculum_random_reset = (
+                np.random.random() < self.curriculum_random_probability
+            )
+            if self.curriculum_random_reset:
+                self.uav_positions = self._sample_curriculum_uav_positions()
+            self.curriculum_reset_count += 1
+
+        # self.uav_positions = np.array([[120, 120,self.H_UAV], [480, 120, self.H_UAV], [120, 480, self.H_UAV],[480, 480, self.H_UAV]], dtype=np.float32)
         # assert self.uav_positions.shape[0] == self.n_UAVs
 
         self.drones = [DroneInfo(i) for i in range(self.n_UAVs)]
@@ -723,20 +998,45 @@ class MEC(gym.Env):
         #     gu_x[-5:] =  np.random.uniform(100, 200, 5)
         #     gu_y[-5:] =  np.random.uniform(100, 200, 5)
 
-        gu_x = self.x_min_all_gus + np.random.uniform(0, 1, self.n_GUs)*(self.x_max_all_gus - self.x_min_all_gus)
-        gu_y = self.y_min_all_gus + np.random.uniform(0, 1, self.n_GUs)*(self.y_max_all_gus - self.y_min_all_gus)
-        gu_z = np.full(self.n_GUs, self.H_GU)
-        self.gu_positions = np.column_stack((gu_x, gu_y, gu_z))
-        distances = np.linalg.norm(self.gu_positions, axis=1)
-        sorted_indices = np.argsort(distances)
-        self.gu_positions = self.gu_positions[sorted_indices]
-        self.x_min_all_gus = self.x_min_all_gus[sorted_indices]
-        self.x_max_all_gus = self.x_max_all_gus[sorted_indices]
-        self.y_min_all_gus = self.y_min_all_gus[sorted_indices]
-        self.y_max_all_gus = self.y_max_all_gus[sorted_indices]
-        self.gu_velocities = np.random.normal(self.mean_velocity, 0.3*self.std_dev_gaussian, self.n_GUs)
-        self.gu_velocities = np.clip(self.gu_velocities, 0.7* self.mean_velocity, 1.3 * self.mean_velocity)
-        self.gu_directions = np.random.uniform(0, 2 * np.pi, self.n_GUs)
+        if self.dynamic_md:
+            self.gu_positions = np.zeros((self.n_GUs, 3), dtype=np.float64)
+            self.gu_positions[:, 2] = self.H_GU
+            self.gu_velocities = np.zeros(self.n_GUs, dtype=np.float64)
+            self.gu_directions = np.zeros(self.n_GUs, dtype=np.float64)
+            self.gu_directions_0 = np.zeros(self.n_GUs, dtype=np.float64)
+            self.active_md_mask = np.zeros(self.n_GUs, dtype=bool)
+            self.md_remaining_lifetime = np.zeros(self.n_GUs, dtype=np.int32)
+            self.md_session_ids = np.full(self.n_GUs, -1, dtype=np.int64)
+            self.next_md_session_id = 0
+            self.dynamic_md_candidates = 0
+            self.dynamic_md_admitted = 0
+            self.dynamic_md_candidates_by_region = np.zeros(2, dtype=np.int64)
+            self.dynamic_md_admitted_by_region = np.zeros(2, dtype=np.int64)
+            self.dynamic_md_expired = 0
+            self.dynamic_md_departed = 0
+            self.dynamic_md_active_sum = 0
+            self.dynamic_md_active_sum_second_half = 0
+            self._admit_dynamic_mds()
+        else:
+            gu_x = self.x_min_all_gus + np.random.uniform(0, 1, self.n_GUs)*(self.x_max_all_gus - self.x_min_all_gus)
+            gu_y = self.y_min_all_gus + np.random.uniform(0, 1, self.n_GUs)*(self.y_max_all_gus - self.y_min_all_gus)
+            gu_z = np.full(self.n_GUs, self.H_GU)
+            self.gu_positions = np.column_stack((gu_x, gu_y, gu_z))
+            distances = np.linalg.norm(self.gu_positions, axis=1)
+            sorted_indices = np.argsort(distances)
+            self.gu_positions = self.gu_positions[sorted_indices]
+            self.x_min_all_gus = self.x_min_all_gus[sorted_indices]
+            self.x_max_all_gus = self.x_max_all_gus[sorted_indices]
+            self.y_min_all_gus = self.y_min_all_gus[sorted_indices]
+            self.y_max_all_gus = self.y_max_all_gus[sorted_indices]
+            self.gu_velocities = np.random.normal(self.mean_velocity, 0.3*self.std_dev_gaussian, self.n_GUs)
+            self.gu_velocities = np.clip(self.gu_velocities, 0.7* self.mean_velocity, 1.3 * self.mean_velocity)
+            self.gu_directions = np.random.uniform(0, 2 * np.pi, self.n_GUs)
+            self.active_md_mask = np.ones(self.n_GUs, dtype=bool)
+
+        self.cartesian_proposal_norm_sum = 0.0
+        self.cartesian_proposal_count = 0
+        self.cartesian_projection_count = 0
 
         # np.random.seed(None)
         # Initialize tasks for ground users
@@ -752,11 +1052,12 @@ class MEC(gym.Env):
         # 在state_k_hops中，带自己的s_{i,t}，总共有max_UAVs_obs_concat个信息。 如果是全局拼接state的话，也不需要mask了。正好。
         self.attention_active_mask = np.zeros((self.n_UAVs, self.max_UAVs_obs_concat), dtype=np.float32)
         local_obs = self.get_local_obs()
+        critic_local_obs = self.get_critic_local_obs(local_obs)
         # # 自己的obs直接就不变了。
         self.obs = local_obs
 
         if self.perform_with_local_state:
-            self.state = self.obs
+            self.state = critic_local_obs
         elif self.state_is_k_hops:
             single_state_dim = self.state_dim // self.max_UAVs_obs_concat
             final_state = np.zeros((self.n_UAVs, self.state_dim))
@@ -773,7 +1074,7 @@ class MEC(gym.Env):
                     neighbor_idx_flat = neighbors.reshape(-1, 1) * single_state_dim + np.arange(single_state_dim)
 
                     # 展平索引使用高级索引
-                    final_state[i].reshape(-1)[neighbor_idx_flat.flatten()] = local_obs[neighbors].flatten()
+                    final_state[i].reshape(-1)[neighbor_idx_flat.flatten()] = critic_local_obs[neighbors].flatten()
                     self.attention_active_mask[i, neighbors] = 1
 
                 # 重新排序
@@ -784,7 +1085,7 @@ class MEC(gym.Env):
                 reordered3d = np.take_along_axis(final_state3d, perm_indices[..., None], axis=1)
                 final_state = reordered3d.reshape(self.n_UAVs, self.n_UAVs * single_state_dim)
             else:
-                final_state[:, :single_state_dim] = local_obs
+                final_state[:, :single_state_dim] = critic_local_obs
                 for i in range(self.n_UAVs):
                     neighbor_mask = (self.uav_uav_distances_2d[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
                     neighbors = np.where(neighbor_mask)[0]
@@ -794,7 +1095,7 @@ class MEC(gym.Env):
                         for j, neighbor_idx in enumerate(closest):
                             start_pos = (j + 1) * single_state_dim
                             end_pos = (j + 2) * single_state_dim
-                            final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
+                            final_state[i, start_pos:end_pos] = critic_local_obs[neighbor_idx]
                     self.attention_active_mask[i, :min(len(neighbors)+1, self.max_UAVs_obs_concat)] = 1
             self.state = final_state
             if self.use_atten_actor:
@@ -803,7 +1104,7 @@ class MEC(gym.Env):
         else:
             # self.state = self.get_state()
             # self.state = np.tile(local_obs.reshape((1, -1)), (self.n_UAVs, 1))
-            self.state = np.concatenate((local_obs, np.tile(local_obs.reshape((1, -1)), (self.n_UAVs, 1))), axis=-1)
+            self.state = np.concatenate((critic_local_obs, np.tile(critic_local_obs.reshape((1, -1)), (self.n_UAVs, 1))), axis=-1)
             # self.state = np.concatenate((local_obs, self.get_state()), axis=-1)
 
         self.avail_actions = self.get_local_avail_actions()
@@ -816,6 +1117,7 @@ class MEC(gym.Env):
         self.system_performance = np.zeros((self.n_agents,))
         self.system_performance_individual = np.zeros((self.n_agents,))
         self.system_performance_true_all_GUs = np.zeros((self.n_agents,))
+        self.system_performance_equivalent_full_GUs = np.zeros((self.n_agents,))
         self.system_performance_coverd_GUs = np.zeros((self.n_agents,))
         self.delay_true_all_GUs = np.zeros((self.n_agents,))
         self.delay_true_coverd_GUs = np.zeros((self.n_agents, 2))
@@ -868,6 +1170,8 @@ class MEC(gym.Env):
 
         # 计算覆盖掩码
         self.coverage_mask = self.uav_gu_distances_2d <= self.Cover_R
+        if self.dynamic_md:
+            self.coverage_mask &= self.active_md_mask[np.newaxis, :]
 
     def _calculate_channel_gains(self):
         """计算信道增益"""
@@ -887,9 +1191,15 @@ class MEC(gym.Env):
 
         PL_nm = P_LoS * PL_LoS + P_NLoS * PL_NLoS
         self.channel_gains = 10 ** (-PL_nm / 10)
+        if self.dynamic_md:
+            self.channel_gains[:, ~self.active_md_mask] = 0
 
     def process_actions(self, action):
-        action = np.clip(action, 0., 1.)
+        action = np.array(action, copy=True)
+        if self.cartesian_flight and not self.fix_uav_pos:
+            action[:, 2:] = np.clip(action[:, 2:], 0., 1.)
+        else:
+            action = np.clip(action, 0., 1.)
         # Convert action to a list with the specified slices
         if self.fix_uav_pos:
             assert self.continuous_associate
@@ -1466,11 +1776,12 @@ class MEC(gym.Env):
 
         self.attention_active_mask = np.zeros((self.n_UAVs, self.max_UAVs_obs_concat), dtype=np.float32)
         local_obs = self.get_local_obs()
+        critic_local_obs = self.get_critic_local_obs(local_obs)
         # # 自己的obs直接就不变了。
         self.obs = local_obs
 
         if self.perform_with_local_state:
-            self.state = self.obs
+            self.state = critic_local_obs
         elif self.state_is_k_hops:
             single_state_dim = self.state_dim // self.max_UAVs_obs_concat
             final_state = np.zeros((self.n_UAVs, self.state_dim))
@@ -1487,7 +1798,7 @@ class MEC(gym.Env):
                     neighbor_idx_flat = neighbors.reshape(-1, 1) * single_state_dim + np.arange(single_state_dim)
 
                     # 展平索引使用高级索引
-                    final_state[i].reshape(-1)[neighbor_idx_flat.flatten()] = local_obs[neighbors].flatten()
+                    final_state[i].reshape(-1)[neighbor_idx_flat.flatten()] = critic_local_obs[neighbors].flatten()
                     self.attention_active_mask[i, neighbors] = 1
 
                 # 重新排序
@@ -1498,7 +1809,7 @@ class MEC(gym.Env):
                 reordered3d = np.take_along_axis(final_state3d, perm_indices[..., None], axis=1)
                 final_state = reordered3d.reshape(self.n_UAVs, self.n_UAVs * single_state_dim)
             else:
-                final_state[:, :single_state_dim] = local_obs
+                final_state[:, :single_state_dim] = critic_local_obs
                 for i in range(self.n_UAVs):
                     neighbor_mask = (self.uav_uav_distances_2d[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
                     neighbors = np.where(neighbor_mask)[0]
@@ -1508,7 +1819,7 @@ class MEC(gym.Env):
                         for j, neighbor_idx in enumerate(closest):
                             start_pos = (j + 1) * single_state_dim
                             end_pos = (j + 2) * single_state_dim
-                            final_state[i, start_pos:end_pos] = local_obs[neighbor_idx]
+                            final_state[i, start_pos:end_pos] = critic_local_obs[neighbor_idx]
                     self.attention_active_mask[i, :min(len(neighbors)+1, self.max_UAVs_obs_concat)] = 1
             self.state = final_state
             if self.use_atten_actor:
@@ -1517,7 +1828,7 @@ class MEC(gym.Env):
         else:
             # self.state = self.get_state()
             # self.state = np.tile(local_obs.reshape((1, -1)), (self.n_UAVs, 1))
-            self.state = np.concatenate((local_obs, np.tile(local_obs.reshape((1, -1)), (self.n_UAVs, 1))), axis=-1)
+            self.state = np.concatenate((critic_local_obs, np.tile(critic_local_obs.reshape((1, -1)), (self.n_UAVs, 1))), axis=-1)
             # self.state = np.concatenate((local_obs, self.get_state()), axis=-1)
 
         self.avail_actions = self.get_local_avail_actions()
@@ -1578,15 +1889,57 @@ class MEC(gym.Env):
                     'cumulative_reward_wo_cover': self.cumulative_reward_wo_cover,
                     'system_performance_individual': self.system_performance_individual,
                     'system_performance_true_all_GUs': self.system_performance_true_all_GUs,
+                    'system_performance_equivalent_full_GUs': self.system_performance_equivalent_full_GUs,
                     'delay_true_all_GUs':self.delay_true_all_GUs/self.MAX_SIMULATION_TIME,
                     'delay_true_coverd_GUs':self.delay_true_coverd_GUs[:, 0] / self.delay_true_coverd_GUs[:, 1] /self.MAX_SIMULATION_TIME,
                     'energy_true_all_GUs':self.energy_true_all_GUs/self.MAX_SIMULATION_TIME,
                     'energy_all_GUs_UAVs':self.energy_all_GUs_UAVs/self.MAX_SIMULATION_TIME,
                     'system_performance_coverd_GUs': self.system_performance_coverd_GUs,
                     'n_GUs_by_coverd':self.n_GUs_by_coverd/(self.MAX_SIMULATION_TIME/2),
-                    'complete_task_ratio':self.complete_task_ratio/self.MAX_SIMULATION_TIME,
-                    'uav_positions': self.uav_positions[:, :2],
-                    }
+                     'complete_task_ratio':self.complete_task_ratio/self.MAX_SIMULATION_TIME,
+                     'uav_positions': self.uav_positions[:, :2],
+                     }
+            if self.dynamic_md:
+                info.update({
+                    'candidate_md_arrivals': self.dynamic_md_candidates,
+                    'admitted_md_arrivals': self.dynamic_md_admitted,
+                    'candidate_md_arrivals_lower_left': self.dynamic_md_candidates_by_region[0],
+                    'candidate_md_arrivals_upper_right': self.dynamic_md_candidates_by_region[1],
+                    'admitted_md_arrivals_lower_left': self.dynamic_md_admitted_by_region[0],
+                    'admitted_md_arrivals_upper_right': self.dynamic_md_admitted_by_region[1],
+                    'md_admission_ratio': self.dynamic_md_admitted / max(self.dynamic_md_candidates, 1),
+                    'md_admission_ratio_lower_left': (
+                        self.dynamic_md_admitted_by_region[0]
+                        / max(self.dynamic_md_candidates_by_region[0], 1)
+                    ),
+                    'md_admission_ratio_upper_right': (
+                        self.dynamic_md_admitted_by_region[1]
+                        / max(self.dynamic_md_candidates_by_region[1], 1)
+                    ),
+                    'expired_md_accesses': self.dynamic_md_expired,
+                    'coverage_departed_md_accesses': self.dynamic_md_departed,
+                    'average_active_mds': self.dynamic_md_active_sum / self.MAX_SIMULATION_TIME,
+                    'average_active_mds_second_half': (
+                        self.dynamic_md_active_sum_second_half
+                        / max(self.MAX_SIMULATION_TIME / 2, 1)
+                    ),
+                })
+                if getattr(self.args, "uav_reset_curriculum", False):
+                    info.update({
+                        'curriculum_random_reset': float(self.curriculum_random_reset),
+                        'curriculum_random_probability': self.curriculum_random_probability,
+                    })
+            if self.cartesian_flight:
+                info.update({
+                    'flight_proposal_norm_mean': (
+                        self.cartesian_proposal_norm_sum
+                        / max(self.cartesian_proposal_count, 1)
+                    ),
+                    'flight_disk_projection_ratio': (
+                        self.cartesian_projection_count
+                        / max(self.cartesian_proposal_count, 1)
+                    ),
+                })
         return self.obs, rewards, dones, self.state, self.avail_actions, info, self.Metropolis_weights, self.attention_active_mask
 
     def calculate_local_reward_raw_action(self, action):
@@ -1602,6 +1955,9 @@ class MEC(gym.Env):
         return rewards
 
     def calculate_reward(self, action):
+        reward_active_mask = self.active_md_mask.copy() if self.dynamic_md else np.ones(self.n_GUs, dtype=bool)
+        reward_active_ids = np.flatnonzero(reward_active_mask)
+        reward_active_count = len(reward_active_ids)
         if self.fix_uav_pos:
             assert self.continuous_associate
             action_components = [
@@ -1618,6 +1974,8 @@ class MEC(gym.Env):
                     fly_actions = action[:, :2]
                     uav_gu_distances_2d = np.linalg.norm(self.uav_positions[:, None, :2] - self.gu_positions[None, :, :2], axis=2)
                     coverage_mask = uav_gu_distances_2d <= self.Cover_R
+                    if self.dynamic_md:
+                        coverage_mask &= reward_active_mask[np.newaxis, :]
                     uav_gu_distances_2d_min = np.min(uav_gu_distances_2d, axis=0)
                     offloading_actions = ((uav_gu_distances_2d==uav_gu_distances_2d_min) & (coverage_mask)).astype(int)
                     ones_count = np.sum(offloading_actions, axis=1, keepdims=True)  # 避免除零，使用np.divide处理
@@ -1668,6 +2026,12 @@ class MEC(gym.Env):
                     offloading_actions = action_components[1]
                     bandwidth_actions = action_components[2] * self.B
                     computation_actions = action_components[3] * self.F_m
+        if not self.nearest_associate:
+            offloading_actions = np.where(
+                (bandwidth_actions > 0) & (computation_actions > 0),
+                offloading_actions,
+                0,
+            )
         # Initialize reward arrays
         # per_GU_delay = np.zeros(self.n_GUs)
         per_GU_delay_reward = np.zeros(self.n_GUs)
@@ -1699,8 +2063,8 @@ class MEC(gym.Env):
         )
         if use_vectorized_task_rewards:
             offloaded_mask = np.any(offloading_actions, axis=0)
-            local_gu_ids = np.flatnonzero(~offloaded_mask)
-            offloaded_gu_ids = np.flatnonzero(offloaded_mask)
+            local_gu_ids = reward_active_ids[~offloaded_mask[reward_active_ids]]
+            offloaded_gu_ids = reward_active_ids[offloaded_mask[reward_active_ids]]
             credited_uav_ids = np.full(self.n_GUs, -1, dtype=int)
             credited_delay_rewards = np.zeros(self.n_GUs)
             credited_energy_rewards = np.zeros(self.n_GUs)
@@ -1780,7 +2144,7 @@ class MEC(gym.Env):
 
             task_gu_ids = ()
         else:
-            task_gu_ids = range(self.n_GUs)
+            task_gu_ids = reward_active_ids
 
         for n in task_gu_ids:
             uav_indices = np.where(coverage_mask[:, n])[0]
@@ -1866,6 +2230,13 @@ class MEC(gym.Env):
                 per_GU_task_reward[n] = per_GU_delay_reward[n] + per_GU_energy_reward[n]
         if self.fix_uav_pos:
             velocity = np.zeros(self.n_UAVs)
+        elif self.cartesian_flight:
+            proposal_norms = np.linalg.norm(fly_actions, axis=1)
+            self.cartesian_proposal_norm_sum += np.sum(proposal_norms)
+            self.cartesian_proposal_count += proposal_norms.size
+            self.cartesian_projection_count += np.count_nonzero(proposal_norms > 1.0)
+            velocity_vectors = _cartesian_flight_velocity(fly_actions, self.v_max)
+            velocity = np.linalg.norm(velocity_vectors, axis=1)
         else:
             velocity = fly_actions[:, 1] * self.v_max
         P_fly = P1 * (1 + 3 * velocity ** 2 / U_tip ** 2) + P2 * (np.sqrt(
@@ -1876,6 +2247,11 @@ class MEC(gym.Env):
         # 更新无人机位置。Update UAV positions
         if self.fix_uav_pos:
             pass
+        elif self.cartesian_flight:
+            velocity_vectors = _cartesian_flight_velocity(action[:, :2], self.v_max)
+            self.uav_positions[:, :2] += velocity_vectors * self.Delta_t
+            self.uav_positions[:, 0] = np.clip(self.uav_positions[:, 0], self.x_min_uav, self.x_max_uav)
+            self.uav_positions[:, 1] = np.clip(self.uav_positions[:, 1], self.y_min_uav, self.y_max_uav)
         else:
             fly_action = action[:, :2] * np.array([2 * np.pi, self.v_max])  # 方向和速度都是0-1之间的数
             # 向量化更新位置
@@ -1896,20 +2272,33 @@ class MEC(gym.Env):
             self.uav_positions[:, 1] = np.clip(self.uav_positions[:, 1], self.y_min_uav, self.y_max_uav)
         # 更新用户位置。 Update GU positions
         # Update ground user velocities and directions using Gauss-Markov Model
-        random_normal_vel = np.random.normal(0, 0.01 * self.std_dev_gaussian, self.n_GUs)
-        self.gu_velocities = self.alpha_gaussian * self.gu_velocities + (1 - self.alpha_gaussian) * self.mean_velocity + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_vel
-        random_normal_dir = np.random.normal(0, 0.01 * self.std_dev_gaussian, self.n_GUs)
-        self.gu_directions = self.alpha_gaussian * self.gu_directions + (1 - self.alpha_gaussian) * self.gu_directions_0 + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_dir
+        moving_gu_ids = reward_active_ids if self.dynamic_md else np.arange(self.n_GUs)
+        random_normal_vel = np.random.normal(0, 0.01 * self.std_dev_gaussian, len(moving_gu_ids))
+        self.gu_velocities[moving_gu_ids] = (
+            self.alpha_gaussian * self.gu_velocities[moving_gu_ids]
+            + (1 - self.alpha_gaussian) * self.mean_velocity
+            + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_vel
+        )
+        random_normal_dir = np.random.normal(0, 0.01 * self.std_dev_gaussian, len(moving_gu_ids))
+        self.gu_directions[moving_gu_ids] = (
+            self.alpha_gaussian * self.gu_directions[moving_gu_ids]
+            + (1 - self.alpha_gaussian) * self.gu_directions_0[moving_gu_ids]
+            + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_dir
+        )
         # Update ground user positions
-        self.gu_positions[:, 0] += self.gu_velocities * np.cos(self.gu_directions) * self.Delta_t
-        self.gu_positions[:, 1] += self.gu_velocities * np.sin(self.gu_directions) * self.Delta_t
+        self.gu_positions[moving_gu_ids, 0] += (
+            self.gu_velocities[moving_gu_ids] * np.cos(self.gu_directions[moving_gu_ids]) * self.Delta_t
+        )
+        self.gu_positions[moving_gu_ids, 1] += (
+            self.gu_velocities[moving_gu_ids] * np.sin(self.gu_directions[moving_gu_ids]) * self.Delta_t
+        )
 
         # if self.x_max_gu == 300 and self.n_GUs == 40:
         #     # 在[0, 0]到[300, 300]的区域内有40个用户
-        x_out_min = self.gu_positions[:, 0] < self.x_min_all_gus
-        x_out_max = self.gu_positions[:, 0] > self.x_max_all_gus
-        y_out_min = self.gu_positions[:, 1] < self.y_min_all_gus
-        y_out_max = self.gu_positions[:, 1] > self.y_max_all_gus
+        x_out_min = (self.gu_positions[:, 0] < self.x_min_all_gus) & reward_active_mask
+        x_out_max = (self.gu_positions[:, 0] > self.x_max_all_gus) & reward_active_mask
+        y_out_min = (self.gu_positions[:, 1] < self.y_min_all_gus) & reward_active_mask
+        y_out_max = (self.gu_positions[:, 1] > self.y_max_all_gus) & reward_active_mask
         # 反射位置
         self.gu_positions[x_out_min, 0] = 2 * self.x_min_all_gus[x_out_min] - self.gu_positions[x_out_min, 0]
         self.gu_positions[x_out_max, 0] = 2 * self.x_max_all_gus[x_out_max] - self.gu_positions[x_out_max, 0]
@@ -1947,6 +2336,12 @@ class MEC(gym.Env):
         # 更新基准方向
         self.gu_directions_0[corner_hit | vert_hit | horiz_hit] = self.gu_directions[
             corner_hit | vert_hit | horiz_hit]
+
+        if self.dynamic_md:
+            self.dynamic_md_active_sum += reward_active_count
+            if self.time_step > self.MAX_SIMULATION_TIME / 2:
+                self.dynamic_md_active_sum_second_half += reward_active_count
+            self._advance_dynamic_md_population()
 
         self._update_distance_matrices()
 
@@ -2042,12 +2437,25 @@ class MEC(gym.Env):
         self.system_performance_individual += (R_task_delay + R_task_energy + R_fly_energy)
         # 用户角度出发计算的全局性能
         self.system_performance_coverd_GUs += np.sum(R_fly_energy) + np.sum(per_GU_task_reward)
-        self.system_performance_true_all_GUs += np.sum(R_fly_energy) + np.sum(per_GU_task_reward) + np.sum(per_GU_task_reward_others)
-        self.delay_true_all_GUs += (np.sum(per_GU_delay_true) + np.sum(per_GU_delay_true_others))/self.n_GUs
+        slot_system_performance = (
+            np.sum(R_fly_energy)
+            + np.sum(per_GU_task_reward)
+            + np.sum(per_GU_task_reward_others)
+        )
+        self.system_performance_true_all_GUs += slot_system_performance
+        self.system_performance_equivalent_full_GUs += slot_system_performance
+        if self.dynamic_md:
+            self.system_performance_equivalent_full_GUs += (
+                self.n_GUs - reward_active_count
+            ) * self.expected_inactive_md_local_reward
+        metric_gu_count = max(reward_active_count, 1)
+        self.delay_true_all_GUs += (
+            np.sum(per_GU_delay_true) + np.sum(per_GU_delay_true_others)
+        ) / metric_gu_count
         self.delay_true_coverd_GUs += np.array([[np.sum(per_GU_delay_true), np.sum(per_GU_delay_true != 0)]])
         self.energy_true_all_GUs += np.sum(per_GU_energy_true) + np.sum(per_GU_energy_true_others)
         self.energy_all_GUs_UAVs += np.sum(per_GU_energy_true) + np.sum(per_GU_energy_true_others) + np.sum(E_fly)
-        self.complete_task_ratio += np.sum(self.complete_task) / self.n_GUs
+        self.complete_task_ratio += np.sum(self.complete_task[reward_active_mask]) / metric_gu_count
         if self.time_step >= (self.MAX_SIMULATION_TIME / 2):
             uav_count_per_user = np.sum(coverage_mask, axis=0)
             self.n_GUs_by_coverd += np.sum(uav_count_per_user > 0)
@@ -2061,6 +2469,8 @@ class MEC(gym.Env):
         # 之前的处理动作还是回到了n_max_GUs_in_range的。 先转换动作到n_GUs，然后calculate_reward。
         # 其实transform_uav_actions就是process_local_actions的前半段。先变成n_GUs的，然后利用process_actions合法化，然后回到n_max_GUs_in_range。
         transformed_action_components = self.transform_uav_actions(processed_actions)
+        if self.dynamic_md:
+            transformed_action_components = self.process_actions(transformed_action_components)
         rewards = self.calculate_reward(transformed_action_components)
         return rewards
 
@@ -2318,6 +2728,20 @@ class MEC(gym.Env):
 
         return weights_matrix
 
+    def get_critic_local_obs(self, actor_obs):
+        """Remove the actor-only one-hop UAV block from local observations."""
+        if not self.actor_neighbor_obs:
+            return actor_obs
+        prefix_dim = (
+            int(self.ob_state_with_timestep)
+            + (self.n_UAVs if self.ob_state_with_id else 0)
+            + 2
+        )
+        neighbor_end = prefix_dim + self.actor_neighbor_obs_dim
+        return np.concatenate(
+            (actor_obs[:, :prefix_dim], actor_obs[:, neighbor_end:]), axis=-1
+        )
+
     def get_local_obs(self):
         """
         添加get_local_obs()方法，每个无人机的局部obs为
@@ -2367,6 +2791,18 @@ class MEC(gym.Env):
             local_obs[i, idx:idx + 2] = self.uav_positions[i, :2]
             idx += 2
 
+            if self.actor_neighbor_obs:
+                for neighbor_id in range(self.n_UAVs):
+                    if neighbor_id == i:
+                        continue
+                    if uav_uav_distances[i, neighbor_id] <= self.neighbor_R:
+                        relative_position = (
+                            self.uav_positions[neighbor_id, :2] - self.uav_positions[i, :2]
+                        ) / self.neighbor_R
+                        local_obs[i, idx:idx + 2] = relative_position
+                        local_obs[i, idx + 2] = 1.0
+                    idx += 3
+
             # # 3. Find neighboring UAVs (excluding self)
             # # neighbor_mask = (uav_uav_distances[i] <= self.Cover_R) & (np.arange(self.n_UAVs) != i)
             # neighbor_mask = (uav_uav_distances[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
@@ -2400,27 +2836,33 @@ class MEC(gym.Env):
                 closest_gus = in_range_indices[:self.max_GUs_in_range]
                 for j, gu_idx in enumerate(closest_gus):
                     if j < self.max_GUs_in_range:
-                        # GU position (3 values)
                         local_obs[i, idx:idx + 2] = self.gu_positions[gu_idx, :2]
                         idx += 2
-                        local_obs[i, idx] = self.gu_directions[gu_idx]
-                        idx += 1
-                        # Add channel gain (1 value)
-                        local_obs[i, idx] = self.channel_gains[i, gu_idx]
-                        idx += 1
-                        # Add task information (3 values)
-                        local_obs[i, idx:idx + 3] = self.gu_tasks[gu_idx]
-                        idx += 3
-                        local_obs[i, idx:idx + 1] = gu_idx
-                        idx += 1
-                        # 记录自己能不能完成任务。
-                        if self.gu_tasks[gu_idx, 2] > self.gu_tasks[gu_idx, 1] / self.F_n:
-                            # 如果能完成
-                            local_obs[i, idx:idx + 1] = 0
+                        if self.dynamic_md:
+                            local_obs[i, idx:idx + 4] = np.array([
+                                self.gu_velocities[gu_idx],
+                                self.gu_directions[gu_idx],
+                                self.gu_directions_0[gu_idx],
+                                self.md_remaining_lifetime[gu_idx],
+                            ])
+                            idx += 4
+                            local_obs[i, idx] = self.channel_gains[i, gu_idx]
+                            idx += 1
+                            local_obs[i, idx:idx + 3] = self.gu_tasks[gu_idx]
+                            idx += 3
                         else:
-                            # 如果完不成
-                            local_obs[i, idx:idx + 1] = 1
-                        idx += 1
+                            local_obs[i, idx] = self.gu_directions[gu_idx]
+                            idx += 1
+                            local_obs[i, idx] = self.channel_gains[i, gu_idx]
+                            idx += 1
+                            local_obs[i, idx:idx + 3] = self.gu_tasks[gu_idx]
+                            idx += 3
+                            local_obs[i, idx] = gu_idx
+                            idx += 1
+                            local_obs[i, idx] = (
+                                0 if self.gu_tasks[gu_idx, 2] > self.gu_tasks[gu_idx, 1] / self.F_n else 1
+                            )
+                            idx += 1
             # Reset idx for next UAV's observations
             idx = 0
         return local_obs
@@ -2562,6 +3004,14 @@ class MEC(gym.Env):
         uav_gu_distances = self.uav_gu_distances_2d
         coverage_mask = self.coverage_mask
 
+        if self.distance_only_user_sort:
+            for i in range(self.n_UAVs):
+                in_range_indices = np.flatnonzero(coverage_mask[i])
+                if len(in_range_indices):
+                    order = np.argsort(uav_gu_distances[i, in_range_indices])
+                    nearby_users_sorted[i, :len(in_range_indices)] = in_range_indices[order]
+            return nearby_users_sorted
+
         can_finish = self.gu_tasks[:, 1] / self.F_n <= self.gu_tasks[:, 2]
         for i in range(self.n_UAVs):
             # 把不能完成任务的放在前面。
@@ -2689,7 +3139,9 @@ class MEC(gym.Env):
                     # bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.2',
                     #           edgecolor='none')
         # Plot ground users
-        for j, (x, y) in enumerate(self.gu_positions[:, :2]):
+        render_gu_ids = np.flatnonzero(self.active_md_mask) if self.dynamic_md else np.arange(self.n_GUs)
+        for j in render_gu_ids:
+            x, y = self.gu_positions[j, :2]
             if acts is not None:
                 column = acts[:, j]
                 if np.any(column == 1):  # 检查是否有1

@@ -1,7 +1,11 @@
 from abc import ABC
-import gym
+try:
+    import gym
+    from gym.spaces import Box, Discrete
+except ImportError:
+    import gymnasium as gym
+    from gymnasium.spaces import Box, Discrete
 import numpy as np
-from gym.spaces import Box, Discrete
 from .mec import MEC
 
 class WrappedMECEnv(gym.Env, ABC):

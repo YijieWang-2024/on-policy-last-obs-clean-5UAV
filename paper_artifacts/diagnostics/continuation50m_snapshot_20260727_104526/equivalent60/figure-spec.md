@@ -1,0 +1,29 @@
+# Figure Spec
+
+- chart_type: continuation-training overlay on canonical manuscript Fig. 4
+- data_sources: canonical Fig. 4 PNG and the two latest warm50to100m TensorBoard logs
+- rows_in_scope: every currently available continuation point at snapshot time
+- data_columns: series, local_learning_episode, raw_value, three_point_smoothed_value
+- x_axis:
+  - field: continuation-local environment step divided by 64 rollout threads and 400 slots
+  - label: Learning episodes
+  - unit: continuation-local parallel rollout episodes
+  - scale: linear
+  - range: 0 to 3500
+- y_axis:
+  - field: agent0/system_performance_equivalent_full_GUs
+  - label: System gain, inherited from canonical Fig. 4
+  - unit: equivalent-60-MD episode performance
+  - scale: linear
+  - range: inherited from canonical Fig. 4
+- additional_axes: none
+- series_or_categories: canonical five Fig. 4 curves plus continuation MAPPO and DC-PPO
+- category_order: MAPPO then DC-PPO in added legend
+- color_mapping: cyan and brown
+- size_mapping: 2.8-point added lines
+- legend: lower-right separate legend
+- required_annotations: none
+- forbidden_elements: concatenating the first 50M onto x, extrapolation, deterministic-evaluation claims, fabricated uncertainty bands
+- layout_constraints: preserve canonical 2964 by 1945 raster at 300 dpi
+- source_note: continuation x is deliberately reset to zero-equivalent local logging; runs were still active at snapshot time
+- assumptions: three-point centered smoothing; no uncertainty band because each continuation is one seed

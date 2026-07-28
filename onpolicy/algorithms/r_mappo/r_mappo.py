@@ -263,9 +263,12 @@ class R_MAPPO():
         #     advantages = buffer.advantages
         advantages_copy = advantages.copy()
         advantages_copy[buffer.active_masks[:-1] == 0.0] = np.nan
-        mean_advantages = np.nanmean(advantages_copy)
-        std_advantages = np.nanstd(advantages_copy)
-        advantages = (advantages - mean_advantages) / (std_advantages + self.eps)
+        if np.all(np.isnan(advantages_copy)):
+            advantages = np.zeros_like(advantages)
+        else:
+            mean_advantages = np.nanmean(advantages_copy)
+            std_advantages = np.nanstd(advantages_copy)
+            advantages = (advantages - mean_advantages) / (std_advantages + self.eps)
         # advantages += 1.6*np.random.randn(*advantages.shape)
         # 可选：额外裁剪极端优势值
         advantages = np.clip(advantages, -10.0, 10.0)

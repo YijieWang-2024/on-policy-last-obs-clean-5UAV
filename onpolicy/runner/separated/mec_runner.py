@@ -127,6 +127,7 @@ class MECRunner(Runner):
                         train_infos[agent_id].update({'cumulative_reward_wo_cover': np.mean(np.mean([info['cumulative_reward_wo_cover'] for info in infos], axis=0)).round(5)})
                         train_infos[agent_id].update({'system_performance': np.mean(np.mean([info['system_performance'] for info in infos], axis=0)).round(5)})
                         train_infos[agent_id].update({'system_performance_true_all_GUs': np.mean(np.mean([info['system_performance_true_all_GUs'] for info in infos], axis=0)).round(5)})
+                        train_infos[agent_id].update({'system_performance_equivalent_full_GUs': np.mean(np.mean([info['system_performance_equivalent_full_GUs'] for info in infos], axis=0)).round(5)})
                         train_infos[agent_id].update({'system_performance_individual': np.mean([info['system_performance_individual'] for info in infos], axis=0)[agent_id].round(5)})
                         train_infos[agent_id].update({'cumulative_individual_reward': np.mean([info['cumulative_individual_reward'] for info in infos], axis=0)[agent_id].round(5)})
                         train_infos[agent_id].update({'delay_true_all_GUs': np.mean([info['delay_true_all_GUs'] for info in infos], axis=0)[agent_id].round(5)})
@@ -135,11 +136,35 @@ class MECRunner(Runner):
                         train_infos[agent_id].update({'energy_all_GUs_UAVs': np.mean([info['energy_all_GUs_UAVs'] for info in infos], axis=0)[agent_id].round(5)})
                         train_infos[agent_id].update({'n_GUs_by_coverd': np.mean([info['n_GUs_by_coverd'] for info in infos]).round(5)})
                         train_infos[agent_id].update({'complete_task_ratio': np.mean([info['complete_task_ratio'] for info in infos]).round(5)})
+                        for metric in (
+                            'candidate_md_arrivals',
+                            'admitted_md_arrivals',
+                            'candidate_md_arrivals_lower_left',
+                            'candidate_md_arrivals_upper_right',
+                            'admitted_md_arrivals_lower_left',
+                            'admitted_md_arrivals_upper_right',
+                            'md_admission_ratio',
+                            'md_admission_ratio_lower_left',
+                            'md_admission_ratio_upper_right',
+                            'expired_md_accesses',
+                            'coverage_departed_md_accesses',
+                            'average_active_mds',
+                            'average_active_mds_second_half',
+                            'flight_proposal_norm_mean',
+                            'flight_disk_projection_ratio',
+                            'curriculum_random_reset',
+                            'curriculum_random_probability',
+                        ):
+                            if metric in infos[0]:
+                                train_infos[agent_id][metric] = np.mean(
+                                    [info[metric] for info in infos]
+                                ).round(5)
 
                 # print(episode)
                 print('cumulative_reward is ', np.mean([info['cumulative_reward'] for info in infos], axis=0).round(5))
                 print('system_performance is ', np.mean([info['system_performance'] for info in infos], axis=0).round(5))
                 print('system_performance_true_all_GUs is ', np.mean([info['system_performance_true_all_GUs'] for info in infos], axis=0).round(5))
+                print('system_performance_equivalent_full_GUs is ', np.mean([info['system_performance_equivalent_full_GUs'] for info in infos], axis=0).round(5))
                 print('system_performance_individual is ', np.mean([info['system_performance_individual'] for info in infos], axis=0).round(5))
                 print('cumulative_individual_reward is ', np.mean([info['cumulative_individual_reward'] for info in infos], axis=0).round(5))
                 print('complete_task_ratio is ', np.mean([info['complete_task_ratio'] for info in infos], axis=0).round(5))
@@ -240,9 +265,9 @@ class MECRunner(Runner):
         active_masks[dones == True] = np.zeros(((dones == True).sum(), 1), dtype=np.float32)
         active_masks[dones_env == True] = np.ones(((dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
 
-        # 添加可用的动作空间小于2时，记录该智能体死亡。不计算梯度。为了利用狄利克雷分布。
-        covering_GUs = np.sum(available_actions, axis=-1)
-        active_masks[covering_GUs == 1] = np.zeros(((covering_GUs == 1).sum(), 1), dtype=np.float32)
+        # A UAV with exactly one local user is still a live agent: its flight,
+        # association and critic samples remain valid. Dirichlet degeneracy is
+        # handled inside the resource head instead of masking the whole agent.
 
         if not self.use_centralized_V:
             share_obs = obs
@@ -407,6 +432,12 @@ class MECRunner(Runner):
         for agent_id in range(self.num_agents):
             self.trainer[agent_id].prep_training()
             train_info = self.trainer[agent_id].train(self.buffer[agent_id])
+            if getattr(self.all_args, "cartesian_flight", False):
+                actor_act = self.trainer[agent_id].policy.actor.act
+                flight_head = actor_act.action_out if actor_act.mujoco_box else actor_act.action_outs[0]
+                flight_std = torch.exp(flight_head.logstd._bias.detach()).cpu().numpy().reshape(-1)
+                train_info["flight_std_x"] = float(flight_std[0])
+                train_info["flight_std_y"] = float(flight_std[1])
             train_infos.append(train_info)
             self.buffer[agent_id].after_update()
 
@@ -478,12 +509,13 @@ class MECRunner(Runner):
         # train_infos["average_step_rewards"] = np.mean(self.buffer.rewards)
         for agent_id in range(self.num_agents):
             for k, v in train_infos[agent_id].items():
-                if agent_id==0 or k in ['cumulative_individual_reward', 'system_performance_individual', 'cumulative_individual_reward_wo_cover']:
+                if (agent_id == 0 or k.startswith('flight_std_') or
+                        k in ['cumulative_individual_reward', 'system_performance_individual', 'cumulative_individual_reward_wo_cover']):
                     agent_k = "agent%i/" % agent_id + k
                     if self.use_wandb:
                         wandb.log({agent_k: v}, step=total_num_steps)
                     else:
-                        self.writter.add_scalars(agent_k, {agent_k: v}, total_num_steps)
+                        self.writter.add_scalar(agent_k, v, total_num_steps)
     
     @torch.no_grad()
     def eval(self, total_num_steps):

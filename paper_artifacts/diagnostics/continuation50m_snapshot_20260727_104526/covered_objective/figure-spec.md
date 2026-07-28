@@ -1,0 +1,29 @@
+# Figure Spec
+
+- chart_type: four-series covered-MD objective training chart
+- data_sources: historical fixed-60 MAPPO/DC-PPO per-agent logs and latest warm50to100m per-agent logs
+- rows_in_scope: sum of five system_performance_individual series; continuation-local x starts from zero-equivalent logging
+- data_columns: series, source_kind, local_learning_episode, mean, std
+- x_axis:
+  - field: continuation-local step divided by 64 rollout threads and 400 slots
+  - label: Learning episodes
+  - unit: local parallel rollout episodes
+  - scale: linear
+  - range: 0 to 3500
+- y_axis:
+  - field: sum_i system_performance_individual_i
+  - label: Covered-MD system performance
+  - unit: episode objective
+  - scale: linear
+  - range: automatic
+- additional_axes: none
+- series_or_categories: fixed-60 historical MAPPO/DC-PPO and continuation MAPPO/DC-PPO
+- category_order: historical pair then continuation pair
+- color_mapping: blue, orange, cyan, brown
+- size_mapping: continuation lines slightly thicker
+- legend: complete four-entry legend
+- required_annotations: none
+- forbidden_elements: equivalent-60 values, cumulative rewards with collision penalties, concatenated first 50M x, extrapolation, deterministic claims
+- layout_constraints: double-column 300 dpi opaque PNG
+- source_note: continuation runs were active at snapshot time; historical bands are three seeds and continuation lines are seed2 only
+- assumptions: three-point centered smoothing; historical horizon capped at episode 3499

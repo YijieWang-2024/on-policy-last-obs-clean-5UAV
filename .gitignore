@@ -1,4 +1,5 @@
 __pycache__/
+.pytest_cache/
 *.py[cod]
 .idea/
 .vscode/
@@ -15,3 +16,4 @@ onpolicy/*.png
 onpolicy/*.pdf
 onpolicy/*.eps
 onpolicy/scripts/train/*-timestep*.png
+_launch_logs/
