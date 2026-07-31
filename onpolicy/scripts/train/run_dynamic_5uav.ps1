@@ -5,6 +5,7 @@ param(
     [long]$NumEnvSteps = 100000000,
     [int]$RolloutThreads = 64,
     [int]$CommunicationDistance = 260,
+    [int]$ConsensusRounds = 50,
     [string]$Python = 'python',
     [string]$ExperimentName = '',
     [switch]$CartesianFlight,
@@ -107,7 +108,8 @@ if ($Method -eq 'dcppo') {
         '--neighbor_distance', $CommunicationDistance,
         '--average_local_advantage_timely',
         '--average_local_advantage',
-        '--whether_local_add_direct_ave_adv'
+        '--whether_local_add_direct_ave_adv',
+        '--n_iterations', $ConsensusRounds
     )
 } elseif ($Method -eq 'mappo') {
     $arguments += @('--neighbor_distance', '1000')

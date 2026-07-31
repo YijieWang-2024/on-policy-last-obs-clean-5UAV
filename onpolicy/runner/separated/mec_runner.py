@@ -311,7 +311,9 @@ class MECRunner(Runner):
                 mean_advantage = np.mean(local_advantage, axis=0)
                 for agent_id in range(self.num_agents):
                     self.buffer[agent_id].advantages += mean_advantage
-                cluster_mean_advantage = self.compute_average_advantages_directed(self.uav_positions, local_advantage, self.neighbor_distance)
+                cluster_mean_advantage = self.run_consensus_algorithm(
+                    local_advantage, self.all_args.n_iterations
+                )
                 numerator = np.abs(cluster_mean_advantage - mean_advantage)
                 denominator = np.abs(local_advantage - mean_advantage)
                 noise_magnitude = np.divide(
@@ -635,43 +637,20 @@ class MECRunner(Runner):
         # self.normer.load(normer_path)
 
     def run_consensus_algorithm(self, local_observations, max_iterations):
-        """
-            Run the consensus algorithm to share local observations among UAVs.
-            Args:
-                positions: UAV positions with shape (n_rollout_threads, n_UAVs, 2)
-                local_observations: Local observations with shape (n_UAVs, episode_length, n_rollout_threads, 1)
-                neighbor_distance: Maximum distance for two UAVs to be neighbors
-                max_iterations: Maximum number of consensus iterations
-            Returns:
-                Updated observations after consensus with shape (n_UAVs, episode_length, n_rollout_threads, 1)
-            """
-        # 重新组织观测数据，使计算更直接
-        # 新形状: (n_rollout_threads, n_UAVs, episode_length, 1)
-        obs = np.transpose(local_observations, (2, 0, 1, 3))
-        # 初始化共识估计值
-        consensus_estimates = np.copy(obs)
+        """Run finite consensus on the rollout-ending Metropolis graph."""
+        estimates = np.transpose(local_observations, (2, 0, 1, 3))
+        estimate_shape = estimates.shape
+        estimates = estimates.reshape(self.n_rollout_threads, self.num_agents, -1)
+        weights = np.stack(
+            [self.buffer[i].Metropolis_weights[-1] for i in range(self.num_agents)],
+            axis=1,
+        ).astype(local_observations.dtype, copy=False)
 
-        weight_matrices = np.zeros((self.num_agents, self.n_rollout_threads, self.num_agents))
-        for agent_id in range(self.num_agents):
-            weight_matrices[agent_id] = self.buffer[agent_id].Metropolis_weights[-1]
-        weight_matrices = np.transpose(weight_matrices, (1,0,2))
+        for _ in range(max_iterations):
+            estimates = weights @ estimates
 
-        # Run consensus iterations
-        for iteration in range(max_iterations):
-            for env_idx in range(self.n_rollout_threads):
-                weights = weight_matrices[env_idx]  # (n_UAVs, n_UAVs)
-                # 使用矩阵乘法执行共识迭代
-                thread_estimates = consensus_estimates[env_idx]  # (n_UAVs, episode_length, 1)
-                # 使用矩阵乘法进行更新 (n_UAVs, n_UAVs) @ (n_UAVs, episode_length, 1)
-                # 重塑为2D进行矩阵乘法，然后恢复原始形状
-                reshaped_estimates = thread_estimates.reshape(self.num_agents, -1)  # (n_UAVs, episode_length*1)
-                updated_estimates = weights @ reshaped_estimates  # (n_UAVs, episode_length*1)
-                thread_estimates = updated_estimates.reshape(self.num_agents, self.episode_length, 1)
-                consensus_estimates[env_idx] = thread_estimates
-
-        # 转置回原始格式: (n_UAVs, episode_length, n_rollout_threads, 1)
-        result = np.transpose(consensus_estimates, (1, 2, 0, 3))
-        return result
+        estimates = estimates.reshape(estimate_shape)
+        return np.transpose(estimates, (1, 2, 0, 3))
 
     def compute_average_advantages_directed(self, uav_positions, local_advantages, neighbor_distance):
         """
