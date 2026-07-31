@@ -215,6 +215,21 @@ def parse_args(args, parser):
     parser.add_argument("--a2a_gamma_scale_ms", type=float, default=1.0)
     parser.add_argument("--state_payload_bits", type=float, default=8000.0)
     parser.add_argument("--state_deadline_ms", type=float, default=13.54)
+    parser.add_argument(
+        "--state_reconstruction", choices=("zero", "last_obs", "md_gru"),
+        default="zero",
+        help="Missing Type-S state handling in the main training process",
+    )
+    parser.add_argument(
+        "--critic_md_metadata", action="store_true", default=False,
+        help="Append record-valid, task-valid, and information-age features to critic MD slots",
+    )
+    parser.add_argument("--md_gru_hidden_dim", type=int, default=64)
+    parser.add_argument("--md_gru_lr", type=float, default=1e-3)
+    parser.add_argument("--md_gru_epochs", type=int, default=4)
+    parser.add_argument("--md_gru_batch_size", type=int, default=512)
+    parser.add_argument("--md_gru_max_samples", type=int, default=32768)
+    parser.add_argument("--md_prediction_loss_coef", type=float, default=0.1)
     parser.add_argument("--advantage_payload_bits", type=float, default=16000.0)
     parser.add_argument("--advantage_deadline_ms", type=float, default=21.54)
     parser.add_argument("--whether_average_network_parameters", action='store_true', default=False, help="If true, Execute the average of all network's parameters in the mec_runner.py")
@@ -236,6 +251,11 @@ def main(args):
     import torch
     parser = get_config()
     all_args = parse_args(args, parser)
+    if all_args.state_reconstruction != "zero" and all_args.share_policy:
+        raise ValueError(
+            "state reconstruction currently requires the separated runner; "
+            "pass --share_policy (this legacy flag selects separate policies)"
+        )
     assert all_args.use_valuenorm != all_args.ret_norm, 'torch中的valuenorm默认True和tf的retnorm默认False不能一起用'
 
     if all_args.algorithm_name == "rmappo":

@@ -4,15 +4,24 @@ param(
     [int]$Seed = 2,
     [long]$NumEnvSteps = 100000000,
     [int]$RolloutThreads = 64,
-    [int]$CommunicationDistance = 260,
+    [int]$CommunicationDistance = 0,
     [ValidateSet('reliable', 'unreliable')]
     [string]$CommunicationMode = 'reliable',
+    [ValidateSet('zero', 'last_obs', 'md_gru')]
+    [string]$StateReconstruction = 'zero',
+    [switch]$CriticMDMetadata,
     [int]$ConsensusRounds = 50,
     [int]$RunningSumRounds = 30,
     [double]$StatePayloadBits = 8000,
     [double]$StateDeadlineMs = 13.54,
     [double]$AdvantagePayloadBits = 16000,
     [double]$AdvantageDeadlineMs = 21.54,
+    [int]$MDGRUHiddenDim = 64,
+    [double]$MDGRULearningRate = 0.001,
+    [int]$MDGRUEpochs = 4,
+    [int]$MDGRUBatchSize = 512,
+    [int]$MDGRUMaxSamples = 32768,
+    [double]$MDPredictionLossCoef = 0.1,
     [string]$Python = 'python',
     [string]$ExperimentName = '',
     [switch]$CartesianFlight,
@@ -30,6 +39,14 @@ $env:OMP_NUM_THREADS = '1'
 $env:MKL_NUM_THREADS = '1'
 $env:OPENBLAS_NUM_THREADS = '1'
 $env:NUMEXPR_NUM_THREADS = '1'
+if ($CommunicationDistance -eq 0) {
+    $CommunicationDistance = if ($CommunicationMode -eq 'unreliable') { 520 } else { 260 }
+}
+if ($StateReconstruction -ne 'zero' -and (
+    $Method -ne 'dcppo' -or $CommunicationMode -ne 'unreliable'
+)) {
+    throw 'State reconstruction requires -Method dcppo -CommunicationMode unreliable.'
+}
 if (-not $ExperimentName) {
     $ExperimentName = "regional_dynamic_$Method"
 }
@@ -109,6 +126,9 @@ if ($CompletionPriorityUserSort) {
 if ($UAVResetCurriculum) {
     $arguments += '--uav_reset_curriculum'
 }
+if ($CriticMDMetadata) {
+    $arguments += '--critic_md_metadata'
+}
 
 if ($Method -eq 'dcppo') {
     $arguments += @(
@@ -126,8 +146,19 @@ if ($Method -eq 'dcppo') {
             '--state_payload_bits', $StatePayloadBits,
             '--state_deadline_ms', $StateDeadlineMs,
             '--advantage_payload_bits', $AdvantagePayloadBits,
-            '--advantage_deadline_ms', $AdvantageDeadlineMs
+            '--advantage_deadline_ms', $AdvantageDeadlineMs,
+            '--state_reconstruction', $StateReconstruction
         )
+        if ($StateReconstruction -eq 'md_gru') {
+            $arguments += @(
+                '--md_gru_hidden_dim', $MDGRUHiddenDim,
+                '--md_gru_lr', $MDGRULearningRate,
+                '--md_gru_epochs', $MDGRUEpochs,
+                '--md_gru_batch_size', $MDGRUBatchSize,
+                '--md_gru_max_samples', $MDGRUMaxSamples,
+                '--md_prediction_loss_coef', $MDPredictionLossCoef
+            )
+        }
     }
 } elseif ($Method -eq 'mappo') {
     $arguments += @('--neighbor_distance', '1000')

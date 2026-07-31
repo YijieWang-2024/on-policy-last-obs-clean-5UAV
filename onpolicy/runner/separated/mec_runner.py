@@ -10,6 +10,7 @@ from onpolicy.utils.unreliable_communication import (
     sample_configured_timely_receptions,
 )
 from onpolicy.utils.util import get_shape_from_obs_space
+from onpolicy.utils.md_state_reconstruction import MDStateReconstructor
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial.distance import cdist
 
@@ -19,14 +20,16 @@ def _t2n(x):
 class MECRunner(Runner):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
     def __init__(self, config):
+        config['all_args'].critic_md_metadata = bool(
+            getattr(config['all_args'], "critic_md_metadata", False)
+            or getattr(config['all_args'], "state_reconstruction", "zero") != "zero"
+        )
         super(MECRunner, self).__init__(config)
         self.normer = []
         self.n_UAVs = config['all_args'].n_UAVs
         for i in range(self.n_UAVs):
             self.normer.append(Normer(args=self.all_args, obs_space=get_shape_from_obs_space(self.envs.observation_space[i]), states_space=get_shape_from_obs_space(self.envs.share_observation_space[i])))
         # self.normer = Normer(args=self.all_args, obs_space=get_shape_from_obs_space(self.envs.observation_space[0]), states_space=get_shape_from_obs_space(self.envs.share_observation_space[0]))
-        if self.model_dir is not None:
-            self.restore()
         self.average_local_advantage = config['all_args'].average_local_advantage
         self.average_local_advantage_timely = config['all_args'].average_local_advantage_timely
         self.whether_local_add_ave_adadvantage = config['all_args'].whether_local_add_ave_adadvantage
@@ -42,6 +45,20 @@ class MECRunner(Runner):
         self.neighbor_distance = config['all_args'].neighbor_distance
         self.communication_mode = config['all_args'].communication_mode
         self.communication_rng = np.random.default_rng(config['all_args'].seed + 104729)
+        self.state_reconstruction = getattr(
+            config['all_args'], "state_reconstruction", "zero"
+        )
+        self.state_reconstructor = (
+            MDStateReconstructor(self.all_args, self.device)
+            if self.state_reconstruction != "zero" else None
+        )
+        self.md_prediction_infos = [
+            {"md_prediction_loss": 0.0, "md_prediction_samples": 0}
+            for _ in range(self.n_UAVs)
+        ]
+        self.current_type_s_data = None
+        if self.model_dir is not None:
+            self.restore()
         # 测评、记录效果的。 把训练的注释掉，这个打开。
         self.system_gain = np.zeros(15)
         # self.local_advantages = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
@@ -71,6 +88,12 @@ class MECRunner(Runner):
 
                 # Obser reward and next obs
                 obs, share_obs, rewards, dones, infos, available_actions, Metropolis_weights, attention_active_mask = self.envs.step(actions)
+                if self.state_reconstructor is not None:
+                    self.current_type_s_data = self.envs.get_type_s_data()
+                    share_obs, attention_active_mask = self.state_reconstructor.reconstruct(
+                        self.current_type_s_data,
+                        reset_environments=np.all(dones, axis=1),
+                    )
                 normalize_batch(self.normer, obs, share_obs, rewards, dones)
                 # obs = self.normer._obfilt(obs)
                 # share_obs = self.normer._statefilt(share_obs)
@@ -104,6 +127,30 @@ class MECRunner(Runner):
 
             # compute return and update network
             self.compute()
+            if self.state_reconstruction == "md_gru":
+                if not np.all(np.all(dones, axis=1)):
+                    raise RuntimeError(
+                        "MD-GRU updates require rollout and episode boundaries to align"
+                    )
+                self.md_prediction_infos = self.state_reconstructor.train_predictors()
+                # The auto-reset state starts the next episode. Reinitialize its
+                # hidden states with the just-updated predictor parameters.
+                self.state_reconstructor.reset()
+                refreshed_share_obs, refreshed_attention = self.state_reconstructor.reconstruct(
+                    self.current_type_s_data,
+                    reset_environments=np.ones(self.n_rollout_threads, dtype=bool),
+                    collect_samples=False,
+                )
+                refreshed_share_obs = self._normalize_reconstructed_states(
+                    refreshed_share_obs
+                )
+                for agent_id in range(self.num_agents):
+                    self.buffer[agent_id].share_obs[-1] = (
+                        refreshed_share_obs[:, agent_id]
+                    )
+                    self.buffer[agent_id].attention_active_mask[-1] = (
+                        refreshed_attention[:, agent_id]
+                    )
             train_infos = self.train()
 
             if self.whether_average_network_parameters and (episode % self.average_network_parameters_interval == 0):
@@ -193,6 +240,13 @@ class MECRunner(Runner):
     def warmup(self):
         # reset env
         obs, share_obs, available_actions, Metropolis_weights, attention_active_mask = self.envs.reset()
+        if self.state_reconstructor is not None:
+            self.current_type_s_data = self.envs.get_type_s_data()
+            share_obs, attention_active_mask = self.state_reconstructor.reconstruct(
+                self.current_type_s_data,
+                reset_environments=np.ones(self.n_rollout_threads, dtype=bool),
+                collect_samples=False,
+            )
         normalize_batch(self.normer, obs, share_obs)
         # obs = self.normer._obfilt(obs)
         # share_obs = self.normer._statefilt(share_obs)
@@ -207,6 +261,24 @@ class MECRunner(Runner):
             self.buffer[agent_id].available_actions[0] = available_actions[:, agent_id].copy()
             self.buffer[agent_id].Metropolis_weights[0] = Metropolis_weights[:, agent_id].copy()
             self.buffer[agent_id].attention_active_mask[0] = attention_active_mask[:, agent_id].copy()
+
+    def _normalize_reconstructed_states(self, states):
+        """Apply frozen running statistics after an MD-GRU parameter update."""
+        states = states.copy()
+        for agent_id, normer in enumerate(self.normer):
+            state_rms = getattr(normer, "state_rms", None)
+            if state_rms is None:
+                continue
+            start = normer.not_norm
+            states[:, agent_id, start:] = np.clip(
+                (
+                    states[:, agent_id, start:]
+                    - state_rms.mean[start:]
+                ) / np.sqrt(state_rms.var[start:] + normer.epsilon),
+                -normer.clipob,
+                normer.clipob,
+            )
+        return states
 
     @torch.no_grad()
     def collect(self, step):
@@ -457,6 +529,8 @@ class MECRunner(Runner):
                 train_info["flight_std_x"] = float(flight_std[0])
                 train_info["flight_std_y"] = float(flight_std[1])
             train_info.update(communication_metrics)
+            if self.state_reconstruction == "md_gru":
+                train_info.update(self.md_prediction_infos[agent_id])
             train_infos.append(train_info)
             self.buffer[agent_id].after_update()
 
@@ -627,6 +701,14 @@ class MECRunner(Runner):
             # 保存 normer 对象
             normer_path = str(self.save_dir) + "/normer"+ str(agent_id) +".pkl"
             self.normer[agent_id].save(normer_path)
+        if self.state_reconstruction == "md_gru":
+            torch.save(
+                {
+                    "model": self.state_reconstructor.predictor.state_dict(),
+                    "optimizer": self.state_reconstructor.optimizer.state_dict(),
+                },
+                str(self.save_dir) + "/md_gru_shared.pt",
+            )
         # if episode % 100 == 0:
         #     for agent_id in range(self.num_agents):
         #         policy_actor = self.trainer[agent_id].policy.actor
@@ -649,6 +731,16 @@ class MECRunner(Runner):
             # 恢复 normer 对象
             normer_path = str(self.model_dir) + "/normer"+ str(agent_id) +".pkl"
             self.normer[agent_id].load(normer_path)
+        if self.state_reconstruction == "md_gru":
+            predictor_path = str(self.model_dir) + '/md_gru_shared.pt'
+            checkpoint = torch.load(predictor_path, map_location=self.device)
+            if "model" in checkpoint:
+                self.state_reconstructor.predictor.load_state_dict(checkpoint["model"])
+                self.state_reconstructor.optimizer.load_state_dict(
+                    checkpoint["optimizer"]
+                )
+            else:
+                self.state_reconstructor.predictor.load_state_dict(checkpoint)
         # # 恢复 normer 对象
         # normer_path = str(self.model_dir) + "/normer.pkl"
         # self.normer.load(normer_path)

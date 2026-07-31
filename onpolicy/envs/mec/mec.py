@@ -280,6 +280,15 @@ class MEC(gym.Env):
             assert 1 <= self.max_GUs_in_range <= self.n_GUs, \
                 "dynamic_md requires 1 <= max_GUs_in_range <= n_GUs."
         self.gu_obs_features = 10 if self.dynamic_md else 9
+        # Structured Type-S payload: sender header, UAV position, optional
+        # timestep, visible-record count, and K identity-carrying MD records.
+        # The sender ID is a packet header field rather than a GRU/critic input.
+        self.type_s_schema_bits = (
+            int(np.ceil(np.log2(self.n_UAVs)))
+            + 32 * (2 + int(self.ob_state_with_timestep))
+            + int(np.ceil(np.log2(self.n_GUs + 1)))
+            + self.max_GUs_in_range * (64 + 32 * self.gu_obs_features + 1)
+        )
         self.max_UAVs_in_neighbor = args.max_UAVs_in_neighbor  # 只用到自己的观测s_{i,t}中的其他无人机数目。无人机的邻居范围内距离由近到远，保留信息的最大无人机数目。
         self.neighbor_distance = args.neighbor_distance  # 无人机之间定义为通信的k跳的距离。 之前为d_cov*2=240。我的last-obs设为覆盖范围内的无人机数目。因此设置为120
         self.neighbor_R = args.neighbor_R  # 无人机之间定义为1跳的距离。240+20米。用来告诉无人机其一跳范围内的无人机，感知到的无人机位置共享
@@ -289,6 +298,22 @@ class MEC(gym.Env):
         self.all_uav_k_hops = args.all_uav_k_hops   # 如果这个为True，就是k跳邻居的状态不再是由近到远排列。直接按所有id排列，邻居的信息补进去。
         self.use_atten_actor = args.use_atten_actor
         self.communication_mode = args.communication_mode
+        self.state_reconstruction = getattr(args, "state_reconstruction", "zero")
+        if self.state_reconstruction not in {"zero", "last_obs", "md_gru"}:
+            raise ValueError("state_reconstruction must be zero, last_obs, or md_gru")
+        if self.state_reconstruction != "zero":
+            assert self.communication_mode == "unreliable" and self.dynamic_md, \
+                "state reconstruction requires unreliable communication and dynamic MDs"
+        self.critic_md_metadata = (
+            getattr(args, "critic_md_metadata", False)
+            or self.state_reconstruction != "zero"
+        )
+        self.critic_md_metadata_features = 3 if self.critic_md_metadata else 0
+        if self.communication_mode == "unreliable":
+            assert args.state_payload_bits >= self.type_s_schema_bits, (
+                f"state_payload_bits={args.state_payload_bits} is smaller than the "
+                f"Type-S schema budget {self.type_s_schema_bits} bits"
+            )
         self.communication_rng = np.random.default_rng(args.seed + 209759)
         self.last_state_reception_mask = np.ones(
             (self.n_UAVs, self.n_UAVs), dtype=bool
@@ -461,7 +486,11 @@ class MEC(gym.Env):
 
         # One-hop UAV positions are actor-only. Keep the critic state identical
         # to the no-neighbor baseline so B0/B1 differ in one factor only.
-        self.critic_local_state_dim = self.obs_dim - self.actor_neighbor_obs_dim
+        self.critic_local_state_dim = (
+            self.obs_dim
+            - self.actor_neighbor_obs_dim
+            + self.critic_md_metadata_features * self.max_GUs_in_range
+        )
         if self.perform_with_local_state or self.state_is_k_hops:
             self.state_dim = self.critic_local_state_dim
         else:
@@ -2744,19 +2773,123 @@ class MEC(gym.Env):
 
         return weights_matrix
 
-    def get_critic_local_obs(self, actor_obs):
-        """Remove the actor-only one-hop UAV block from local observations."""
-        if not self.actor_neighbor_obs:
-            return actor_obs
+    def _build_type_s_packet(self):
+        """Build the sender-level fixed-capacity records used by state and Type-S."""
+        records = np.zeros(
+            (self.n_UAVs, self.max_GUs_in_range, self.gu_obs_features),
+            dtype=np.float64,
+        )
+        session_ids = np.full(
+            (self.n_UAVs, self.max_GUs_in_range), -1, dtype=np.int64
+        )
+        record_valid = np.zeros(
+            (self.n_UAVs, self.max_GUs_in_range), dtype=bool
+        )
+        visible_count = np.zeros(self.n_UAVs, dtype=np.int32)
         prefix_dim = (
+            int(self.ob_state_with_timestep)
+            + (self.n_UAVs if self.ob_state_with_id else 0)
+            + 3
+        )
+        critic_prefix = np.zeros((self.n_UAVs, prefix_dim), dtype=np.float64)
+
+        for sender in range(self.n_UAVs):
+            count = int(np.sum(self.nearby_gus_of_uavs[sender] != -1))
+            visible_count[sender] = count
+            gu_ids = self.nearby_gus_of_uavs[
+                sender, :min(count, self.max_GUs_in_range)
+            ].astype(np.int64, copy=False)
+            for slot, gu_id in enumerate(gu_ids):
+                records[sender, slot, :2] = self.gu_positions[gu_id, :2]
+                if self.dynamic_md:
+                    records[sender, slot, 2:6] = (
+                        self.gu_velocities[gu_id],
+                        self.gu_directions[gu_id],
+                        self.gu_directions_0[gu_id],
+                        self.md_remaining_lifetime[gu_id],
+                    )
+                    records[sender, slot, 6] = self.channel_gains[sender, gu_id]
+                    records[sender, slot, 7:10] = self.gu_tasks[gu_id]
+                    session_ids[sender, slot] = self.md_session_ids[gu_id]
+                else:
+                    records[sender, slot, 2] = self.gu_directions[gu_id]
+                    records[sender, slot, 3] = self.channel_gains[sender, gu_id]
+                    records[sender, slot, 4:7] = self.gu_tasks[gu_id]
+                    records[sender, slot, 7] = gu_id
+                    records[sender, slot, 8] = (
+                        self.gu_tasks[gu_id, 1] / self.F_n
+                        > self.gu_tasks[gu_id, 2]
+                    )
+                    session_ids[sender, slot] = gu_id
+                record_valid[sender, slot] = True
+
+            cursor = 0
+            if self.ob_state_with_timestep:
+                critic_prefix[sender, cursor] = self.time_step
+                cursor += 1
+            if self.ob_state_with_id:
+                critic_prefix[sender, cursor + sender] = 1
+                cursor += self.n_UAVs
+            critic_prefix[sender, cursor:cursor + 2] = self.uav_positions[sender, :2]
+            critic_prefix[sender, cursor + 2] = count
+
+        self.current_type_s_packet = {
+            "sender_ids": np.arange(self.n_UAVs, dtype=np.int32),
+            "critic_prefix": critic_prefix,
+            "record_features": records,
+            "session_ids": session_ids,
+            "record_valid": record_valid,
+            "visible_count": visible_count,
+        }
+        return self.current_type_s_packet
+
+    def get_critic_local_obs(self, actor_obs):
+        """Project actor observations to the canonical critic-facing UAV blocks."""
+        actor_prefix_dim = (
             int(self.ob_state_with_timestep)
             + (self.n_UAVs if self.ob_state_with_id else 0)
             + 2
         )
-        neighbor_end = prefix_dim + self.actor_neighbor_obs_dim
+        if self.actor_neighbor_obs:
+            neighbor_end = actor_prefix_dim + self.actor_neighbor_obs_dim
+            critic_obs = np.concatenate(
+                (actor_obs[:, :actor_prefix_dim], actor_obs[:, neighbor_end:]),
+                axis=-1,
+            )
+        else:
+            critic_obs = actor_obs
+
+        if not hasattr(self, "current_type_s_packet"):
+            self._build_type_s_packet()
+        critic_prefix_dim = actor_prefix_dim + 1
+        self.current_type_s_packet["critic_prefix"] = critic_obs[
+            :, :critic_prefix_dim
+        ].copy()
+
+        if not self.critic_md_metadata:
+            return critic_obs
+        valid = self.current_type_s_packet["record_valid"].astype(np.float64)
+        metadata = np.stack((valid, valid, np.zeros_like(valid)), axis=-1)
         return np.concatenate(
-            (actor_obs[:, :prefix_dim], actor_obs[:, neighbor_end:]), axis=-1
+            (critic_obs, metadata.reshape(self.n_UAVs, -1)), axis=-1
         )
+
+    def get_type_s_data(self):
+        """Return a copy of the current structured Type-S data-plane state."""
+        packet = self.current_type_s_packet
+        geometric_mask = self.uav_uav_distances_2d <= self.neighbor_distance
+        np.fill_diagonal(geometric_mask, True)
+        return {
+            "sender_ids": packet["sender_ids"].copy(),
+            "critic_prefix": packet["critic_prefix"].copy(),
+            "record_features": packet["record_features"].copy(),
+            "session_ids": packet["session_ids"].copy(),
+            "record_valid": packet["record_valid"].copy(),
+            "visible_count": packet["visible_count"].copy(),
+            "reception_mask": self.last_state_reception_mask.copy(),
+            "geometric_mask": geometric_mask,
+            "payload_schema_bits": np.asarray(self.type_s_schema_bits, dtype=np.int32),
+        }
 
     def get_local_obs(self):
         """
@@ -2784,6 +2917,7 @@ class MEC(gym.Env):
             obs_dim = self.obs_dim
 
         local_obs = np.zeros((self.n_UAVs, obs_dim))
+        type_s_packet = self._build_type_s_packet()
 
         idx = 0
         if self.ob_state_with_id:
@@ -2842,43 +2976,16 @@ class MEC(gym.Env):
             # padding_neighbors = self.max_UAVs_in_neighbor - min(neighbor_count, self.max_UAVs_in_neighbor)
             # idx += padding_neighbors * 2
 
-            in_range_count = np.sum(self.nearby_gus_of_uavs[i] != -1)
-            in_range_indices = self.nearby_gus_of_uavs[i, :in_range_count]
+            in_range_count = type_s_packet["visible_count"][i]
             # 7. Number of GUs within coverage
             local_obs[i, idx] = in_range_count
             idx += 1
-            # 8. Sort GUs by distance and take closest max_GUs_in_range
-            if in_range_count > 0:
-                closest_gus = in_range_indices[:self.max_GUs_in_range]
-                for j, gu_idx in enumerate(closest_gus):
-                    if j < self.max_GUs_in_range:
-                        local_obs[i, idx:idx + 2] = self.gu_positions[gu_idx, :2]
-                        idx += 2
-                        if self.dynamic_md:
-                            local_obs[i, idx:idx + 4] = np.array([
-                                self.gu_velocities[gu_idx],
-                                self.gu_directions[gu_idx],
-                                self.gu_directions_0[gu_idx],
-                                self.md_remaining_lifetime[gu_idx],
-                            ])
-                            idx += 4
-                            local_obs[i, idx] = self.channel_gains[i, gu_idx]
-                            idx += 1
-                            local_obs[i, idx:idx + 3] = self.gu_tasks[gu_idx]
-                            idx += 3
-                        else:
-                            local_obs[i, idx] = self.gu_directions[gu_idx]
-                            idx += 1
-                            local_obs[i, idx] = self.channel_gains[i, gu_idx]
-                            idx += 1
-                            local_obs[i, idx:idx + 3] = self.gu_tasks[gu_idx]
-                            idx += 3
-                            local_obs[i, idx] = gu_idx
-                            idx += 1
-                            local_obs[i, idx] = (
-                                0 if self.gu_tasks[gu_idx, 2] > self.gu_tasks[gu_idx, 1] / self.F_n else 1
-                            )
-                            idx += 1
+            # 8. The actor and Type-S packet consume the same ordered K records.
+            record_dim = self.gu_obs_features * self.max_GUs_in_range
+            local_obs[i, idx:idx + record_dim] = type_s_packet[
+                "record_features"
+            ][i].reshape(-1)
+            idx += record_dim
             # Reset idx for next UAV's observations
             idx = 0
         return local_obs
@@ -3024,7 +3131,14 @@ class MEC(gym.Env):
             for i in range(self.n_UAVs):
                 in_range_indices = np.flatnonzero(coverage_mask[i])
                 if len(in_range_indices):
-                    order = np.argsort(uav_gu_distances[i, in_range_indices])
+                    stable_ids = (
+                        self.md_session_ids[in_range_indices]
+                        if self.dynamic_md else in_range_indices
+                    )
+                    order = np.lexsort((
+                        stable_ids,
+                        uav_gu_distances[i, in_range_indices],
+                    ))
                     nearby_users_sorted[i, :len(in_range_indices)] = in_range_indices[order]
             return nearby_users_sorted
 
@@ -3034,13 +3148,29 @@ class MEC(gym.Env):
             cannot_finish__in_range_mask = coverage_mask[i] & (~can_finish)
             cannot_finish__in_range_indices = np.where(cannot_finish__in_range_mask)[0]
             if len(cannot_finish__in_range_indices) != 0:
-                cannot_finish__sorted_indices = cannot_finish__in_range_indices[np.argsort(uav_gu_distances[i][cannot_finish__in_range_indices])]
+                stable_ids = (
+                    self.md_session_ids[cannot_finish__in_range_indices]
+                    if self.dynamic_md else cannot_finish__in_range_indices
+                )
+                order = np.lexsort((
+                    stable_ids,
+                    uav_gu_distances[i, cannot_finish__in_range_indices],
+                ))
+                cannot_finish__sorted_indices = cannot_finish__in_range_indices[order]
                 # Fill in the sorted user IDs for this UAV (up to the number of users in range)
                 nearby_users_sorted[i, :len(cannot_finish__in_range_indices)] = cannot_finish__sorted_indices
             can_finish__in_range_mask = coverage_mask[i] & can_finish
             can_finish__in_range_indices = np.where(can_finish__in_range_mask)[0]
             if len(can_finish__in_range_indices) != 0:
-                can_finish__sorted_indices = can_finish__in_range_indices[np.argsort(uav_gu_distances[i][can_finish__in_range_indices])]
+                stable_ids = (
+                    self.md_session_ids[can_finish__in_range_indices]
+                    if self.dynamic_md else can_finish__in_range_indices
+                )
+                order = np.lexsort((
+                    stable_ids,
+                    uav_gu_distances[i, can_finish__in_range_indices],
+                ))
+                can_finish__sorted_indices = can_finish__in_range_indices[order]
                 # Fill in the sorted user IDs for this UAV (up to the number of users in range)
                 nearby_users_sorted[i, len(cannot_finish__in_range_indices):len(cannot_finish__in_range_indices)+len(can_finish__in_range_indices)] \
                     = can_finish__sorted_indices
