@@ -1,6 +1,30 @@
 import numpy as np
 
 
+def sample_configured_timely_receptions(
+    positions, rounds, rng, args, *, payload_bits, deadline_ms
+):
+    """Sample packet receptions using the A2A parameters in training args."""
+    return sample_timely_receptions(
+        positions,
+        rounds,
+        rng,
+        transmit_power_w=args.a2a_transmit_power_w,
+        bandwidth_hz=args.a2a_bandwidth_hz,
+        reference_gain_db=args.a2a_reference_gain_db,
+        reference_distance_m=args.a2a_reference_distance_m,
+        path_loss_exponent=args.a2a_path_loss_exponent,
+        rician_k_db=args.a2a_rician_k_db,
+        noise_psd_dbm_hz=args.a2a_noise_psd_dbm_hz,
+        spectral_efficiency=args.a2a_spectral_efficiency,
+        decoding_threshold_db=args.a2a_decoding_threshold_db,
+        gamma_shape=args.a2a_gamma_shape,
+        gamma_scale_ms=args.a2a_gamma_scale_ms,
+        payload_bits=payload_bits,
+        deadline_ms=deadline_ms,
+    )
+
+
 def sample_timely_receptions(
     positions,
     rounds,

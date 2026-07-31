@@ -18,6 +18,9 @@ except ImportError:
     Point = Polygon = unary_union = None
 import warnings
 from matplotlib.patches import Circle
+from onpolicy.utils.unreliable_communication import (
+    sample_configured_timely_receptions,
+)
 
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
@@ -285,6 +288,16 @@ class MEC(gym.Env):
         self.state_is_k_hops = args.state_is_k_hops
         self.all_uav_k_hops = args.all_uav_k_hops   # 如果这个为True，就是k跳邻居的状态不再是由近到远排列。直接按所有id排列，邻居的信息补进去。
         self.use_atten_actor = args.use_atten_actor
+        self.communication_mode = args.communication_mode
+        self.communication_rng = np.random.default_rng(args.seed + 209759)
+        self.last_state_reception_mask = np.ones(
+            (self.n_UAVs, self.n_UAVs), dtype=bool
+        )
+        if self.communication_mode == "unreliable":
+            assert self.state_is_k_hops and self.all_uav_k_hops, \
+                "unreliable type-S communication requires ID-aligned k-hop critic states"
+            assert not self.use_atten_actor, \
+                "unreliable type-S communication changes only the training critic state"
         self.cartesian_flight = getattr(args, "cartesian_flight", False)
         self.actor_neighbor_obs = getattr(args, "actor_neighbor_obs", False)
         self.actor_neighbor_obs_dim = 3 * (self.n_UAVs - 1) if self.actor_neighbor_obs else 0
@@ -721,6 +734,8 @@ class MEC(gym.Env):
     def seed(self, seed=None):
         random.seed(seed)
         np.random.seed(seed)
+        communication_seed = None if seed is None else seed + 209759
+        self.communication_rng = np.random.default_rng(communication_seed)
 
     def _curriculum_random_reset_probability(self):
         """Anneal target-free random starts to the fixed task reset by 50%."""
@@ -1058,63 +1073,15 @@ class MEC(gym.Env):
         # 预计算信道增益
         self._calculate_channel_gains()
 
-        # 在state_k_hops中，带自己的s_{i,t}，总共有max_UAVs_obs_concat个信息。 如果是全局拼接state的话，也不需要mask了。正好。
-        self.attention_active_mask = np.zeros((self.n_UAVs, self.max_UAVs_obs_concat), dtype=np.float32)
+        self.state_packets_received = 0
+        self.state_packets_attempted = 0
         local_obs = self.get_local_obs()
         critic_local_obs = self.get_critic_local_obs(local_obs)
         # # 自己的obs直接就不变了。
         self.obs = local_obs
-
-        if self.perform_with_local_state:
-            self.state = critic_local_obs
-        elif self.state_is_k_hops:
-            single_state_dim = self.state_dim // self.max_UAVs_obs_concat
-            final_state = np.zeros((self.n_UAVs, self.state_dim))
-            if self.all_uav_k_hops:
-                pri = np.ones((self.n_UAVs, self.n_UAVs), dtype=np.int8)
-                pri[np.arange(self.n_UAVs), np.arange(self.n_UAVs)] = 0
-                perm_indices = np.argsort(pri, axis=1)  # shape (n, n)
-                # 创建邻居掩码
-                neighbor_mask = self.uav_uav_distances_2d <= self.neighbor_distance
-
-                # 使用矩阵操作填充状态
-                for i in range(self.n_UAVs):
-                    neighbors = np.where(neighbor_mask[i])[0]
-                    neighbor_idx_flat = neighbors.reshape(-1, 1) * single_state_dim + np.arange(single_state_dim)
-
-                    # 展平索引使用高级索引
-                    final_state[i].reshape(-1)[neighbor_idx_flat.flatten()] = critic_local_obs[neighbors].flatten()
-                    self.attention_active_mask[i, neighbors] = 1
-
-                # 重新排序
-                self.attention_active_mask = np.take_along_axis(self.attention_active_mask, perm_indices, axis=1)
-
-                # 重新排序状态
-                final_state3d = final_state.reshape(self.n_UAVs, self.n_UAVs, single_state_dim)
-                reordered3d = np.take_along_axis(final_state3d, perm_indices[..., None], axis=1)
-                final_state = reordered3d.reshape(self.n_UAVs, self.n_UAVs * single_state_dim)
-            else:
-                final_state[:, :single_state_dim] = critic_local_obs
-                for i in range(self.n_UAVs):
-                    neighbor_mask = (self.uav_uav_distances_2d[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
-                    neighbors = np.where(neighbor_mask)[0]
-                    if len(neighbors) > 0:
-                        sorted_neighbors = neighbors[np.argsort(self.uav_uav_distances_2d[i, neighbors])]
-                        closest = sorted_neighbors[:self.max_UAVs_obs_concat - 1]
-                        for j, neighbor_idx in enumerate(closest):
-                            start_pos = (j + 1) * single_state_dim
-                            end_pos = (j + 2) * single_state_dim
-                            final_state[i, start_pos:end_pos] = critic_local_obs[neighbor_idx]
-                    self.attention_active_mask[i, :min(len(neighbors)+1, self.max_UAVs_obs_concat)] = 1
-            self.state = final_state
-            if self.use_atten_actor:
-                # 0803，obs和state一样。CTCE。
-                self.obs = final_state
-        else:
-            # self.state = self.get_state()
-            # self.state = np.tile(local_obs.reshape((1, -1)), (self.n_UAVs, 1))
-            self.state = np.concatenate((critic_local_obs, np.tile(critic_local_obs.reshape((1, -1)), (self.n_UAVs, 1))), axis=-1)
-            # self.state = np.concatenate((local_obs, self.get_state()), axis=-1)
+        self.state = self._build_critic_state(critic_local_obs)
+        if self.use_atten_actor and self.state_is_k_hops:
+            self.obs = self.state
 
         self.avail_actions = self.get_local_avail_actions()
 
@@ -1157,6 +1124,91 @@ class MEC(gym.Env):
         #         # # # # # # self.render(timestep=self.time_step, title='28')  # 28是只有飞行动作，不能用上边的带process_actions的画图。后边也没用了，只跑了这一个，而且似乎有问题。
         #         time.sleep(0.05)
         return self.obs, self.state, self.avail_actions, self.Metropolis_weights, self.attention_active_mask
+
+    def _sample_state_reception_mask(self):
+        """Return type-S availability with axes (receiver, sender)."""
+        if self.communication_mode == "reliable":
+            return np.ones((self.n_UAVs, self.n_UAVs), dtype=bool)
+
+        receptions = sample_configured_timely_receptions(
+            self.uav_positions[None, ...],
+            1,
+            self.communication_rng,
+            self.args,
+            payload_bits=self.args.state_payload_bits,
+            deadline_ms=self.args.state_deadline_ms,
+        )[0, 0].T
+        off_diagonal = ~np.eye(self.n_UAVs, dtype=bool)
+        self.state_packets_received += int(np.sum(receptions[off_diagonal]))
+        self.state_packets_attempted += int(np.sum(off_diagonal))
+        np.fill_diagonal(receptions, True)
+        return receptions
+
+    def _build_critic_state(self, critic_local_obs):
+        """Construct the critic state from geometric scope and packet reception."""
+        self.attention_active_mask = np.zeros(
+            (self.n_UAVs, self.max_UAVs_obs_concat), dtype=np.float32
+        )
+        if self.perform_with_local_state:
+            return critic_local_obs
+        if not self.state_is_k_hops:
+            return np.concatenate(
+                (
+                    critic_local_obs,
+                    np.tile(critic_local_obs.reshape((1, -1)), (self.n_UAVs, 1)),
+                ),
+                axis=-1,
+            )
+
+        single_state_dim = self.state_dim // self.max_UAVs_obs_concat
+        final_state = np.zeros((self.n_UAVs, self.state_dim))
+        self.last_state_reception_mask = self._sample_state_reception_mask()
+
+        if self.all_uav_k_hops:
+            available = self.uav_uav_distances_2d <= self.neighbor_distance
+            available &= self.last_state_reception_mask
+            np.fill_diagonal(available, True)
+
+            sender_order = np.empty((self.n_UAVs, self.n_UAVs), dtype=np.int64)
+            all_uavs = np.arange(self.n_UAVs)
+            for receiver in range(self.n_UAVs):
+                sender_order[receiver] = np.concatenate(
+                    ([receiver], all_uavs[all_uavs != receiver])
+                )
+
+            state_by_sender = np.broadcast_to(
+                critic_local_obs[None, ...],
+                (self.n_UAVs, self.n_UAVs, single_state_dim),
+            ).copy()
+            state_by_sender[~available] = 0
+            ordered_state = np.take_along_axis(
+                state_by_sender, sender_order[..., None], axis=1
+            )
+            final_state = ordered_state.reshape(self.n_UAVs, self.state_dim)
+            self.attention_active_mask = np.take_along_axis(
+                available, sender_order, axis=1
+            ).astype(np.float32)
+            return final_state
+
+        final_state[:, :single_state_dim] = critic_local_obs
+        self.attention_active_mask[:, 0] = 1
+        for receiver in range(self.n_UAVs):
+            neighbor_mask = (
+                (self.uav_uav_distances_2d[receiver] <= self.neighbor_distance)
+                & self.last_state_reception_mask[receiver]
+                & (np.arange(self.n_UAVs) != receiver)
+            )
+            neighbors = np.where(neighbor_mask)[0]
+            closest = neighbors[
+                np.argsort(self.uav_uav_distances_2d[receiver, neighbors])
+            ][: self.max_UAVs_obs_concat - 1]
+            for slot, sender in enumerate(closest, start=1):
+                start = slot * single_state_dim
+                final_state[receiver, start:start + single_state_dim] = (
+                    critic_local_obs[sender]
+                )
+            self.attention_active_mask[receiver, 1:len(closest) + 1] = 1
+        return final_state
 
     def _update_distance_matrices(self):
         """更新距离矩阵"""
@@ -1783,62 +1835,13 @@ class MEC(gym.Env):
         self._calculate_channel_gains()
         self.nearby_gus_of_uavs = self.get_nearby_users_sorted_all()
 
-        self.attention_active_mask = np.zeros((self.n_UAVs, self.max_UAVs_obs_concat), dtype=np.float32)
         local_obs = self.get_local_obs()
         critic_local_obs = self.get_critic_local_obs(local_obs)
         # # 自己的obs直接就不变了。
         self.obs = local_obs
-
-        if self.perform_with_local_state:
-            self.state = critic_local_obs
-        elif self.state_is_k_hops:
-            single_state_dim = self.state_dim // self.max_UAVs_obs_concat
-            final_state = np.zeros((self.n_UAVs, self.state_dim))
-            if self.all_uav_k_hops:
-                pri = np.ones((self.n_UAVs, self.n_UAVs), dtype=np.int8)
-                pri[np.arange(self.n_UAVs), np.arange(self.n_UAVs)] = 0
-                perm_indices = np.argsort(pri, axis=1)  # shape (n, n)
-                # 创建邻居掩码
-                neighbor_mask = self.uav_uav_distances_2d <= self.neighbor_distance
-
-                # 使用矩阵操作填充状态
-                for i in range(self.n_UAVs):
-                    neighbors = np.where(neighbor_mask[i])[0]
-                    neighbor_idx_flat = neighbors.reshape(-1, 1) * single_state_dim + np.arange(single_state_dim)
-
-                    # 展平索引使用高级索引
-                    final_state[i].reshape(-1)[neighbor_idx_flat.flatten()] = critic_local_obs[neighbors].flatten()
-                    self.attention_active_mask[i, neighbors] = 1
-
-                # 重新排序
-                self.attention_active_mask = np.take_along_axis(self.attention_active_mask, perm_indices, axis=1)
-
-                # 重新排序状态
-                final_state3d = final_state.reshape(self.n_UAVs, self.n_UAVs, single_state_dim)
-                reordered3d = np.take_along_axis(final_state3d, perm_indices[..., None], axis=1)
-                final_state = reordered3d.reshape(self.n_UAVs, self.n_UAVs * single_state_dim)
-            else:
-                final_state[:, :single_state_dim] = critic_local_obs
-                for i in range(self.n_UAVs):
-                    neighbor_mask = (self.uav_uav_distances_2d[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
-                    neighbors = np.where(neighbor_mask)[0]
-                    if len(neighbors) > 0:
-                        sorted_neighbors = neighbors[np.argsort(self.uav_uav_distances_2d[i, neighbors])]
-                        closest = sorted_neighbors[:self.max_UAVs_obs_concat - 1]
-                        for j, neighbor_idx in enumerate(closest):
-                            start_pos = (j + 1) * single_state_dim
-                            end_pos = (j + 2) * single_state_dim
-                            final_state[i, start_pos:end_pos] = critic_local_obs[neighbor_idx]
-                    self.attention_active_mask[i, :min(len(neighbors)+1, self.max_UAVs_obs_concat)] = 1
-            self.state = final_state
-            if self.use_atten_actor:
-                # 0803，obs和state一样。CTCE。
-                self.obs = final_state
-        else:
-            # self.state = self.get_state()
-            # self.state = np.tile(local_obs.reshape((1, -1)), (self.n_UAVs, 1))
-            self.state = np.concatenate((critic_local_obs, np.tile(critic_local_obs.reshape((1, -1)), (self.n_UAVs, 1))), axis=-1)
-            # self.state = np.concatenate((local_obs, self.get_state()), axis=-1)
+        self.state = self._build_critic_state(critic_local_obs)
+        if self.use_atten_actor and self.state_is_k_hops:
+            self.obs = self.state
 
         self.avail_actions = self.get_local_avail_actions()
 
@@ -1908,6 +1911,10 @@ class MEC(gym.Env):
                      'complete_task_ratio':self.complete_task_ratio/self.MAX_SIMULATION_TIME,
                      'uav_positions': self.uav_positions[:, :2],
                      }
+            if self.communication_mode == "unreliable":
+                info['state_timely_reception_rate'] = (
+                    self.state_packets_received / max(self.state_packets_attempted, 1)
+                )
             if self.dynamic_md:
                 info.update({
                     'candidate_md_arrivals': self.dynamic_md_candidates,

@@ -7,7 +7,7 @@ from onpolicy.envs.mec.vec_normalize import Normer, normalize_batch
 from onpolicy.utils.unreliable_communication import (
     relative_estimation_error,
     running_sum_ratio_consensus,
-    sample_timely_receptions,
+    sample_configured_timely_receptions,
 )
 from onpolicy.utils.util import get_shape_from_obs_space
 from scipy.sparse.csgraph import connected_components
@@ -161,6 +161,7 @@ class MECRunner(Runner):
                             'flight_disk_projection_ratio',
                             'curriculum_random_reset',
                             'curriculum_random_probability',
+                            'state_timely_reception_rate',
                         ):
                             if metric in infos[0]:
                                 train_infos[agent_id][metric] = np.mean(
@@ -670,21 +671,11 @@ class MECRunner(Runner):
 
     def run_unreliable_consensus(self, local_advantages):
         """Run post-rollout type-A communication and running-sum consensus."""
-        receptions = sample_timely_receptions(
+        receptions = sample_configured_timely_receptions(
             self.uav_positions,
             self.all_args.running_sum_rounds,
             self.communication_rng,
-            transmit_power_w=self.all_args.a2a_transmit_power_w,
-            bandwidth_hz=self.all_args.a2a_bandwidth_hz,
-            reference_gain_db=self.all_args.a2a_reference_gain_db,
-            reference_distance_m=self.all_args.a2a_reference_distance_m,
-            path_loss_exponent=self.all_args.a2a_path_loss_exponent,
-            rician_k_db=self.all_args.a2a_rician_k_db,
-            noise_psd_dbm_hz=self.all_args.a2a_noise_psd_dbm_hz,
-            spectral_efficiency=self.all_args.a2a_spectral_efficiency,
-            decoding_threshold_db=self.all_args.a2a_decoding_threshold_db,
-            gamma_shape=self.all_args.a2a_gamma_shape,
-            gamma_scale_ms=self.all_args.a2a_gamma_scale_ms,
+            self.all_args,
             payload_bits=self.all_args.advantage_payload_bits,
             deadline_ms=self.all_args.advantage_deadline_ms,
         )

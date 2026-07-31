@@ -213,6 +213,8 @@ def parse_args(args, parser):
     parser.add_argument("--a2a_decoding_threshold_db", type=float, default=-0.5)
     parser.add_argument("--a2a_gamma_shape", type=float, default=2.5)
     parser.add_argument("--a2a_gamma_scale_ms", type=float, default=1.0)
+    parser.add_argument("--state_payload_bits", type=float, default=8000.0)
+    parser.add_argument("--state_deadline_ms", type=float, default=13.54)
     parser.add_argument("--advantage_payload_bits", type=float, default=16000.0)
     parser.add_argument("--advantage_deadline_ms", type=float, default=21.54)
     parser.add_argument("--whether_average_network_parameters", action='store_true', default=False, help="If true, Execute the average of all network's parameters in the mec_runner.py")

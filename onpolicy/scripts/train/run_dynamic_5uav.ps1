@@ -9,6 +9,10 @@ param(
     [string]$CommunicationMode = 'reliable',
     [int]$ConsensusRounds = 50,
     [int]$RunningSumRounds = 30,
+    [double]$StatePayloadBits = 8000,
+    [double]$StateDeadlineMs = 13.54,
+    [double]$AdvantagePayloadBits = 16000,
+    [double]$AdvantageDeadlineMs = 21.54,
     [string]$Python = 'python',
     [string]$ExperimentName = '',
     [switch]$CartesianFlight,
@@ -117,7 +121,13 @@ if ($Method -eq 'dcppo') {
     if ($CommunicationMode -eq 'reliable') {
         $arguments += @('--n_iterations', $ConsensusRounds)
     } else {
-        $arguments += @('--running_sum_rounds', $RunningSumRounds)
+        $arguments += @(
+            '--running_sum_rounds', $RunningSumRounds,
+            '--state_payload_bits', $StatePayloadBits,
+            '--state_deadline_ms', $StateDeadlineMs,
+            '--advantage_payload_bits', $AdvantagePayloadBits,
+            '--advantage_deadline_ms', $AdvantageDeadlineMs
+        )
     }
 } elseif ($Method -eq 'mappo') {
     $arguments += @('--neighbor_distance', '1000')
