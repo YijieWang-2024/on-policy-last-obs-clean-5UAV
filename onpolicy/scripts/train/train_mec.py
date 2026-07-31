@@ -198,6 +198,23 @@ def parse_args(args, parser):
     parser.add_argument("--local_add_T_ave_adv", type=int, default=0, help="how many steps of the advantage to average")
     parser.add_argument("--average_neighbor_advantage", action='store_true', default=False, help="If true, Execute the average of all neighbor's Advantage in the mec_runner.py with neighbor_weights")
     parser.add_argument("--n_iterations", type=int, default=50, help="Number of iterations for weighted summation when finding the global advantage function")
+    parser.add_argument("--communication_mode", choices=("reliable", "unreliable"), default="reliable",
+                        help="Reliable finite-round consensus or unreliable running-sum for the advantage-noise estimator")
+    parser.add_argument("--running_sum_rounds", type=int, default=30,
+                        help="Post-rollout running-sum rounds under unreliable communication")
+    parser.add_argument("--a2a_transmit_power_w", type=float, default=2.0)
+    parser.add_argument("--a2a_bandwidth_hz", type=float, default=2e6)
+    parser.add_argument("--a2a_reference_gain_db", type=float, default=-38.46)
+    parser.add_argument("--a2a_reference_distance_m", type=float, default=1.0)
+    parser.add_argument("--a2a_path_loss_exponent", type=float, default=2.2)
+    parser.add_argument("--a2a_rician_k_db", type=float, default=6.0)
+    parser.add_argument("--a2a_noise_psd_dbm_hz", type=float, default=-130.0)
+    parser.add_argument("--a2a_spectral_efficiency", type=float, default=0.5)
+    parser.add_argument("--a2a_decoding_threshold_db", type=float, default=-0.5)
+    parser.add_argument("--a2a_gamma_shape", type=float, default=2.5)
+    parser.add_argument("--a2a_gamma_scale_ms", type=float, default=1.0)
+    parser.add_argument("--advantage_payload_bits", type=float, default=16000.0)
+    parser.add_argument("--advantage_deadline_ms", type=float, default=21.54)
     parser.add_argument("--whether_average_network_parameters", action='store_true', default=False, help="If true, Execute the average of all network's parameters in the mec_runner.py")
     # 测试使用tanh来处理下动作会不会有影响。
     parser.add_argument("--tanh_gaussian", action='store_true', default=False, help="If true, act.py use (tanh(u)+1)/2 to process action")

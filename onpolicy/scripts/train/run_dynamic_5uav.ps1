@@ -5,7 +5,10 @@ param(
     [long]$NumEnvSteps = 100000000,
     [int]$RolloutThreads = 64,
     [int]$CommunicationDistance = 260,
+    [ValidateSet('reliable', 'unreliable')]
+    [string]$CommunicationMode = 'reliable',
     [int]$ConsensusRounds = 50,
+    [int]$RunningSumRounds = 30,
     [string]$Python = 'python',
     [string]$ExperimentName = '',
     [switch]$CartesianFlight,
@@ -109,8 +112,13 @@ if ($Method -eq 'dcppo') {
         '--average_local_advantage_timely',
         '--average_local_advantage',
         '--whether_local_add_direct_ave_adv',
-        '--n_iterations', $ConsensusRounds
+        '--communication_mode', $CommunicationMode
     )
+    if ($CommunicationMode -eq 'reliable') {
+        $arguments += @('--n_iterations', $ConsensusRounds)
+    } else {
+        $arguments += @('--running_sum_rounds', $RunningSumRounds)
+    }
 } elseif ($Method -eq 'mappo') {
     $arguments += @('--neighbor_distance', '1000')
 } else {

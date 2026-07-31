@@ -4,6 +4,11 @@ import numpy as np
 import torch
 from onpolicy.runner.separated.base_runner import Runner
 from onpolicy.envs.mec.vec_normalize import Normer, normalize_batch
+from onpolicy.utils.unreliable_communication import (
+    relative_estimation_error,
+    running_sum_ratio_consensus,
+    sample_timely_receptions,
+)
 from onpolicy.utils.util import get_shape_from_obs_space
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial.distance import cdist
@@ -35,6 +40,8 @@ class MECRunner(Runner):
         # self.n_UAVs = config['all_args'].n_UAVs
         self.uav_positions = np.zeros((self.n_rollout_threads, self.num_agents, 2))
         self.neighbor_distance = config['all_args'].neighbor_distance
+        self.communication_mode = config['all_args'].communication_mode
+        self.communication_rng = np.random.default_rng(config['all_args'].seed + 104729)
         # 测评、记录效果的。 把训练的注释掉，这个打开。
         self.system_gain = np.zeros(15)
         # self.local_advantages = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
@@ -296,6 +303,7 @@ class MECRunner(Runner):
 
     def train(self):
         train_infos = []
+        communication_metrics = {}
         if self.average_local_advantage_timely and self.average_local_advantage:
             if self.whether_local_add_direct_ave_adv:
                 # 直接local+True_mean
@@ -307,23 +315,30 @@ class MECRunner(Runner):
                 # cluster_mean_advantage = self.compute_average_advantages_directed(self.uav_positions, local_advantage, self.neighbor_distance)
                 # for agent_id in range(self.num_agents):
                 #     self.buffer[agent_id].advantages += cluster_mean_advantage[agent_id]
-                # L+M + /(Noi)
-                mean_advantage = np.mean(local_advantage, axis=0)
-                for agent_id in range(self.num_agents):
-                    self.buffer[agent_id].advantages += mean_advantage
-                cluster_mean_advantage = self.run_consensus_algorithm(
-                    local_advantage, self.all_args.n_iterations
+                if self.communication_mode == "unreliable":
+                    communication_estimate, reception_rate = self.run_unreliable_consensus(
+                        local_advantage
+                    )
+                    communication_metrics["advantage_timely_reception_rate"] = reception_rate
+                else:
+                    communication_estimate = self.run_consensus_algorithm(
+                        local_advantage, self.all_args.n_iterations
+                    )
+
+                # The exact all-UAV mean remains in the PPO advantage. The
+                # communication estimate controls only the perturbation scale.
+                mean_advantage, noise_magnitude = relative_estimation_error(
+                    local_advantage, communication_estimate
                 )
-                numerator = np.abs(cluster_mean_advantage - mean_advantage)
-                denominator = np.abs(local_advantage - mean_advantage)
-                noise_magnitude = np.divide(
-                    numerator,
-                    denominator,
-                    out=np.ones_like(numerator),  # 当分母为0时，输出1
-                    where=denominator != 0  # 只在分母不为0的地方执行除法
+                communication_metrics["advantage_estimation_mae"] = float(
+                    np.mean(np.abs(communication_estimate - mean_advantage))
+                )
+                communication_metrics["advantage_noise_scale"] = float(
+                    np.mean(noise_magnitude)
                 )
                 std_advantage = np.std(local_advantage, axis=0)
                 for agent_id in range(self.num_agents):
+                    self.buffer[agent_id].advantages += mean_advantage
                     self.buffer[agent_id].advantages += noise_magnitude[agent_id] * 0.12*std_advantage * np.random.randn(*self.buffer[agent_id].advantages.shape)
             elif self.whether_local_add_ave_adadvantage:
                 # buffer更新。local+updated_mean
@@ -440,6 +455,7 @@ class MECRunner(Runner):
                 flight_std = torch.exp(flight_head.logstd._bias.detach()).cpu().numpy().reshape(-1)
                 train_info["flight_std_x"] = float(flight_std[0])
                 train_info["flight_std_y"] = float(flight_std[1])
+            train_info.update(communication_metrics)
             train_infos.append(train_info)
             self.buffer[agent_id].after_update()
 
@@ -651,6 +667,32 @@ class MECRunner(Runner):
 
         estimates = estimates.reshape(estimate_shape)
         return np.transpose(estimates, (1, 2, 0, 3))
+
+    def run_unreliable_consensus(self, local_advantages):
+        """Run post-rollout type-A communication and running-sum consensus."""
+        receptions = sample_timely_receptions(
+            self.uav_positions,
+            self.all_args.running_sum_rounds,
+            self.communication_rng,
+            transmit_power_w=self.all_args.a2a_transmit_power_w,
+            bandwidth_hz=self.all_args.a2a_bandwidth_hz,
+            reference_gain_db=self.all_args.a2a_reference_gain_db,
+            reference_distance_m=self.all_args.a2a_reference_distance_m,
+            path_loss_exponent=self.all_args.a2a_path_loss_exponent,
+            rician_k_db=self.all_args.a2a_rician_k_db,
+            noise_psd_dbm_hz=self.all_args.a2a_noise_psd_dbm_hz,
+            spectral_efficiency=self.all_args.a2a_spectral_efficiency,
+            decoding_threshold_db=self.all_args.a2a_decoding_threshold_db,
+            gamma_shape=self.all_args.a2a_gamma_shape,
+            gamma_scale_ms=self.all_args.a2a_gamma_scale_ms,
+            payload_bits=self.all_args.advantage_payload_bits,
+            deadline_ms=self.all_args.advantage_deadline_ms,
+        )
+        estimate = running_sum_ratio_consensus(local_advantages, receptions)
+        off_diagonal = ~np.eye(self.num_agents, dtype=bool)
+        received_packets = receptions[:, :, off_diagonal]
+        reception_rate = float(np.mean(received_packets)) if received_packets.size else 0.0
+        return estimate, reception_rate
 
     def compute_average_advantages_directed(self, uav_positions, local_advantages, neighbor_distance):
         """
