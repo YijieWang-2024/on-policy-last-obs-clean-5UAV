@@ -1,0 +1,29 @@
+# Figure Spec
+
+- chart_type: multi-series training line chart
+- data_sources: local TensorBoard event files for Q0, Q1, Q2 and the prior stitched MAPPO/DC-PPO strict 1+5 references
+- rows_in_scope: all available `agent0/system_performance_true_all_GUs` scalar records
+- data_columns: series, environment_steps, raw_value, three_point_smoothed_value
+- x_axis:
+  - field: environment_steps
+  - label: Environment steps
+  - unit: millions of steps
+  - scale: linear
+  - range: 0-100M
+- y_axis:
+  - field: system_performance_true_all_GUs
+  - label: True covered-MD system performance
+  - unit: objective value
+  - scale: linear
+  - range: data driven
+- additional_axes: none
+- series_or_categories: Q0, Q1, Q2, prior MAPPO reference, prior DC-PPO reference
+- category_order: Q2, Q0, Q1, MAPPO reference, DC-PPO reference
+- color_mapping: red, blue, green, cyan, brown
+- size_mapping: none
+- legend: compact two-column legend
+- required_annotations: none
+- forbidden_elements: equivalent-60 imputation, cumulative reward, invented uncertainty bands, smoke tests, clearly noncompetitive experiments
+- layout_constraints: double-column, 300 dpi, readable at manuscript scale
+- source_note: local TensorBoard logs; Q1 and Q2 are live snapshots
+- assumptions: three-point centered smoothing is used for visualization; the two prior 50M segments are stitched by adding 50M steps to the continuation segment

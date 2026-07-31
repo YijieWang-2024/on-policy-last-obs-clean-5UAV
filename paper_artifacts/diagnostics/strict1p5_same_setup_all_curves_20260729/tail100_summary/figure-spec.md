@@ -1,0 +1,29 @@
+# Figure Spec
+
+- chart_type: annotated heatmap table
+- data_sources: ../tail100_metrics.csv
+- rows_in_scope: the same seven experiments as the curve comparison
+- data_columns: experiment, max_step, true60, equivalent60, system_performance, admission, upper_admission, completion, active_mds, projection
+- x_axis:
+  - field: metric
+  - label: Tail-100 metric
+  - unit: mixed, shown in cell text
+  - scale: column-wise normalized desirability
+  - range: 0 to 1 within each metric
+- y_axis:
+  - field: experiment
+  - label: experiment and available endpoint
+  - unit: none
+  - scale: categorical
+  - range: all seven experiments
+- additional_axes: colorbar for within-column relative desirability
+- series_or_categories: seven experiments sorted by tail-100 true60 descending
+- category_order: data-driven ranking by true60
+- color_mapping: viridis; higher color is better within a column; projection is reverse-scored
+- size_mapping: none
+- legend: colorbar
+- required_annotations: exact tail-100 mean in every cell; endpoint step in every row label
+- forbidden_elements: cross-metric absolute color comparison, uncertainty claims, omitted experiments
+- layout_constraints: double-column landscape; readable exact values; one PNG
+- source_note: each value is the arithmetic mean of the last 100 TensorBoard records available for that experiment
+- assumptions: performance is formatted in thousands; ratios as percentages; projection is the only lower-is-better column; unavailable historical projection logs are shown as missing

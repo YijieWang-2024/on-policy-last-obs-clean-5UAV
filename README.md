@@ -1,5 +1,7 @@
 # on-policy-last-obs-clean-5UAV
 
+> 最新入口（2026-07-31）：[当前交接状态](HANDOFF.md)、[最近两周工作日志](WORK_NOTES.md)、[Q0/Q1/Q2 最终补充总结](RECENT_EXPERIMENT_SUMMARY_20260729_20260731.md)。
+
 5-UAV 动态移动边缘计算实验工作区。当前分支集中记录 strict 1+5 动态用户场景、MAPPO/DC-PPO、Cartesian 飞行动作、Spatial Flight Actor、Reset Curriculum 及其消融实验。
 
 ## 从这里开始

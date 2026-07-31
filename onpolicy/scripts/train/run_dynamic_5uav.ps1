@@ -1,15 +1,17 @@
 param(
-    [ValidateSet('mappo', 'dcppo')]
+    [ValidateSet('mappo', 'dcppo', 'ippo')]
     [string]$Method = 'dcppo',
     [int]$Seed = 2,
     [long]$NumEnvSteps = 100000000,
     [int]$RolloutThreads = 64,
+    [int]$CommunicationDistance = 260,
     [string]$Python = 'python',
     [string]$ExperimentName = '',
     [switch]$CartesianFlight,
     [switch]$ActorNeighborObs,
     [switch]$SpatialFlightActor,
     [switch]$DistanceOnlyUserSort,
+    [switch]$CompletionPriorityUserSort,
     [switch]$UAVResetCurriculum
 )
 
@@ -27,7 +29,7 @@ if (-not $ExperimentName) {
 $arguments = @(
     $trainScript,
     '--env_name', 'mec',
-    '--algorithm_name', 'mappo',
+    '--algorithm_name', $(if ($Method -eq 'ippo') { 'ippo' } else { 'mappo' }),
     '--experiment_name', $ExperimentName,
     '--user_name', $env:USERNAME,
     '--seed', $Seed,
@@ -48,10 +50,9 @@ $arguments = @(
     '--fix_hotspot',
     '--max_UAVs_in_neighbor', '5',
     '--max_UAVs_obs_concat', '5',
-    '--neighbor_R', '260',
+    '--neighbor_R', $CommunicationDistance,
     '--state_is_k_hops',
     '--all_uav_k_hops',
-    '--use_atten_critic',
     '--local_reward',
     '--continuous_associate',
     '--not_served_rew_to_nearest',
@@ -78,6 +79,10 @@ $arguments = @(
     '--use_valuenorm'
 )
 
+if ($Method -ne 'ippo') {
+    $arguments += '--use_atten_critic'
+}
+
 if ($CartesianFlight) {
     $arguments += '--cartesian_flight'
 }
@@ -90,19 +95,24 @@ if ($SpatialFlightActor) {
 if ($DistanceOnlyUserSort) {
     $arguments += '--distance_only_user_sort'
 }
+if ($CompletionPriorityUserSort) {
+    $arguments += '--completion_priority_user_sort'
+}
 if ($UAVResetCurriculum) {
     $arguments += '--uav_reset_curriculum'
 }
 
 if ($Method -eq 'dcppo') {
     $arguments += @(
-        '--neighbor_distance', '260',
+        '--neighbor_distance', $CommunicationDistance,
         '--average_local_advantage_timely',
         '--average_local_advantage',
         '--whether_local_add_direct_ave_adv'
     )
-} else {
+} elseif ($Method -eq 'mappo') {
     $arguments += @('--neighbor_distance', '1000')
+} else {
+    $arguments += @('--neighbor_distance', $CommunicationDistance)
 }
 
 Push-Location $repoRoot

@@ -1,0 +1,29 @@
+# Figure Spec
+
+- chart_type: four-panel training line chart
+- data_sources: TensorBoard scalar logs from the formal E2, B0, and B1 run directories
+- rows_in_scope: all currently available scalar records; no extrapolation or curve extension
+- data_columns: environment step and scalar value
+- x_axis:
+  - field: TensorBoard step
+  - label: Environment steps
+  - unit: millions
+  - scale: linear
+  - range: available data only
+- y_axis:
+  - field: total admission, upper-right admission, task completion, second-half active MD count
+  - label: panel-specific
+  - unit: percent or MDs
+  - scale: linear
+  - range: automatic
+- additional_axes: none
+- series_or_categories: E2, B0, B1
+- category_order: E2, B0, B1
+- color_mapping: E2 blue; B0 orange; B1 green
+- size_mapping: none
+- legend: one shared legend below the panels, including each run's current endpoint
+- required_annotations: raw curves faint; trailing 2.5M-step mean emphasized
+- forbidden_elements: extrapolation, confidence bands, artificial curve extension, ranking annotations
+- layout_constraints: double-column width; 2 by 2 panels; shared x-axis
+- source_note: Formal seed-2 runs, live snapshot on 2026-07-29
+- assumptions: ratio metrics are converted to percentages; trailing mean approximates 2.5M environment steps

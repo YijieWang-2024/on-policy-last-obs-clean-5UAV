@@ -179,9 +179,11 @@ def parse_args(args, parser):
     parser.add_argument("--actor_neighbor_obs", action='store_true', default=False,
                         help="Add one-hop relative UAV positions and masks to each actor observation")
     parser.add_argument("--spatial_flight_actor", action='store_true', default=False,
-                        help="Use an independent task-free DeepSets encoder for Cartesian flight")
+                        help="Use an independent task-free DeepSets encoder for the flight action")
     parser.add_argument("--distance_only_user_sort", action='store_true', default=False,
                         help="Sort observed users only by UAV distance")
+    parser.add_argument("--completion_priority_user_sort", action='store_true', default=False,
+                        help="Sort all covered users by local infeasibility first, then by distance within each group")
     parser.add_argument("--uav_reset_curriculum", action='store_true', default=False,
                         help="Train with target-free random UAV resets, annealed to fixed resets by 50%%")
     parser.add_argument("--ave_resource", action='store_true', default=False, help="If true, allocate the resources of UAV equally to the connected users")

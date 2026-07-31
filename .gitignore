@@ -17,3 +17,6 @@ onpolicy/*.pdf
 onpolicy/*.eps
 onpolicy/scripts/train/*-timestep*.png
 _launch_logs/
+paper_artifacts/launch_logs/
+eval_live_*/
+paper_artifacts/diagnostics/final_policy_audit_*/q*_seed*/

@@ -1,0 +1,29 @@
+# Figure Spec
+
+- chart_type: six-panel smoothed line comparison
+- data_sources: ../training_curves.csv and ../run_manifest.csv extracted from TensorBoard
+- rows_in_scope: seven formal or diagnostically useful runs with the same UAV initial positions and strict regional 1+5 arrivals
+- data_columns: experiment, step, metric, value
+- x_axis:
+  - field: step
+  - label: Environment steps (millions)
+  - unit: environment steps
+  - scale: linear
+  - range: 0 to 100M
+- y_axis:
+  - fields: true60, equivalent60, system_performance, admission, upper_admission, completion
+  - labels: named per panel
+  - unit: performance or ratio
+  - scale: linear
+  - range: data-driven and shared only where units match
+- additional_axes: none
+- series_or_categories: DC-PPO stitched, MAPPO stitched, Cartesian MAPPO, E1, E2, B0, B1
+- category_order: chronological experiment order
+- color_mapping: fixed Okabe-Ito-derived categorical mapping
+- size_mapping: none
+- legend: one shared legend below the figure, including endpoint step
+- required_annotations: trailing 2.5M-step mean note; endpoint markers; incomplete-run status in legend
+- forbidden_elements: raw noisy curves, confidence bands, invented uncertainty, regression fits
+- layout_constraints: double-column 3x2 layout; readable seven-series legend; one PNG
+- source_note: single training seed per experiment; warm-start halves stitched at exactly 50M; system_performance is read directly from agent0/system_performance
+- assumptions: curves use a trailing mean spanning approximately 2.5M environment steps; the last 100 logged points are summarized separately

@@ -289,9 +289,18 @@ class MEC(gym.Env):
         self.actor_neighbor_obs = getattr(args, "actor_neighbor_obs", False)
         self.actor_neighbor_obs_dim = 3 * (self.n_UAVs - 1) if self.actor_neighbor_obs else 0
         self.spatial_flight_actor = getattr(args, "spatial_flight_actor", False)
-        self.distance_only_user_sort = (
-            getattr(args, "distance_only_user_sort", False)
-            or self.spatial_flight_actor
+        explicit_distance_sort = getattr(args, "distance_only_user_sort", False)
+        self.completion_priority_user_sort = getattr(
+            args, "completion_priority_user_sort", False
+        )
+        assert not (
+            explicit_distance_sort and self.completion_priority_user_sort
+        ), "distance-only and completion-priority user sorting are mutually exclusive"
+        # Preserve old Spatial-Actor checkpoints/configs, which implicitly used
+        # distance-only sorting, while allowing new runs to request the legacy
+        # completion-priority ordering explicitly.
+        self.distance_only_user_sort = explicit_distance_sort or (
+            self.spatial_flight_actor and not self.completion_priority_user_sort
         )
         self.uav_reset_curriculum = (
             getattr(args, "uav_reset_curriculum", False)
@@ -301,7 +310,7 @@ class MEC(gym.Env):
         self.curriculum_random_reset = False
         self.curriculum_random_probability = 0.0
         if self.spatial_flight_actor:
-            assert self.dynamic_md and self.cartesian_flight
+            assert self.dynamic_md
             assert not self.actor_neighbor_obs, \
                 "spatial_flight_actor must not receive neighbor UAV observations"
         assert not (self.actor_neighbor_obs and self.use_atten_actor), \

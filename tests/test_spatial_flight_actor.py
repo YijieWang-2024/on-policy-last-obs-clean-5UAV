@@ -43,6 +43,7 @@ class SpatialFlightActorTest(unittest.TestCase):
             "cartesian_flight": True,
             "actor_neighbor_obs": False,
             "spatial_flight_actor": True,
+            "completion_priority_user_sort": False,
             "episode_length": 400,
             "num_env_steps": 100_000_000,
             "n_rollout_threads": 64,
@@ -110,6 +111,53 @@ class SpatialFlightActorTest(unittest.TestCase):
         env.gu_tasks[:, 2] = np.where(np.arange(env.n_GUs) % 2, env.delay_min, env.delay_max)
         after = env.get_nearby_users_sorted_all()
         np.testing.assert_array_equal(before, after)
+
+    def test_completion_priority_overrides_spatial_legacy_distance_sort(self):
+        env = MEC(self.make_args(completion_priority_user_sort=True))
+        self.assertFalse(env.distance_only_user_sort)
+        env.reset()
+
+        env.uav_gu_distances_2d[0, :4] = [10.0, 20.0, 30.0, 40.0]
+        env.coverage_mask[0] = False
+        env.coverage_mask[0, :4] = True
+        env.gu_tasks[:4, 1] = [env.F_n, env.F_n, env.F_n, env.F_n]
+        env.gu_tasks[:4, 2] = [2.0, 0.5, 2.0, 0.5]
+
+        ordered = env.get_nearby_users_sorted_all()[0, :4]
+        np.testing.assert_array_equal(ordered, [1, 3, 0, 2])
+
+    def test_explicit_sort_modes_are_mutually_exclusive(self):
+        with self.assertRaisesRegex(AssertionError, "mutually exclusive"):
+            MEC(self.make_args(
+                completion_priority_user_sort=True,
+                distance_only_user_sort=True,
+            ))
+
+    def test_spatial_flight_actor_supports_polar_action_contract(self):
+        torch.manual_seed(13)
+        args = self.make_args(
+            cartesian_flight=False,
+            completion_priority_user_sort=True,
+        )
+        env = MEC(args)
+        obs, _, available, _, _ = env.reset()
+        actor = R_Actor(args, env.observation_space, env.action_space)
+        obs = torch.as_tensor(obs, dtype=torch.float32)
+        available = torch.as_tensor(available, dtype=torch.float32)
+        rnn = torch.zeros(args.n_UAVs, args.recurrent_N, args.hidden_size)
+        masks = torch.ones(args.n_UAVs, 1)
+
+        with torch.no_grad():
+            actions, rollout_log_prob, _ = actor(obs, rnn, masks, available.clone())
+            evaluated_log_prob, _ = actor.evaluate_actions(
+                obs, rnn, actions, masks, available.clone()
+            )
+
+        np.testing.assert_array_equal(env.flight_action_space.low, [0.0, 0.0])
+        np.testing.assert_array_equal(env.flight_action_space.high, [1.0, 1.0])
+        clipped_flight = np.clip(actions[:, :2].numpy(), 0.0, 1.0)
+        self.assertTrue(np.all((clipped_flight >= 0.0) & (clipped_flight <= 1.0)))
+        torch.testing.assert_close(rollout_log_prob, evaluated_log_prob)
 
     def test_curriculum_is_training_only_and_finishes_by_half_budget(self):
         training_args = self.make_args(

@@ -1,0 +1,29 @@
+# Figure Spec
+
+- chart_type: multi-series training line chart
+- data_sources: local TensorBoard event logs for the two completed strict 1+5 baselines and the competitive Q0/Q2 live experiments
+- rows_in_scope: all available records; each continuation baseline segment is shifted by 50,000,000 steps
+- data_columns: series, cumulative environment steps, raw `system_performance_true_all_GUs`, three-point smoothed value
+- x_axis:
+  - field: cumulative environment steps
+  - label: Environment steps (million)
+  - unit: million steps
+  - scale: linear
+  - range: 0-100
+- y_axis:
+  - field: `agent0/system_performance_true_all_GUs`
+  - label: Actual active-MD system performance
+  - unit: objective value per episode
+  - scale: linear
+  - range: data driven
+- additional_axes: none
+- series_or_categories: MAPPO strict 1+5; DC-PPO strict 1+5; Q0 polar standard with curriculum and completion priority; Q2 Cartesian spatial with curriculum and completion priority
+- category_order: MAPPO, DC-PPO, Q0, Q2
+- color_mapping: blue, orange, green, red
+- size_mapping: none
+- legend: upper left, compact
+- required_annotations: live status appears in Q0/Q2 legend labels
+- forbidden_elements: equivalent-60 imputation, cumulative training reward, fixed-60 historical curves, invented uncertainty bands, regression fits
+- layout_constraints: double-column width, 300 dpi, readable with four single-seed curves
+- source_note: local TensorBoard records read on 2026-07-30
+- assumptions: `system_performance_true_all_GUs` is the paper-facing actual-active-MD objective; three-point smoothing is visual only; current Q0/Q2 runs remain in progress

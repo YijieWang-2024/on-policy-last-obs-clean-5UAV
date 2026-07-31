@@ -1,0 +1,35 @@
+# Figure Spec
+
+- chart_type: Q2 training curve overlaid on the canonical manuscript Figure 4 raster
+- data_sources:
+  - `paper_artifacts/published_figures/fig4.png`
+  - Q2 TensorBoard tag `agent0/system_performance_true_all_GUs`
+  - archived `mappo.npy`, `dcppo.npy`, and `ara_extended.npy` for numeric summaries
+- rows_in_scope: all 1953 Q2 TensorBoard points through 99,968,000 environment steps
+- data_columns: series, environment_steps, learning_episode, raw_value, three_point_smoothed_value
+- x_axis:
+  - field: environment step divided by 64 rollout threads and 400 slots
+  - label: Learning episodes
+  - unit: parallel rollout episodes
+  - scale: linear
+  - range: 0 to 4000; canonical Figure 4 ends at 3500
+- y_axis:
+  - field: `system_performance_true_all_GUs` for Q2
+  - label: System gain, inherited from Figure 4
+  - unit: episode objective value
+  - scale: linear
+  - range: inherited from Figure 4
+- additional_axes: none
+- series_or_categories: canonical MAPPO, DC-PPO, F-PPO, IPPO, and ARA curves plus Q2
+- category_order: preserve the canonical raster; draw Q2 last in black
+- color_mapping: preserve historical colors; Q2 black
+- size_mapping: Q2 uses a 3.0-point line
+- legend: a separate lower-right Q2 legend with a cross-environment warning
+- required_annotations: vertical marker at episode 3500 showing the end of the historical Figure 4 horizon
+- forbidden_elements: uncertainty band for Q2, deterministic-evaluation claims, numerical superiority claims, fabricated historical raw data
+- layout_constraints: preserve the canonical raster and extend only the right side to episode 4000
+- source_note: Q2 is strict 1+5 with dynamic arrivals and uses the true covered-MD objective; historical Figure 4 uses the prior fixed-user environment
+- assumptions:
+  - apply the established centered three-point smoothing to Q2
+  - use the existing pixel calibration of the canonical 2964 by 1945 Figure 4
+  - comparison is diagnostic and only shows relative numerical scale

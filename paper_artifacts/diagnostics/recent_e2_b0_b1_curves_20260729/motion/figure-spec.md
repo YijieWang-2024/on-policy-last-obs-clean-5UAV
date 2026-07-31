@@ -1,0 +1,29 @@
+# Figure Spec
+
+- chart_type: two-panel training line chart
+- data_sources: TensorBoard scalar logs from the formal E2, B0, and B1 run directories
+- rows_in_scope: all currently available scalar records; no extrapolation or curve extension
+- data_columns: environment step and scalar value
+- x_axis:
+  - field: TensorBoard step
+  - label: Environment steps
+  - unit: millions
+  - scale: linear
+  - range: available data only
+- y_axis:
+  - field: flight action projection ratio and proposed flight norm
+  - label: panel-specific
+  - unit: percent or normalized action units
+  - scale: linear
+  - range: automatic
+- additional_axes: none
+- series_or_categories: E2, B0, B1
+- category_order: E2, B0, B1
+- color_mapping: E2 blue; B0 orange; B1 green
+- size_mapping: none
+- legend: one shared legend below the panels, including each run's current endpoint
+- required_annotations: raw curves faint; trailing 2.5M-step mean emphasized
+- forbidden_elements: inferred path length, extrapolation, confidence bands, artificial curve extension
+- layout_constraints: double-column width; two horizontal panels
+- source_note: Formal seed-2 runs, live snapshot on 2026-07-29
+- assumptions: projection ratio is converted to percentage; trajectory length is not plotted because it is not a training scalar

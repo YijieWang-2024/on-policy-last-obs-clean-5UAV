@@ -1,5 +1,7 @@
 # 5-UAV 动态用户场景近期实验总结（2026-07-25—2026-07-28）
 
+> 后续进展：2026-07-29 至 2026-07-31 的 Q0/Q1/Q2 最终结果、动作审计和对比实验启动状态见 [`RECENT_EXPERIMENT_SUMMARY_20260729_20260731.md`](RECENT_EXPERIMENT_SUMMARY_20260729_20260731.md)。
+
 > 更新时点：2026-07-28 22:20 左右
 > 范围：最近四天围绕动态用户环境、strict 1+5 候选用户、MAPPO/DC-PPO、初始位置、warm-start、Cartesian 飞行动作、Spatial Flight Actor 和 Reset Curriculum 所做的正式实验、诊断实验、轨迹评估、失败启动与无效测试。
 > 重要限制：除旧论文曲线外，本轮绝大多数训练只有 `seed=2`；轨迹图通常是固定起点、确定性策略、`eval_seed=100000` 的一个 episode，只适合诊断，不能单独作为统计结论。

@@ -82,8 +82,6 @@ class R_Actor(nn.Module):
         obs_shape = get_shape_from_obs_space(obs_space)
         self._spatial_flight_actor = getattr(args, "spatial_flight_actor", False)
         if self._spatial_flight_actor:
-            if not getattr(args, "cartesian_flight", False):
-                raise ValueError("spatial_flight_actor requires cartesian_flight")
             if self._use_naive_recurrent_policy or self._use_recurrent_policy:
                 raise ValueError("spatial_flight_actor currently supports feed-forward policies only")
             self.flight_base = SpatialFlightEncoder(args, obs_shape)
