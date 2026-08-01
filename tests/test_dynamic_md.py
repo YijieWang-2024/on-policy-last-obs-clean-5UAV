@@ -150,6 +150,53 @@ class DynamicMDTest(unittest.TestCase):
         self.assertNotIn(departing_session, env.md_session_ids[env.active_md_mask])
         self.assertTrue(np.all(np.any(env.coverage_mask[:, env.active_md_mask], axis=0)))
 
+    def test_curriculum_schedule_and_random_id_assignment(self):
+        args = self.make_args(
+            md_arrivals_min=6,
+            md_arrivals_max=6,
+            md_arrivals_per_region=[1, 5],
+            md_lifetime_min=10,
+            md_lifetime_max=10,
+            episode_length=10,
+            n_rollout_threads=1,
+            num_env_steps=1000,
+            uav_reset_curriculum=True,
+            uav_reset_curriculum_training=True,
+        )
+        env = MEC(args)
+
+        for reset_count, expected_probability in (
+            (0, 0.5),
+            (20, 0.5),
+            (35, 0.25),
+            (50, 0.0),
+        ):
+            env.curriculum_reset_count = reset_count
+            self.assertAlmostEqual(
+                env._curriculum_random_reset_probability(),
+                expected_probability,
+            )
+
+        class FixedRNG:
+            def __init__(self):
+                self.values = iter([
+                    10, 10, 150, 10, 290, 10, 430, 10, 570, 10,
+                ])
+
+            def uniform(self, _low, _high):
+                return next(self.values)
+
+            @staticmethod
+            def permutation(size):
+                return np.arange(size - 1, -1, -1)
+
+        env.curriculum_reset_rng = FixedRNG()
+        positions = env._sample_curriculum_uav_positions()
+        np.testing.assert_array_equal(
+            positions[:, :2],
+            [[570, 10], [430, 10], [290, 10], [150, 10], [10, 10]],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -121,7 +121,28 @@ class MECRunner(Runner):
                                 int(total_num_steps / (end - start))))
 
                 if self.env_name == 'mec':
+                    curriculum_infos = {}
+                    if infos and 'curriculum_random_reset' in infos[0]:
+                        random_resets = np.asarray([
+                            bool(info['curriculum_random_reset']) for info in infos
+                        ])
+                        for reset_type, reset_mask in (
+                            ('random_reset', random_resets),
+                            ('fixed_reset', ~random_resets),
+                        ):
+                            curriculum_infos[f'curriculum_{reset_type}_samples'] = int(
+                                np.sum(reset_mask)
+                            )
+                            if np.any(reset_mask):
+                                curriculum_infos[
+                                    f'system_performance_true_all_GUs_{reset_type}'
+                                ] = np.mean([
+                                    info['system_performance_true_all_GUs']
+                                    for info, selected in zip(infos, reset_mask)
+                                    if selected
+                                ]).round(5)
                     for agent_id in range(self.num_agents):
+                        train_infos[agent_id].update(curriculum_infos)
                         train_infos[agent_id].update({'cumulative_reward': np.mean(np.mean([info['cumulative_reward'] for info in infos], axis=0)).round(5)})
                         train_infos[agent_id].update({'cumulative_individual_reward_wo_cover': np.mean([info['cumulative_individual_reward_wo_cover'] for info in infos], axis=0)[agent_id].round(5)})
                         train_infos[agent_id].update({'cumulative_reward_wo_cover': np.mean(np.mean([info['cumulative_reward_wo_cover'] for info in infos], axis=0)).round(5)})
@@ -296,6 +317,7 @@ class MECRunner(Runner):
 
     def train(self):
         train_infos = []
+        consensus_infos = {}
         if self.average_local_advantage_timely and self.average_local_advantage:
             if self.whether_local_add_direct_ave_adv:
                 # 直接local+True_mean
@@ -314,17 +336,21 @@ class MECRunner(Runner):
                 cluster_mean_advantage = self.run_consensus_algorithm(
                     local_advantage, self.all_args.n_iterations
                 )
-                numerator = np.abs(cluster_mean_advantage - mean_advantage)
-                denominator = np.abs(local_advantage - mean_advantage)
-                noise_magnitude = np.divide(
-                    numerator,
-                    denominator,
-                    out=np.ones_like(numerator),  # 当分母为0时，输出1
-                    where=denominator != 0  # 只在分母不为0的地方执行除法
+                consensus_residual = self.normalized_consensus_residual(
+                    local_advantage, cluster_mean_advantage
                 )
+                consensus_infos = {
+                    'consensus_residual_mean': float(np.mean(consensus_residual)),
+                    'consensus_residual_max': float(np.max(consensus_residual)),
+                }
                 std_advantage = np.std(local_advantage, axis=0)
                 for agent_id in range(self.num_agents):
-                    self.buffer[agent_id].advantages += noise_magnitude[agent_id] * 0.12*std_advantage * np.random.randn(*self.buffer[agent_id].advantages.shape)
+                    self.buffer[agent_id].advantages += (
+                        consensus_residual[0]
+                        * 0.12
+                        * std_advantage
+                        * np.random.randn(*self.buffer[agent_id].advantages.shape)
+                    )
             elif self.whether_local_add_ave_adadvantage:
                 # buffer更新。local+updated_mean
                 local_advantage = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
@@ -434,6 +460,7 @@ class MECRunner(Runner):
         for agent_id in range(self.num_agents):
             self.trainer[agent_id].prep_training()
             train_info = self.trainer[agent_id].train(self.buffer[agent_id])
+            train_info.update(consensus_infos)
             if getattr(self.all_args, "cartesian_flight", False):
                 actor_act = self.trainer[agent_id].policy.actor.act
                 flight_head = actor_act.action_out if actor_act.mujoco_box else actor_act.action_outs[0]
@@ -651,6 +678,29 @@ class MECRunner(Runner):
 
         estimates = estimates.reshape(estimate_shape)
         return np.transpose(estimates, (1, 2, 0, 3))
+
+    @staticmethod
+    def normalized_consensus_residual(
+        local_advantages, consensus_advantages, epsilon=1e-8
+    ):
+        """Return one bounded L2 consensus-error ratio per rollout sample.
+
+        The norm is taken across the UAV axis.  Consequently every UAV in a
+        given (time, environment) sample receives the same topology-dependent
+        noise magnitude, while retaining an independent Gaussian draw.
+        """
+        exact_mean = np.mean(local_advantages, axis=0, keepdims=True)
+        initial_disagreement = local_advantages - exact_mean
+        residual_disagreement = consensus_advantages - exact_mean
+        denominator = np.linalg.norm(initial_disagreement, axis=0, keepdims=True)
+        numerator = np.linalg.norm(residual_disagreement, axis=0, keepdims=True)
+        residual = np.divide(
+            numerator,
+            denominator,
+            out=np.zeros_like(numerator),
+            where=denominator > epsilon,
+        )
+        return np.clip(residual, 0.0, 1.0)
 
     def compute_average_advantages_directed(self, uav_positions, local_advantages, neighbor_distance):
         """

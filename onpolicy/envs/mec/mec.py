@@ -309,6 +309,7 @@ class MEC(gym.Env):
         self.curriculum_reset_count = 0
         self.curriculum_random_reset = False
         self.curriculum_random_probability = 0.0
+        self.curriculum_reset_rng = np.random.default_rng()
         if self.spatial_flight_actor:
             assert self.dynamic_md
             assert not self.actor_neighbor_obs, \
@@ -721,9 +722,10 @@ class MEC(gym.Env):
     def seed(self, seed=None):
         random.seed(seed)
         np.random.seed(seed)
+        self.curriculum_reset_rng = np.random.default_rng(seed)
 
     def _curriculum_random_reset_probability(self):
-        """Anneal target-free random starts to the fixed task reset by 50%."""
+        """Hold random starts at 0.5 through 20%, then anneal to fixed by 50%."""
         completed_steps = (
             self.curriculum_reset_count
             * self.MAX_SIMULATION_TIME
@@ -731,9 +733,9 @@ class MEC(gym.Env):
         )
         progress = completed_steps / max(float(getattr(self.args, "num_env_steps", 1)), 1.0)
         if progress < 0.20:
-            return 0.80
+            return 0.50
         if progress < 0.50:
-            return 0.80 * (0.50 - progress) / 0.30
+            return 0.50 * (0.50 - progress) / 0.30
         return 0.0
 
     def _sample_curriculum_uav_positions(self):
@@ -745,8 +747,8 @@ class MEC(gym.Env):
             accepted = False
             for _ in range(1000):
                 candidate = np.array([
-                    np.random.uniform(self.x_min_uav, self.x_max_uav),
-                    np.random.uniform(self.y_min_uav, self.y_max_uav),
+                    self.curriculum_reset_rng.uniform(self.x_min_uav, self.x_max_uav),
+                    self.curriculum_reset_rng.uniform(self.y_min_uav, self.y_max_uav),
                 ])
                 if i == 0 or np.all(
                     np.linalg.norm(positions[:i, :2] - candidate, axis=1)
@@ -757,7 +759,7 @@ class MEC(gym.Env):
                     break
             if not accepted:
                 positions[i, :2] = candidate
-        return positions
+        return positions[self.curriculum_reset_rng.permutation(self.n_UAVs)]
 
     def reset(self, seed=None, *args, **kwargs):
         self.time_step = 0
@@ -978,7 +980,7 @@ class MEC(gym.Env):
         if self.uav_reset_curriculum:
             self.curriculum_random_probability = self._curriculum_random_reset_probability()
             self.curriculum_random_reset = (
-                np.random.random() < self.curriculum_random_probability
+                self.curriculum_reset_rng.random() < self.curriculum_random_probability
             )
             if self.curriculum_random_reset:
                 self.uav_positions = self._sample_curriculum_uav_positions()

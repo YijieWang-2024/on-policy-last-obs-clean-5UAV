@@ -1,5 +1,4 @@
 import unittest
-from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -165,7 +164,7 @@ class SpatialFlightActorTest(unittest.TestCase):
             uav_reset_curriculum_training=True,
         )
         training_env = MEC(training_args)
-        self.assertAlmostEqual(training_env._curriculum_random_reset_probability(), 0.8)
+        self.assertAlmostEqual(training_env._curriculum_random_reset_probability(), 0.5)
         training_env.curriculum_reset_count = int(np.ceil(
             0.50 * training_args.num_env_steps
             / (training_args.episode_length * training_args.n_rollout_threads)
@@ -173,8 +172,8 @@ class SpatialFlightActorTest(unittest.TestCase):
         self.assertEqual(training_env._curriculum_random_reset_probability(), 0.0)
 
         training_env.curriculum_reset_count = 0
-        with patch("numpy.random.random", return_value=0.0):
-            training_env.reset()
+        training_env.seed(2)
+        training_env.reset()
         fixed = np.array([[200, 525], [110, 70], [220, 70], [330, 70], [440, 70]])
         self.assertFalse(np.allclose(training_env.uav_positions[:, :2], fixed))
         distances = np.linalg.norm(
