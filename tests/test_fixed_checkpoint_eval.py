@@ -1,3 +1,4 @@
+import json
 import numpy as np
 from types import SimpleNamespace
 
@@ -11,6 +12,12 @@ from onpolicy.scripts.eval.evaluate_dynamic_mappo_fixed import (
 )
 from onpolicy.scripts.eval.render_dynamic_mappo_episode import (
     mask_actor_message_observations,
+    snapshot_checkpoint,
+)
+from onpolicy.runner.separated.mec_runner import MECRunner
+from onpolicy.utils.checkpoint_manifest import (
+    build_checkpoint_manifest,
+    write_checkpoint_manifest_atomic,
 )
 from scipy.stats import t as student_t
 
@@ -118,3 +125,238 @@ def test_actor_message_masking_rejects_non_message_checkpoint():
         ValueError, "message-capable checkpoint"
     ):
         mask_actor_message_observations(normers, np.ones((2, 8)))
+
+
+def _write_checkpoint_files(models_dir):
+    for agent_id in range(5):
+        (models_dir / f"actor_agent{agent_id}.pt").write_bytes(b"actor")
+        (models_dir / f"critic_agent{agent_id}.pt").write_bytes(b"critic")
+        (models_dir / f"normer{agent_id}.pkl").write_bytes(b"normer")
+
+
+def _write_manifest(models_dir, args_path, session_step, source_step=0):
+    manifest = build_checkpoint_manifest(
+        models_dir,
+        num_agents=5,
+        episode_index=10,
+        session_total_num_steps=session_step,
+        source_total_num_steps=source_step,
+        save_interval_episodes=5,
+        cumulative_step_provenance=(
+            "verified_chain" if source_step == 0 else "legacy_declared_base"
+        ),
+        args_path=args_path,
+    )
+    write_checkpoint_manifest_atomic(models_dir, manifest)
+    return manifest
+
+
+def test_snapshot_checkpoint_verifies_and_copies_manifest(tmp_path):
+    run_dir = tmp_path / "run"
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True)
+    args_path = run_dir / "args.json"
+    args_path.write_text("{}", encoding="utf-8")
+    _write_checkpoint_files(models_dir)
+    _write_manifest(models_dir, args_path, 123456)
+
+    checkpoint_dir, _ = snapshot_checkpoint(run_dir, tmp_path / "evaluation")
+
+    copied = json.loads(
+        (checkpoint_dir / "checkpoint_manifest.json").read_text(encoding="utf-8")
+    )
+    assert copied["total_num_steps"] == 123456
+
+
+def test_snapshot_checkpoint_rejects_file_changed_after_manifest(tmp_path):
+    run_dir = tmp_path / "run"
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True)
+    args_path = run_dir / "args.json"
+    args_path.write_text("{}", encoding="utf-8")
+    _write_checkpoint_files(models_dir)
+    _write_manifest(models_dir, args_path, 123456)
+    changed = models_dir / "actor_agent0.pt"
+    changed.write_bytes(b"changed-after-manifest")
+
+    with np.testing.assert_raises_regex(RuntimeError, "does not match manifest"):
+        snapshot_checkpoint(run_dir, tmp_path / "evaluation")
+
+
+def test_snapshot_checkpoint_rejects_partial_manifest(tmp_path):
+    run_dir = tmp_path / "run"
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True)
+    args_path = run_dir / "args.json"
+    args_path.write_text("{}", encoding="utf-8")
+    _write_checkpoint_files(models_dir)
+    manifest = _write_manifest(models_dir, args_path, 123456)
+    del manifest["files"]["critic_agent4.pt"]
+    with (models_dir / "checkpoint_manifest.json").open(
+        "w", encoding="utf-8"
+    ) as handle:
+        json.dump(manifest, handle)
+
+    with np.testing.assert_raises_regex(ValueError, "file set mismatch"):
+        snapshot_checkpoint(run_dir, tmp_path / "evaluation")
+
+
+def test_snapshot_checkpoint_rejects_args_changed_after_manifest(tmp_path):
+    run_dir = tmp_path / "run"
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True)
+    args_path = run_dir / "args.json"
+    args_path.write_text("{}", encoding="utf-8")
+    _write_checkpoint_files(models_dir)
+    _write_manifest(models_dir, args_path, 123456)
+    args_path.write_text('{"changed": true}', encoding="utf-8")
+
+    with np.testing.assert_raises_regex(RuntimeError, "args.json does not match"):
+        snapshot_checkpoint(run_dir, tmp_path / "evaluation")
+
+
+def test_manifest_tracks_cumulative_warm_start_steps(tmp_path):
+    run_dir = tmp_path / "run"
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True)
+    args_path = run_dir / "args.json"
+    args_path.write_text("{}", encoding="utf-8")
+    _write_checkpoint_files(models_dir)
+
+    manifest = _write_manifest(
+        models_dir, args_path, session_step=50_000_000, source_step=50_000_000
+    )
+
+    assert manifest["session_total_num_steps"] == 50_000_000
+    assert manifest["source_total_num_steps"] == 50_000_000
+    assert manifest["total_num_steps"] == 100_000_000
+
+
+class _LoadTarget:
+    def load_state_dict(self, state):
+        assert state == {}
+
+
+class _NormerTarget:
+    def load(self, path):
+        assert path.endswith(".pkl")
+
+
+def _restore_only_runner(
+    models_dir,
+    checkpoint_base_steps=None,
+    confirm_legacy_checkpoint_frozen=False,
+):
+    runner = MECRunner.__new__(MECRunner)
+    runner.model_dir = str(models_dir)
+    runner.num_agents = 5
+    runner.all_args = SimpleNamespace(
+        checkpoint_base_steps=checkpoint_base_steps,
+        confirm_legacy_checkpoint_frozen=confirm_legacy_checkpoint_frozen,
+    )
+    runner.policy = [
+        SimpleNamespace(actor=_LoadTarget(), critic=_LoadTarget())
+        for _ in range(5)
+    ]
+    runner.normer = [_NormerTarget() for _ in range(5)]
+    return runner
+
+
+def test_restore_verifies_manifest_and_inherits_cumulative_steps(
+    tmp_path, monkeypatch
+):
+    run_dir = tmp_path / "run"
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True)
+    args_path = run_dir / "args.json"
+    args_path.write_text("{}", encoding="utf-8")
+    _write_checkpoint_files(models_dir)
+    _write_manifest(
+        models_dir, args_path, session_step=50_000_000, source_step=50_000_000
+    )
+    monkeypatch.setattr("onpolicy.runner.separated.mec_runner.torch.load", lambda *args, **kwargs: {})
+    runner = _restore_only_runner(models_dir)
+
+    runner.restore()
+
+    assert runner.checkpoint_source_steps == 100_000_000
+
+
+def test_restore_requires_explicit_steps_for_legacy_checkpoint(tmp_path):
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    _write_checkpoint_files(models_dir)
+    runner = _restore_only_runner(models_dir)
+
+    with np.testing.assert_raises_regex(ValueError, "checkpoint_base_steps"):
+        runner.restore()
+
+
+def test_restore_requires_frozen_confirmation_for_legacy_checkpoint(tmp_path):
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    _write_checkpoint_files(models_dir)
+    runner = _restore_only_runner(models_dir, checkpoint_base_steps=50_000_000)
+
+    with np.testing.assert_raises_regex(
+        ValueError, "confirm_legacy_checkpoint_frozen"
+    ):
+        runner.restore()
+
+
+def test_restore_rejects_negative_legacy_base_steps(tmp_path):
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    _write_checkpoint_files(models_dir)
+    runner = _restore_only_runner(
+        models_dir,
+        checkpoint_base_steps=-1,
+        confirm_legacy_checkpoint_frozen=True,
+    )
+
+    with np.testing.assert_raises_regex(ValueError, "non-negative"):
+        runner.restore()
+
+
+def test_restore_rejects_checkpoint_changed_while_loading(tmp_path, monkeypatch):
+    run_dir = tmp_path / "run"
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True)
+    args_path = run_dir / "args.json"
+    args_path.write_text("{}", encoding="utf-8")
+    _write_checkpoint_files(models_dir)
+    _write_manifest(models_dir, args_path, 123456)
+    changed = False
+
+    def load_and_change(*args, **kwargs):
+        nonlocal changed
+        if not changed:
+            (models_dir / "critic_agent4.pt").write_bytes(b"changed-during-load")
+            changed = True
+        return {}
+
+    monkeypatch.setattr(
+        "onpolicy.runner.separated.mec_runner.torch.load", load_and_change
+    )
+    runner = _restore_only_runner(models_dir)
+
+    with np.testing.assert_raises_regex(RuntimeError, "does not match manifest"):
+        runner.restore()
+
+
+def test_snapshot_legacy_requires_explicit_frozen_confirmation(tmp_path):
+    run_dir = tmp_path / "run"
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True)
+    (run_dir / "args.json").write_text("{}", encoding="utf-8")
+    _write_checkpoint_files(models_dir)
+
+    with np.testing.assert_raises_regex(ValueError, "legacy checkpoint"):
+        snapshot_checkpoint(run_dir, tmp_path / "blocked")
+
+    checkpoint_dir, _ = snapshot_checkpoint(
+        run_dir,
+        tmp_path / "allowed",
+        allow_frozen_legacy=True,
+    )
+    assert (checkpoint_dir / "actor_agent0.pt").is_file()

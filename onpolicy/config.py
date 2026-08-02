@@ -296,6 +296,25 @@ def get_config():
 
     # pretrained parameters
     parser.add_argument("--model_dir", type=str, default=None, help="by default None. set the path to pretrained model.")
+    parser.add_argument(
+        "--checkpoint_base_steps",
+        type=int,
+        default=None,
+        help=(
+            "cumulative environment steps already contained in a legacy "
+            "model_dir without checkpoint_manifest.json; required for "
+            "auditable warm-start training from such checkpoints"
+        ),
+    )
+    parser.add_argument(
+        "--confirm_legacy_checkpoint_frozen",
+        action="store_true",
+        default=False,
+        help=(
+            "required acknowledgement that a legacy model_dir without a "
+            "manifest has stopped being written before warm-start loading"
+        ),
+    )
     
     # add for transformer
     parser.add_argument("--encode_state", action='store_true', default=False)

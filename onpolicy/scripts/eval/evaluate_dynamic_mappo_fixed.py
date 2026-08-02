@@ -35,6 +35,7 @@ from onpolicy.algorithms.r_mappo.algorithm.r_actor_critic_attention import (
 from onpolicy.envs.mec.env_maker import WrappedMECEnv
 from onpolicy.envs.mec.vec_normalize import Normer
 from onpolicy.scripts.eval.render_dynamic_mappo_episode import (
+    checkpoint_manifest_step,
     prepare_policy_inputs,
     snapshot_checkpoint,
 )
@@ -308,7 +309,15 @@ def main():
         raise FileExistsError(f"output directory already exists: {output_dir}")
     output_dir.mkdir(parents=True)
 
-    checkpoint_dir, checkpoint_files = snapshot_checkpoint(run_dir, output_dir)
+    checkpoint_dir, checkpoint_files = snapshot_checkpoint(
+        run_dir, output_dir, allow_frozen_legacy=True
+    )
+    manifest_step = checkpoint_manifest_step(checkpoint_dir)
+    if manifest_step is not None and manifest_step != cli.training_step:
+        raise ValueError(
+            f"declared training step {cli.training_step} does not match "
+            f"checkpoint manifest step {manifest_step}"
+        )
     with (checkpoint_dir / "args.json").open("r", encoding="utf-8") as handle:
         source_args = json.load(handle)
     comparison_config = matched_config(source_args)
@@ -375,6 +384,10 @@ def main():
         "checkpoint_dir": str(checkpoint_dir),
         "checkpoint_files": checkpoint_files,
         "declared_training_step": cli.training_step,
+        "checkpoint_manifest_step": manifest_step,
+        "checkpoint_manifest_status": (
+            "verified" if manifest_step is not None else "legacy_unavailable"
+        ),
         "checkpoint_write_state": "caller-confirmed frozen before snapshot",
         "matched_config_exclusions": sorted(MATCHED_CONFIG_EXCLUSIONS),
         "matched_config": comparison_config,

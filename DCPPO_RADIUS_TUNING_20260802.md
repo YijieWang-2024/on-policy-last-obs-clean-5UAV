@@ -98,6 +98,7 @@ beta = 0.025, 0.05, 0.10
 固定评估的审计约束如下：
 
 - 评估前必须暂停/结束训练，使 `models/` 不再被写入；五套独立 actor 和 normer 是顺序保存的，禁止从正在覆盖的目录抓正式快照；
+- 新提交会在五套 actor/critic/normer 全部保存完成后，以原子替换方式发布 `checkpoint_manifest.json`，记录 session/source/cumulative 训练步数、累计步数来源、每个文件的大小与 SHA-256，并绑定对应的 `args.json`；评估和续训在复制/加载前后都会验证清单与十五个文件。使用该提交续训时会从源清单继承累计步数；旧模型没有清单时必须显式提供 `--checkpoint_base_steps` 和 `--confirm_legacy_checkpoint_frozen`，其累计历史会标为人工声明而非完全验证。当前正在运行的九路 Actor 消息实验由旧提交启动，没有该清单，属于 legacy checkpoint：其 50M 正式快照必须等到第一个不小于 50M 的保存点 `50,073,600` 环境步，先暂停训练并确认文件不再变化，再复制和恢复训练；固定评估或渲染均须传入 `--confirm-checkpoint-frozen`，且不能事后仅凭日志中的最新步数替模型补写清单。
 - 命令必须显式给出相同的训练步数，并使用 `--confirm-checkpoint-frozen`；比较工具拒绝步数不同、缺种子、重复种子及任何非有限指标；
 - 除预先允许变化的通信半径、actor 消息模式、优势模式、beta 与运行元数据外，比较工具对完整训练/环境参数生成 SHA-256 指纹并要求完全相同，避免误把不同 MD 速度、生命周期、curriculum 或 PPO 配置混入同一对比；
 - 主要指标预先固定为 `system_performance_true_all_GUs`；每种方法报告均值、样本标准差与 95% t 区间，算法差异报告同 seed 的配对差、95% 配对 t 区间和 sign-flip 稳健性检验；

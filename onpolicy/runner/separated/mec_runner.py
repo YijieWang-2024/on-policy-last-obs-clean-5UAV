@@ -2,8 +2,14 @@ import time
 # import wandb
 import numpy as np
 import torch
+from pathlib import Path
 from onpolicy.runner.separated.base_runner import Runner
 from onpolicy.envs.mec.vec_normalize import Normer, normalize_batch
+from onpolicy.utils.checkpoint_manifest import (
+    build_checkpoint_manifest,
+    read_checkpoint_manifest,
+    write_checkpoint_manifest_atomic,
+)
 from onpolicy.utils.util import get_shape_from_obs_space
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial.distance import cdist
@@ -15,11 +21,14 @@ class MECRunner(Runner):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
     def __init__(self, config):
         super(MECRunner, self).__init__(config)
+        self.run_args_path = Path(config["run_dir"]) / "args.json"
         self.normer = []
         self.n_UAVs = config['all_args'].n_UAVs
         for i in range(self.n_UAVs):
             self.normer.append(Normer(args=self.all_args, obs_space=get_shape_from_obs_space(self.envs.observation_space[i]), states_space=get_shape_from_obs_space(self.envs.share_observation_space[i])))
         # self.normer = Normer(args=self.all_args, obs_space=get_shape_from_obs_space(self.envs.observation_space[0]), states_space=get_shape_from_obs_space(self.envs.share_observation_space[0]))
+        self.checkpoint_source_steps = 0
+        self.checkpoint_step_provenance = "verified_chain"
         if self.model_dir is not None:
             self.restore()
         self.average_local_advantage = config['all_args'].average_local_advantage
@@ -720,13 +729,33 @@ class MECRunner(Runner):
     def save(self, episode):
         for agent_id in range(self.num_agents):
             policy_actor = self.trainer[agent_id].policy.actor
-            torch.save(policy_actor.state_dict(), str(self.save_dir) + "/actor_agent" + str(agent_id) + ".pt")
+            actor_path = str(self.save_dir) + "/actor_agent" + str(agent_id) + ".pt"
+            torch.save(policy_actor.state_dict(), actor_path)
             policy_critic = self.trainer[agent_id].policy.critic
-            torch.save(policy_critic.state_dict(), str(self.save_dir) + "/critic_agent" + str(agent_id) + ".pt")
+            critic_path = str(self.save_dir) + "/critic_agent" + str(agent_id) + ".pt"
+            torch.save(policy_critic.state_dict(), critic_path)
 
             # 保存 normer 对象
             normer_path = str(self.save_dir) + "/normer"+ str(agent_id) +".pkl"
             self.normer[agent_id].save(normer_path)
+
+        # Publish the step binding only after all five actor/critic/normer sets
+        # have been written. The atomic manifest is the commit marker for a
+        # coherent checkpoint generation and does not alter training state.
+        session_steps = (
+            (episode + 1) * self.episode_length * self.n_rollout_threads
+        )
+        manifest = build_checkpoint_manifest(
+            self.save_dir,
+            self.num_agents,
+            episode,
+            session_steps,
+            self.checkpoint_source_steps,
+            self.save_interval,
+            self.checkpoint_step_provenance,
+            args_path=self.run_args_path,
+        )
+        write_checkpoint_manifest_atomic(self.save_dir, manifest)
         # if episode % 100 == 0:
         #     for agent_id in range(self.num_agents):
         #         policy_actor = self.trainer[agent_id].policy.actor
@@ -741,14 +770,62 @@ class MECRunner(Runner):
         # self.normer.save(normer_path)
 
     def restore(self):
+        model_dir = Path(self.model_dir)
+        source_args_path = model_dir.parent / "args.json"
+        if not source_args_path.is_file():
+            source_args_path = model_dir / "args.json"
+        manifest = read_checkpoint_manifest(
+            model_dir,
+            self.num_agents,
+            args_path=source_args_path if source_args_path.is_file() else None,
+        )
+        declared_base_steps = getattr(
+            self.all_args, "checkpoint_base_steps", None
+        )
+        if manifest is None:
+            if declared_base_steps is None:
+                raise ValueError(
+                    "legacy model_dir has no checkpoint_manifest.json; pass "
+                    "--checkpoint_base_steps explicitly before warm-start training"
+                )
+            if int(declared_base_steps) < 0:
+                raise ValueError("checkpoint_base_steps must be non-negative")
+            if not getattr(
+                self.all_args, "confirm_legacy_checkpoint_frozen", False
+            ):
+                raise ValueError(
+                    "legacy model_dir may be live; stop checkpoint writes and "
+                    "pass --confirm_legacy_checkpoint_frozen"
+                )
+            self.checkpoint_source_steps = int(declared_base_steps)
+            self.checkpoint_step_provenance = "legacy_declared_base"
+        else:
+            self.checkpoint_source_steps = int(manifest["total_num_steps"])
+            self.checkpoint_step_provenance = manifest[
+                "cumulative_step_provenance"
+            ]
+            if (
+                declared_base_steps is not None
+                and int(declared_base_steps) != self.checkpoint_source_steps
+            ):
+                raise ValueError(
+                    "checkpoint_base_steps does not match checkpoint manifest"
+                )
         for agent_id in range(self.num_agents):
-            policy_actor_state_dict = torch.load(str(self.model_dir) + '/actor_agent' + str(agent_id) + '.pt', map_location='cpu')
+            policy_actor_state_dict = torch.load(str(model_dir / ('actor_agent' + str(agent_id) + '.pt')), map_location='cpu')
             self.policy[agent_id].actor.load_state_dict(policy_actor_state_dict)
-            policy_critic_state_dict = torch.load(str(self.model_dir) + '/critic_agent' + str(agent_id) + '.pt', map_location='cpu')
+            policy_critic_state_dict = torch.load(str(model_dir / ('critic_agent' + str(agent_id) + '.pt')), map_location='cpu')
             self.policy[agent_id].critic.load_state_dict(policy_critic_state_dict)
             # 恢复 normer 对象
-            normer_path = str(self.model_dir) + "/normer"+ str(agent_id) +".pkl"
+            normer_path = str(model_dir / ("normer" + str(agent_id) + ".pkl"))
             self.normer[agent_id].load(normer_path)
+        manifest_after = read_checkpoint_manifest(
+            model_dir,
+            self.num_agents,
+            args_path=source_args_path if source_args_path.is_file() else None,
+        )
+        if manifest_after != manifest:
+            raise RuntimeError("checkpoint changed while restore was loading files")
         # # 恢复 normer 对象
         # normer_path = str(self.model_dir) + "/normer.pkl"
         # self.normer.load(normer_path)

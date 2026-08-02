@@ -3,7 +3,6 @@
 
 import argparse
 import csv
-import hashlib
 import json
 import os
 import shutil
@@ -33,6 +32,11 @@ from onpolicy.algorithms.r_mappo.algorithm.r_actor_critic import R_Actor
 from onpolicy.algorithms.r_mappo.algorithm.r_actor_critic_attention import R_Actor_Attention
 from onpolicy.envs.mec.env_maker import WrappedMECEnv
 from onpolicy.envs.mec.vec_normalize import Normer
+from onpolicy.utils.checkpoint_manifest import (
+    expected_checkpoint_names,
+    read_checkpoint_manifest,
+    sha256,
+)
 
 
 COLORS = ["#1f77b4", "#2ca02c", "#d62728", "#9467bd", "#ff7f0e"]
@@ -46,6 +50,14 @@ def parse_cli():
     parser.add_argument("--frame-interval", type=int, default=5)
     parser.add_argument("--training-step", type=int)
     parser.add_argument(
+        "--confirm-checkpoint-frozen",
+        action="store_true",
+        help=(
+            "required only for a legacy checkpoint without a manifest; confirms "
+            "that no trainer is writing run-dir/models"
+        ),
+    )
+    parser.add_argument(
         "--mask-actor-messages",
         action="store_true",
         help=(
@@ -56,34 +68,35 @@ def parse_cli():
     return parser.parse_args()
 
 
-def sha256(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def snapshot_checkpoint(run_dir, output_dir):
+def snapshot_checkpoint(run_dir, output_dir, allow_frozen_legacy=False):
     source = run_dir / "models"
-    required = [source / f"actor_agent{i}.pt" for i in range(5)]
-    required += [source / f"normer{i}.pkl" for i in range(5)]
+    required = [source / name for name in expected_checkpoint_names(5)]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError("Missing checkpoint files: " + ", ".join(missing))
 
     destination = output_dir / "checkpoint_snapshot"
     temporary = output_dir / "checkpoint_snapshot.tmp"
-    source_files = sorted(path for path in source.iterdir() if path.is_file())
-
     for _ in range(3):
+        manifest_before = read_checkpoint_manifest(
+            source, 5, args_path=run_dir / "args.json"
+        )
+        if manifest_before is None and not allow_frozen_legacy:
+            raise ValueError(
+                "legacy checkpoint has no manifest; stop checkpoint writes and "
+                "explicitly confirm that the directory is frozen"
+            )
+        source_files = sorted(path for path in source.iterdir() if path.is_file())
         before = {path.name: (path.stat().st_size, path.stat().st_mtime_ns) for path in source_files}
         shutil.rmtree(temporary, ignore_errors=True)
         temporary.mkdir(parents=True)
         for path in source_files:
             shutil.copy2(path, temporary / path.name)
         after = {path.name: (path.stat().st_size, path.stat().st_mtime_ns) for path in source_files}
-        if before == after:
+        manifest_after = read_checkpoint_manifest(
+            source, 5, args_path=run_dir / "args.json"
+        )
+        if before == after and manifest_before == manifest_after:
             shutil.copy2(run_dir / "args.json", temporary / "args.json")
             temporary.replace(destination)
             return destination, {
@@ -96,6 +109,13 @@ def snapshot_checkpoint(run_dir, output_dir):
                 if path.is_file()
             }
     raise RuntimeError("Checkpoint changed during all three snapshot attempts")
+
+
+def checkpoint_manifest_step(checkpoint_dir):
+    manifest = read_checkpoint_manifest(
+        checkpoint_dir, 5, args_path=checkpoint_dir / "args.json"
+    )
+    return None if manifest is None else int(manifest["total_num_steps"])
 
 
 def frozen_normalize(normers, obs, states):
@@ -248,7 +268,21 @@ def main():
     frames_dir = output_dir / "frames"
     frames_dir.mkdir()
 
-    checkpoint_dir, checkpoint_files = snapshot_checkpoint(run_dir, output_dir)
+    checkpoint_dir, checkpoint_files = snapshot_checkpoint(
+        run_dir,
+        output_dir,
+        allow_frozen_legacy=cli.confirm_checkpoint_frozen,
+    )
+    manifest_step = checkpoint_manifest_step(checkpoint_dir)
+    if (
+        cli.training_step is not None
+        and manifest_step is not None
+        and int(cli.training_step) != manifest_step
+    ):
+        raise ValueError(
+            f"declared training step {cli.training_step} does not match "
+            f"checkpoint manifest step {manifest_step}"
+        )
     with (run_dir / "args.json").open("r", encoding="utf-8") as handle:
         args = Namespace(**json.load(handle))
     args.n_rollout_threads = 1
@@ -423,7 +457,12 @@ def main():
         "run_dir": str(run_dir),
         "checkpoint_dir": str(checkpoint_dir),
         "checkpoint_files": checkpoint_files,
-        "training_step_at_snapshot": cli.training_step,
+        "training_step_at_snapshot": (
+            manifest_step if manifest_step is not None else cli.training_step
+        ),
+        "checkpoint_manifest_status": (
+            "verified" if manifest_step is not None else "legacy_unavailable"
+        ),
         "evaluation_seed": seed,
         "actor_mode": "deterministic",
         "actor_message_evaluation": (
