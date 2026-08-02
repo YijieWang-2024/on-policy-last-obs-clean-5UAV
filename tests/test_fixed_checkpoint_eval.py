@@ -1,4 +1,5 @@
 import numpy as np
+from types import SimpleNamespace
 
 from onpolicy.scripts.eval.compare_fixed_evaluations import paired_stats
 from onpolicy.scripts.eval.evaluate_dynamic_mappo_fixed import (
@@ -7,6 +8,9 @@ from onpolicy.scripts.eval.evaluate_dynamic_mappo_fixed import (
     config_sha256,
     final_position_stability_slot,
     matched_config,
+)
+from onpolicy.scripts.eval.render_dynamic_mappo_episode import (
+    mask_actor_message_observations,
 )
 from scipy.stats import t as student_t
 
@@ -91,3 +95,26 @@ def test_matched_config_ignores_only_predeclared_radius_and_run_fields():
     assert config_sha256(matched_config(base)) != config_sha256(
         matched_config(candidate)
     )
+
+
+def test_actor_message_masking_zeros_only_declared_preserved_slice():
+    obs = np.arange(2 * 12, dtype=np.float32).reshape(2, 12)
+    normers = [
+        SimpleNamespace(obs_preserve_slices=[(3, 7)]),
+        SimpleNamespace(obs_preserve_slices=[(3, 7)]),
+    ]
+
+    masked = mask_actor_message_observations(normers, obs)
+
+    np.testing.assert_array_equal(masked[:, :3], obs[:, :3])
+    np.testing.assert_array_equal(masked[:, 3:7], 0.0)
+    np.testing.assert_array_equal(masked[:, 7:], obs[:, 7:])
+    np.testing.assert_array_equal(obs, np.arange(24, dtype=np.float32).reshape(2, 12))
+
+
+def test_actor_message_masking_rejects_non_message_checkpoint():
+    normers = [SimpleNamespace(obs_preserve_slices=[]) for _ in range(2)]
+    with np.testing.assert_raises_regex(
+        ValueError, "message-capable checkpoint"
+    ):
+        mask_actor_message_observations(normers, np.ones((2, 8)))

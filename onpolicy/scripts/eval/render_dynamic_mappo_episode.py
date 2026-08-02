@@ -45,6 +45,14 @@ def parse_cli():
     parser.add_argument("--seed", type=int)
     parser.add_argument("--frame-interval", type=int, default=5)
     parser.add_argument("--training-step", type=int)
+    parser.add_argument(
+        "--mask-actor-messages",
+        action="store_true",
+        help=(
+            "Counterfactually replace every radius-gated actor message block, "
+            "including presence masks, with zeros before policy inference."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -118,6 +126,36 @@ def frozen_normalize(normers, obs, states):
         for slice_start, slice_end, raw_values in preserved_obs:
             obs[agent_id, slice_start:slice_end] = raw_values
     return obs, states
+
+
+def mask_actor_message_observations(normers, obs):
+    """Return a copy with every actor-only communication block zeroed.
+
+    The slice layout is reconstructed by each saved Normer from args, so this
+    does not hard-code timestep/agent-ID offsets. Refuse a silent no-op when a
+    checkpoint was trained without a message-capable observation contract.
+    """
+    obs = np.asarray(obs, dtype=np.float32).copy()
+    layouts = [
+        tuple(getattr(normer, "obs_preserve_slices", ()))
+        for normer in normers
+    ]
+    if not layouts or any(layout != layouts[0] for layout in layouts):
+        raise ValueError("actor message slice layouts differ across normers")
+    if not layouts[0]:
+        raise ValueError(
+            "--mask-actor-messages requires a message-capable checkpoint"
+        )
+    for agent_id, layout in enumerate(layouts):
+        for slice_start, slice_end in layout:
+            obs[agent_id, slice_start:slice_end] = 0.0
+    return obs
+
+
+def prepare_policy_inputs(normers, obs, states, mask_actor_messages=False):
+    if mask_actor_messages:
+        obs = mask_actor_message_observations(normers, obs)
+    return frozen_normalize(normers, obs, states)
 
 
 def serving_uavs(service_matrix, threshold=1e-8):
@@ -245,7 +283,12 @@ def main():
         normers.append(normer)
 
     obs, states, available_actions, _, attention_mask = env.reset()
-    obs, states = frozen_normalize(normers, obs, states)
+    obs, states = prepare_policy_inputs(
+        normers,
+        obs,
+        states,
+        mask_actor_messages=cli.mask_actor_messages,
+    )
     steps = int(args.episode_length)
     n_uavs, n_mds = int(args.n_UAVs), int(args.n_GUs)
     rnn_states = np.zeros((n_uavs, args.recurrent_N, args.hidden_size), dtype=np.float32)
@@ -337,7 +380,12 @@ def main():
                     uav_positions[:slot],
                 )
 
-            obs, states = frozen_normalize(normers, obs, states)
+            obs, states = prepare_policy_inputs(
+                normers,
+                obs,
+                states,
+                mask_actor_messages=cli.mask_actor_messages,
+            )
             masks[:] = 0.0 if np.all(dones) else 1.0
 
     env.close()
@@ -378,6 +426,9 @@ def main():
         "training_step_at_snapshot": cli.training_step,
         "evaluation_seed": seed,
         "actor_mode": "deterministic",
+        "actor_message_evaluation": (
+            "masked_to_zero" if cli.mask_actor_messages else "as_observed"
+        ),
         "normalization": "frozen saved statistics",
         "episode_length": steps,
         "frame_interval": cli.frame_interval,

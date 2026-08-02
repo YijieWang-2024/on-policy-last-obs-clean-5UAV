@@ -35,7 +35,7 @@ from onpolicy.algorithms.r_mappo.algorithm.r_actor_critic_attention import (
 from onpolicy.envs.mec.env_maker import WrappedMECEnv
 from onpolicy.envs.mec.vec_normalize import Normer
 from onpolicy.scripts.eval.render_dynamic_mappo_episode import (
-    frozen_normalize,
+    prepare_policy_inputs,
     snapshot_checkpoint,
 )
 
@@ -114,6 +114,14 @@ def parse_cli():
             "actors and normers are saved sequentially."
         ),
     )
+    parser.add_argument(
+        "--mask-actor-messages",
+        action="store_true",
+        help=(
+            "Counterfactually zero actor communication payloads and masks before "
+            "deterministic inference. The environment and critic state are unchanged."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -170,14 +178,26 @@ def load_actor(path, actor_class, args, obs_space, action_space, device):
     return actor
 
 
-def evaluate_episode(env, actors, normers, args, seed):
+def evaluate_episode(
+    env,
+    actors,
+    normers,
+    args,
+    seed,
+    mask_actor_messages=False,
+):
     torch.manual_seed(seed)
     np.random.seed(seed)
     env.seed(seed)
     obs, states, available_actions, _, attention_mask = env.reset()
     if bool(getattr(env, "curriculum_random_reset", False)):
         raise RuntimeError("fixed evaluation unexpectedly used a random reset")
-    obs, states = frozen_normalize(normers, obs, states)
+    obs, states = prepare_policy_inputs(
+        normers,
+        obs,
+        states,
+        mask_actor_messages=mask_actor_messages,
+    )
 
     n_uavs = int(args.n_UAVs)
     rnn_states = np.zeros(
@@ -221,7 +241,12 @@ def evaluate_episode(env, actors, normers, args, seed):
             ) = step_result
             reward_sum += np.asarray(rewards, dtype=np.float64).reshape(n_uavs)
             positions.append(env.uav_positions[:, :2].copy())
-            obs, states = frozen_normalize(normers, obs, states)
+            obs, states = prepare_policy_inputs(
+                normers,
+                obs,
+                states,
+                mask_actor_messages=mask_actor_messages,
+            )
             masks[:] = 0.0 if np.all(dones) else 1.0
 
     positions = np.asarray(positions, dtype=np.float64)
@@ -319,7 +344,14 @@ def main():
     rows = []
     try:
         for seed in cli.seeds:
-            rows.append(evaluate_episode(env, actors, normers, args, seed))
+            rows.append(evaluate_episode(
+                env,
+                actors,
+                normers,
+                args,
+                seed,
+                mask_actor_messages=cli.mask_actor_messages,
+            ))
     finally:
         env.close()
 
@@ -348,6 +380,9 @@ def main():
         "matched_config": comparison_config,
         "matched_config_sha256": config_sha256(comparison_config),
         "actor_mode": "deterministic",
+        "actor_message_evaluation": (
+            "masked_to_zero" if cli.mask_actor_messages else "as_observed"
+        ),
         "reset_mode": "fixed",
         "normalization": "frozen saved statistics",
         "seed_pairing_note": (
