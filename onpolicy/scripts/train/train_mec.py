@@ -191,6 +191,16 @@ def parse_args(args, parser):
             "share one fixed architecture; the block is removed from critic inputs."
         ),
     )
+    parser.add_argument(
+        "--actor_message_pool",
+        choices=["mean", "receiver_gated_sum"],
+        default="mean",
+        help=(
+            "Permutation-invariant aggregation for actor UAV messages. "
+            "receiver_gated_sum independently gates each sender using the "
+            "receiver local descriptor and uses a fixed n_UAVs-1 denominator."
+        ),
+    )
     parser.add_argument("--spatial_flight_actor", action='store_true', default=False,
                         help="Use an independent task-free DeepSets encoder for the flight action")
     parser.add_argument("--distance_only_user_sort", action='store_true', default=False,

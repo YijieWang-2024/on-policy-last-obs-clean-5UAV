@@ -288,6 +288,132 @@ class SpatialFlightActorTest(unittest.TestCase):
         self.assertFalse(torch.allclose(flight_a, flight_c))
         torch.testing.assert_close(actions_a[:, 2:], actions_c[:, 2:])
 
+    def test_receiver_gated_message_pool_is_permutation_invariant(self):
+        torch.manual_seed(19)
+        args = self.make_args(
+            actor_message_mode="task_summary",
+            actor_message_pool="receiver_gated_sum",
+            neighbor_distance=1000.0,
+        )
+        env = MEC(args)
+        env.seed(2)
+        obs, _, available, _, _ = env.reset()
+        actor = R_Actor(args, env.observation_space, env.action_space)
+        obs_a = torch.as_tensor(obs, dtype=torch.float32)
+        obs_b = obs_a.clone()
+        start = 2
+        messages = obs_b[:, start:start + 40].reshape(5, 4, 10)
+        obs_b[:, start:start + 40] = messages[:, [2, 0, 3, 1]].reshape(5, 40)
+        available = torch.as_tensor(available, dtype=torch.float32)
+
+        with torch.no_grad():
+            flight_a = actor.flight_base(obs_a, available)
+            flight_b = actor.flight_base(obs_b, available)
+
+        torch.testing.assert_close(flight_a, flight_b, rtol=1e-5, atol=1e-6)
+
+    def test_receiver_gated_r0_matches_mean_shared_initialization_and_actions(self):
+        mean_args = self.make_args(
+            actor_message_mode="task_summary",
+            actor_message_pool="mean",
+            neighbor_distance=0.0,
+        )
+        gated_args = self.make_args(
+            actor_message_mode="task_summary",
+            actor_message_pool="receiver_gated_sum",
+            neighbor_distance=0.0,
+        )
+        env = MEC(mean_args)
+        env.seed(31)
+        obs, _, available, _, _ = env.reset()
+        torch.manual_seed(31)
+        mean_actor = R_Actor(mean_args, env.observation_space, env.action_space)
+        torch.manual_seed(31)
+        gated_actor = R_Actor(gated_args, env.observation_space, env.action_space)
+
+        mean_state = mean_actor.state_dict()
+        gated_state = gated_actor.state_dict()
+        extra_keys = {
+            key for key in gated_state if key.startswith("flight_base.message_gate.")
+        }
+        self.assertTrue(extra_keys)
+        self.assertEqual(set(mean_state), set(gated_state) - extra_keys)
+        for key, value in mean_state.items():
+            torch.testing.assert_close(value, gated_state[key], rtol=0, atol=0)
+
+        obs = torch.as_tensor(obs, dtype=torch.float32)
+        available = torch.as_tensor(available, dtype=torch.float32)
+        rnn = torch.zeros(mean_args.n_UAVs, mean_args.recurrent_N, mean_args.hidden_size)
+        masks = torch.ones(mean_args.n_UAVs, 1)
+        with torch.no_grad():
+            mean_actions, _, _ = mean_actor(
+                obs, rnn, masks, available.clone(), deterministic=True
+            )
+            gated_actions, _, _ = gated_actor(
+                obs, rnn, masks, available.clone(), deterministic=True
+            )
+        torch.testing.assert_close(mean_actions, gated_actions, rtol=0, atol=0)
+
+    def test_receiver_gated_fixed_sum_does_not_dilute_existing_zero_encoded_neighbors(self):
+        class FirstFeatureEncoder(torch.nn.Module):
+            def __init__(self, hidden_size):
+                super().__init__()
+                self.hidden_size = hidden_size
+
+            def forward(self, values):
+                return values[..., :1].expand(*values.shape[:-1], self.hidden_size)
+
+        class OpenGate(torch.nn.Module):
+            def forward(self, values):
+                return torch.full(
+                    (*values.shape[:-1], 1), 50.0,
+                    dtype=values.dtype,
+                    device=values.device,
+                )
+
+        mean_args = self.make_args(
+            actor_message_mode="task_summary",
+            actor_message_pool="mean",
+        )
+        gated_args = self.make_args(
+            actor_message_mode="task_summary",
+            actor_message_pool="receiver_gated_sum",
+        )
+        env = MEC(mean_args)
+        mean_actor = R_Actor(mean_args, env.observation_space, env.action_space)
+        gated_actor = R_Actor(gated_args, env.observation_space, env.action_space)
+        mean_actor.flight_base.message_encoder = FirstFeatureEncoder(
+            mean_args.hidden_size
+        )
+        gated_actor.flight_base.message_encoder = FirstFeatureEncoder(
+            gated_args.hidden_size
+        )
+        gated_actor.flight_base.message_gate = OpenGate()
+
+        one_neighbor = torch.zeros(1, 4, 10)
+        one_neighbor[0, 0, 0] = 4.0
+        one_neighbor[0, 0, 9] = 1.0
+        four_neighbors = one_neighbor.clone()
+        four_neighbors[0, 1:, 9] = 1.0
+        descriptor = torch.zeros(1, mean_args.hidden_size + 3)
+
+        mean_one, _ = mean_actor.flight_base._pool_messages(
+            one_neighbor, descriptor
+        )
+        mean_four, _ = mean_actor.flight_base._pool_messages(
+            four_neighbors, descriptor
+        )
+        gated_one, _ = gated_actor.flight_base._pool_messages(
+            one_neighbor, descriptor
+        )
+        gated_four, _ = gated_actor.flight_base._pool_messages(
+            four_neighbors, descriptor
+        )
+
+        torch.testing.assert_close(mean_one, torch.full_like(mean_one, 4.0))
+        torch.testing.assert_close(mean_four, torch.full_like(mean_four, 1.0))
+        torch.testing.assert_close(gated_one, gated_four, rtol=1e-6, atol=1e-6)
+
     def test_actor_message_block_bypasses_running_observation_normalization(self):
         args = self.make_args(
             actor_message_mode="task_summary",

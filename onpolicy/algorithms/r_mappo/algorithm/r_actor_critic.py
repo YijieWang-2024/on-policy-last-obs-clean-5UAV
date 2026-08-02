@@ -23,6 +23,9 @@ class SpatialFlightEncoder(nn.Module):
         if getattr(args, "ob_state_with_id", False):
             self.prefix += args.n_UAVs
         self.message_mode = getattr(args, "actor_message_mode", "disabled")
+        self.message_pool = getattr(args, "actor_message_pool", "mean")
+        if self.message_pool not in {"mean", "receiver_gated_sum"}:
+            raise ValueError(f"unknown actor_message_pool: {self.message_pool}")
         self.message_features = 10
         self.message_count = args.n_UAVs - 1
         self.message_dim = (
@@ -39,6 +42,7 @@ class SpatialFlightEncoder(nn.Module):
             )
 
         hidden = args.hidden_size
+        self.hidden_size = hidden
         self.user_encoder = nn.Sequential(
             nn.Linear(6, hidden),
             nn.ReLU(),
@@ -64,6 +68,54 @@ class SpatialFlightEncoder(nn.Module):
             nn.Linear(hidden, hidden),
             nn.ReLU(),
         )
+        self.message_gate = None
+
+    def initialize_message_pool(self):
+        """Create optional parameters after all shared actor modules.
+
+        R_Actor calls this after constructing its resource base and action
+        heads. Consequently, resetting the same torch seed gives mean and
+        gated variants identical shared parameters; the extra gate cannot
+        perturb the matched R0 control through initialization order.
+        """
+        if self.message_pool != "receiver_gated_sum" or not self.message_dim:
+            return
+        gate_input_dim = 2 * self.hidden_size + 5
+        self.message_gate = nn.Sequential(
+            nn.Linear(gate_input_dim, self.hidden_size),
+            nn.ReLU(),
+            nn.Linear(self.hidden_size, 1),
+        )
+        # Begin close to the no-message residual while preserving gradients.
+        nn.init.constant_(self.message_gate[-1].bias, -2.1972245773362196)
+
+    def _pool_messages(self, messages, self_descriptor):
+        message_mask = messages[:, :, -1].clamp(min=0.0, max=1.0)
+        encoded_messages = self.message_encoder(messages[:, :, :-1])
+        message_count = message_mask.sum(dim=1, keepdim=True)
+        message_fraction = message_count / float(self.message_count)
+        if self.message_pool == "mean":
+            masked_messages = encoded_messages * message_mask.unsqueeze(-1)
+            pooled_messages = masked_messages.sum(dim=1) / message_count.clamp(
+                min=1.0
+            )
+            return pooled_messages, message_fraction
+
+        if self.message_gate is None:
+            raise RuntimeError("receiver-gated message pool was not initialized")
+        receiver_context = self_descriptor.unsqueeze(1).expand(
+            -1, self.message_count, -1
+        )
+        gate_inputs = torch.cat(
+            (receiver_context, encoded_messages, messages[:, :, :2]), dim=-1
+        )
+        independent_gates = torch.sigmoid(
+            self.message_gate(gate_inputs).squeeze(-1)
+        ) * message_mask
+        pooled_messages = (
+            encoded_messages * independent_gates.unsqueeze(-1)
+        ).sum(dim=1) / float(self.message_count)
+        return pooled_messages, message_fraction
 
     def forward(self, obs, available_actions):
         own_position = obs[:, self.prefix:self.prefix + 2]
@@ -84,19 +136,15 @@ class SpatialFlightEncoder(nn.Module):
         count = mask.sum(dim=1, keepdim=True)
         pooled = encoded.sum(dim=1) / count.clamp(min=1.0)
         occupancy = count / float(self.max_users)
-        features = [own_position, occupancy, pooled]
+        self_descriptor = torch.cat((own_position, occupancy, pooled), dim=-1)
+        features = [self_descriptor]
         if self.message_dim:
             messages = obs[
                 :, self.messages_start:self.messages_start + self.message_dim
             ].reshape(obs.shape[0], self.message_count, self.message_features)
-            message_mask = messages[:, :, -1].clamp(min=0.0, max=1.0)
-            encoded_messages = self.message_encoder(messages[:, :, :-1])
-            encoded_messages = encoded_messages * message_mask.unsqueeze(-1)
-            message_count = message_mask.sum(dim=1, keepdim=True)
-            pooled_messages = encoded_messages.sum(dim=1) / message_count.clamp(
-                min=1.0
+            pooled_messages, message_fraction = self._pool_messages(
+                messages, self_descriptor
             )
-            message_fraction = message_count / float(self.message_count)
             features.extend((message_fraction, pooled_messages))
         return self.readout(torch.cat(features, dim=-1))
 
@@ -144,6 +192,8 @@ class R_Actor(nn.Module):
             self.base = MLPBase(args, base_obs_shape, layer_N=self._layer_N)
 
         self.act = ACTLayer(action_space, self.hidden_size, self._use_orthogonal, self._gain, args)
+        if self._spatial_flight_actor:
+            self.flight_base.initialize_message_pool()
         self.to(device)
         self.algo = args.algorithm_name
 

@@ -13,6 +13,8 @@ param(
     [double]$ExternalityBeta = 0.1,
     [ValidateSet('disabled', 'zero', 'geometry', 'task_summary')]
     [string]$ActorMessageMode = 'disabled',
+    [ValidateSet('mean', 'receiver_gated_sum')]
+    [string]$ActorMessagePool = 'mean',
     [double]$MeanVelocity = 0.5,
     [string]$Python = 'python',
     [string]$ExperimentName = '',
@@ -102,6 +104,7 @@ if ($ActorNeighborObs) {
 }
 if ($ActorMessageMode -ne 'disabled') {
     $arguments += @('--actor_message_mode', $ActorMessageMode)
+    $arguments += @('--actor_message_pool', $ActorMessagePool)
 }
 if ($SpatialFlightActor) {
     $arguments += '--spatial_flight_actor'
