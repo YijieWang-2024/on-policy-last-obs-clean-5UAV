@@ -328,8 +328,12 @@ class SpatialFlightActorTest(unittest.TestCase):
         obs, _, available, _, _ = env.reset()
         torch.manual_seed(31)
         mean_actor = R_Actor(mean_args, env.observation_space, env.action_space)
+        mean_rng_after = torch.get_rng_state()
         torch.manual_seed(31)
         gated_actor = R_Actor(gated_args, env.observation_space, env.action_space)
+        gated_rng_after = torch.get_rng_state()
+
+        torch.testing.assert_close(mean_rng_after, gated_rng_after, rtol=0, atol=0)
 
         mean_state = mean_actor.state_dict()
         gated_state = gated_actor.state_dict()

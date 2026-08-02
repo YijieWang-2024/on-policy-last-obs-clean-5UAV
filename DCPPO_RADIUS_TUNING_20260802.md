@@ -248,7 +248,7 @@ g_{ij}=\sigma\!\left(f_g(d_i,\phi(x_{ij}),\Delta p_{ij})\right).
 
 其中 `d_i` 是接收 UAV 的自身位置、当前本地用户占用率和本地用户集合编码；`m_ij` 是通信 mask；分母固定为 `M-1=4`，不随可见邻居数变化；每个 sender 使用独立 sigmoid gate，不采用会让邻居相互竞争的 softmax。初始 gate bias 为 `logit(0.1)`，使新增消息分支从较弱残差开始但保持非零梯度。
 
-该实现不改变资源分配 Actor、Critic、奖励、优势或环境公式。新增 gate 在其余 Actor 模块之后创建，所以相同随机种子下 `mean` 与 `receiver_gated_sum` 的公共参数逐位一致。R0 时四个消息 mask 全为零，因而两种池化的确定性动作逐位一致；筛选阶段可直接复用 A0 作为门控序列的 R0 锚点。
+该实现不改变资源分配 Actor、Critic、奖励、优势或环境公式。新增 gate 在其余 Actor 模块之后创建，并通过独立 RNG 上下文初始化，不消耗五套 Policy 顺序构造所共享的随机数流。因此相同随机种子下 `mean` 与 `receiver_gated_sum` 的公共 Actor 参数、Critic 初始化和后续 UAV 网络初始化均保持一致。R0 时四个消息 mask 全为零，因而两种池化的确定性动作逐位一致；筛选阶段可直接复用 A0 作为门控序列的 R0 锚点。
 
 释放旧 Local-`A_i` critic-only R260/R1000 两路后，在原 GPU0/1 启动：
 

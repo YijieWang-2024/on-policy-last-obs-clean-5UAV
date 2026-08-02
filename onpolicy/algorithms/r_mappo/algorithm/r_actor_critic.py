@@ -81,11 +81,15 @@ class SpatialFlightEncoder(nn.Module):
         if self.message_pool != "receiver_gated_sum" or not self.message_dim:
             return
         gate_input_dim = 2 * self.hidden_size + 5
-        self.message_gate = nn.Sequential(
-            nn.Linear(gate_input_dim, self.hidden_size),
-            nn.ReLU(),
-            nn.Linear(self.hidden_size, 1),
-        )
+        # The five policies are built sequentially from one global RNG stream.
+        # Isolate the additional gate initialization so a matched gated run
+        # retains identical critic and later-agent initialization.
+        with torch.random.fork_rng(devices=[]):
+            self.message_gate = nn.Sequential(
+                nn.Linear(gate_input_dim, self.hidden_size),
+                nn.ReLU(),
+                nn.Linear(self.hidden_size, 1),
+            )
         # Begin close to the no-message residual while preserving gradients.
         nn.init.constant_(self.message_gate[-1].bias, -2.1972245773362196)
 
