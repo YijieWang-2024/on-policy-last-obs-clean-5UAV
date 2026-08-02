@@ -32,6 +32,7 @@ class MECRunner(Runner):
         self.average_network_parameters_interval = config['all_args'].average_network_parameters_interval
         self.advantage_mode = getattr(config['all_args'], "advantage_mode", "default")
         self.consensus_alpha = getattr(config['all_args'], "consensus_alpha", 0.5)
+        self.externality_beta = getattr(config['all_args'], "externality_beta", 0.1)
         if self.whether_average_network_parameters:
             self.average_network_parameters()
         # self.n_UAVs = config['all_args'].n_UAVs
@@ -359,6 +360,16 @@ class MECRunner(Runner):
                         (1.0 - self.consensus_alpha) * local_advantage
                         + self.consensus_alpha * consensus_advantage
                     )
+                elif self.advantage_mode == "externality_consensus":
+                    training_advantage, externality_advantage = (
+                        self.externality_consensus_advantages(
+                            local_advantage,
+                            consensus_advantage,
+                            self.externality_beta,
+                            graph_stats['component_sizes'],
+                            graph_stats['self_contribution_coefficients'],
+                        )
+                    )
                 else:
                     raise ValueError(
                         f"unsupported advantage_mode: {self.advantage_mode}"
@@ -369,6 +380,28 @@ class MECRunner(Runner):
                     training_advantage,
                     graph_stats,
                 )
+                if self.advantage_mode == "externality_consensus":
+                    local_std = float(np.std(local_advantage))
+                    consensus_infos.update({
+                        'externality_beta': float(self.externality_beta),
+                        'externality_local_corr': self._safe_correlation(
+                            local_advantage, externality_advantage
+                        ),
+                        'externality_nonzero_fraction': float(np.mean(
+                            np.abs(externality_advantage) > 1e-8
+                        )),
+                        'externality_communicated_fraction': float(np.mean(
+                            graph_stats['component_sizes'] > 1
+                        )),
+                        'externality_self_coefficient_deviation_mean': float(np.mean(
+                            np.abs(
+                                graph_stats['self_contribution_coefficients'] - 1.0
+                            )
+                        )),
+                        'externality_to_local_std_ratio': float(
+                            np.std(externality_advantage) / (local_std + 1e-8)
+                        ),
+                    })
 
             for agent_id in range(self.num_agents):
                 self.buffer[agent_id].advantages = training_advantage[agent_id].copy()
@@ -747,6 +780,72 @@ class MECRunner(Runner):
             return 0.0
         return float(np.corrcoef(left, right)[0, 1])
 
+    @staticmethod
+    def externality_consensus_advantages(
+        local_advantages, consensus_advantages, beta, component_sizes=None,
+        self_contribution_coefficients=None,
+    ):
+        """Combine local credit with only the communicated other-UAV increment.
+
+        Component-scaled consensus estimates ``sum(component advantages) / M``
+        after convergence.  The tracked diagonal of the finite-round mixing
+        matrix removes UAV i's actual self contribution, leaving only weighted
+        information originating from other UAVs.  R=0 is exactly local PPO;
+        beta=1 on a converged connected graph is the global-sum advantage,
+        equivalent to the global mean after PPO normalization.
+        """
+        local_advantages = np.asarray(local_advantages)
+        consensus_advantages = np.asarray(consensus_advantages)
+        if local_advantages.shape != consensus_advantages.shape:
+            raise ValueError(
+                "local_advantages and consensus_advantages must have the same shape"
+            )
+        if local_advantages.ndim < 2 or local_advantages.shape[0] == 0:
+            raise ValueError("advantages must start with a non-empty UAV axis")
+        if not 0.0 <= beta <= 1.0:
+            raise ValueError("beta must be in [0, 1]")
+
+        num_agents = float(local_advantages.shape[0])
+        coefficient_shape = (
+            local_advantages.shape[2], local_advantages.shape[0]
+        )
+        if self_contribution_coefficients is None:
+            self_contribution_coefficients = np.ones(
+                coefficient_shape, dtype=local_advantages.dtype
+            )
+        else:
+            self_contribution_coefficients = np.asarray(
+                self_contribution_coefficients
+            )
+            if self_contribution_coefficients.shape != coefficient_shape:
+                raise ValueError(
+                    "self_contribution_coefficients must have shape "
+                    f"(n_rollout_threads, n_agents)={coefficient_shape}"
+                )
+        self_coefficients = self_contribution_coefficients.T[
+            :, np.newaxis, :, np.newaxis
+        ]
+        externality_advantages = (
+            num_agents * consensus_advantages
+            - self_coefficients * local_advantages
+        )
+        if component_sizes is not None:
+            component_sizes = np.asarray(component_sizes)
+            expected_shape = (
+                local_advantages.shape[2], local_advantages.shape[0]
+            )
+            if component_sizes.shape != expected_shape:
+                raise ValueError(
+                    "component_sizes must have shape "
+                    f"(n_rollout_threads, n_agents)={expected_shape}"
+                )
+            communicated = component_sizes.T[:, np.newaxis, :, np.newaxis] > 1
+            externality_advantages = np.where(
+                communicated, externality_advantages, 0.0
+            )
+        training_advantages = local_advantages + beta * externality_advantages
+        return training_advantages, externality_advantages
+
     def consensus_diagnostics(
         self, local_advantages, consensus_advantages, training_advantages,
         graph_stats, epsilon=1e-8,
@@ -798,8 +897,14 @@ class MECRunner(Runner):
             axis=1,
         ).astype(local_observations.dtype, copy=False)
 
+        effective_weights = np.broadcast_to(
+            np.eye(self.num_agents, dtype=local_observations.dtype),
+            (self.n_rollout_threads, self.num_agents, self.num_agents),
+        ).copy()
+
         for _ in range(max_iterations):
             estimates = weights @ estimates
+            effective_weights = weights @ effective_weights
 
         component_counts = np.zeros(self.n_rollout_threads, dtype=np.int32)
         component_sizes = np.ones(
@@ -824,6 +929,10 @@ class MECRunner(Runner):
             'component_counts': component_counts,
             'component_sizes': component_sizes,
             'connected_fraction': np.mean(component_counts == 1),
+            'self_contribution_coefficients': (
+                component_sizes
+                * np.diagonal(effective_weights, axis1=1, axis2=2)
+            ),
         }
         return estimates, graph_stats
 

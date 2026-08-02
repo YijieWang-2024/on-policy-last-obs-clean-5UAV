@@ -7,9 +7,10 @@ param(
     [int]$CommunicationDistance = 260,
     [int]$ActorNeighborDistance = 260,
     [int]$ConsensusRounds = 50,
-    [ValidateSet('local', 'mixed_consensus', 'pure_consensus', 'legacy_noise')]
+    [ValidateSet('local', 'mixed_consensus', 'pure_consensus', 'externality_consensus', 'legacy_noise')]
     [string]$AdvantageMode = 'mixed_consensus',
     [double]$ConsensusAlpha = 0.5,
+    [double]$ExternalityBeta = 0.1,
     [string]$Python = 'python',
     [string]$ExperimentName = '',
     [switch]$CartesianFlight,
@@ -114,6 +115,7 @@ if ($Method -eq 'dcppo') {
         '--neighbor_distance', $CommunicationDistance,
         '--advantage_mode', $AdvantageMode,
         '--consensus_alpha', $ConsensusAlpha,
+        '--externality_beta', $ExternalityBeta,
         '--n_iterations', $ConsensusRounds
     )
     if ($AdvantageMode -ne 'legacy_noise' -and -not $LegacyMeanPoolCritic) {

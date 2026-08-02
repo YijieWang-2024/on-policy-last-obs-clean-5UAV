@@ -1077,7 +1077,10 @@ class MEC(gym.Env):
                 pri[np.arange(self.n_UAVs), np.arange(self.n_UAVs)] = 0
                 perm_indices = np.argsort(pri, axis=1)  # shape (n, n)
                 # 创建邻居掩码
-                neighbor_mask = self.uav_uav_distances_2d <= self.neighbor_distance
+                if self.neighbor_distance <= 0:
+                    neighbor_mask = np.eye(self.n_UAVs, dtype=bool)
+                else:
+                    neighbor_mask = self.uav_uav_distances_2d <= self.neighbor_distance
 
                 # 使用矩阵操作填充状态
                 for i in range(self.n_UAVs):
@@ -1098,7 +1101,11 @@ class MEC(gym.Env):
             else:
                 final_state[:, :single_state_dim] = critic_local_obs
                 for i in range(self.n_UAVs):
-                    neighbor_mask = (self.uav_uav_distances_2d[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
+                    neighbor_mask = (
+                        (self.neighbor_distance > 0)
+                        & (self.uav_uav_distances_2d[i] <= self.neighbor_distance)
+                        & (np.arange(self.n_UAVs) != i)
+                    )
                     neighbors = np.where(neighbor_mask)[0]
                     if len(neighbors) > 0:
                         sorted_neighbors = neighbors[np.argsort(self.uav_uav_distances_2d[i, neighbors])]
@@ -1801,7 +1808,10 @@ class MEC(gym.Env):
                 pri[np.arange(self.n_UAVs), np.arange(self.n_UAVs)] = 0
                 perm_indices = np.argsort(pri, axis=1)  # shape (n, n)
                 # 创建邻居掩码
-                neighbor_mask = self.uav_uav_distances_2d <= self.neighbor_distance
+                if self.neighbor_distance <= 0:
+                    neighbor_mask = np.eye(self.n_UAVs, dtype=bool)
+                else:
+                    neighbor_mask = self.uav_uav_distances_2d <= self.neighbor_distance
 
                 # 使用矩阵操作填充状态
                 for i in range(self.n_UAVs):
@@ -1822,7 +1832,11 @@ class MEC(gym.Env):
             else:
                 final_state[:, :single_state_dim] = critic_local_obs
                 for i in range(self.n_UAVs):
-                    neighbor_mask = (self.uav_uav_distances_2d[i] <= self.neighbor_distance) & (np.arange(self.n_UAVs) != i)
+                    neighbor_mask = (
+                        (self.neighbor_distance > 0)
+                        & (self.uav_uav_distances_2d[i] <= self.neighbor_distance)
+                        & (np.arange(self.n_UAVs) != i)
+                    )
                     neighbors = np.where(neighbor_mask)[0]
                     if len(neighbors) > 0:
                         sorted_neighbors = neighbors[np.argsort(self.uav_uav_distances_2d[i, neighbors])]
@@ -2693,6 +2707,8 @@ class MEC(gym.Env):
     #     return obs
 
     def get_neighbor_weights(self):
+        if self.neighbor_distance <= 0:
+            return np.eye(self.n_UAVs, dtype=float)
         # 每个智能体i对邻居的权重为1/ (d(i)+1)
         distances = self.uav_uav_distances_2d
 
@@ -2715,6 +2731,9 @@ class MEC(gym.Env):
             Returns:
                 weights_matrix: An n_UAVs x n_UAVs matrix containing Metropolis weights
             """
+        if self.neighbor_distance <= 0:
+            return np.eye(self.n_UAVs, dtype=float)
+
         # Calculate pairwise distances between UAVs using vectorization
         distances = self.uav_uav_distances_2d
 

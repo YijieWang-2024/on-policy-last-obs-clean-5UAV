@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from onpolicy.envs.mec.mec import MEC
 from onpolicy.runner.separated.mec_runner import MECRunner
 
 
@@ -40,6 +41,21 @@ def test_finite_consensus_approaches_component_mean():
     )
 
 
+def test_zero_radius_is_strict_self_only_even_for_overlapping_uavs():
+    env = SimpleNamespace(
+        neighbor_distance=0.0,
+        n_UAVs=3,
+        uav_uav_distances_2d=np.zeros((3, 3), dtype=np.float32),
+    )
+
+    np.testing.assert_array_equal(
+        MEC.get_Metropolis_weights(env), np.eye(3, dtype=float)
+    )
+    np.testing.assert_array_equal(
+        MEC.get_neighbor_weights(env), np.eye(3, dtype=float)
+    )
+
+
 def test_normalized_consensus_residual_has_expected_endpoints():
     local_advantages = np.array(
         [-2.0, -1.0, 0.0, 1.0, 2.0], dtype=np.float32
@@ -72,3 +88,159 @@ def test_normalized_consensus_residual_is_zero_without_disagreement():
     )
 
     np.testing.assert_array_equal(residual, np.zeros((1, 2, 3, 1)))
+
+
+def test_externality_consensus_r0_is_exact_local_endpoint():
+    local_advantages = np.array(
+        [
+            [[[-2.0]], [[0.0]], [[4.0]]],
+            [[[1.0]], [[3.0]], [[8.0]]],
+            [[[-5.0]], [[2.0]], [[6.0]]],
+        ],
+        dtype=np.float32,
+    )
+    self_only_consensus = local_advantages / local_advantages.shape[0]
+
+    training, externality = MECRunner.externality_consensus_advantages(
+        local_advantages,
+        self_only_consensus,
+        beta=0.4,
+        component_sizes=np.ones((1, 3), dtype=np.float32),
+        self_contribution_coefficients=np.ones((1, 3), dtype=np.float32),
+    )
+
+    np.testing.assert_array_equal(externality, np.zeros_like(local_advantages))
+    np.testing.assert_allclose(
+        training,
+        local_advantages,
+        atol=1e-7,
+    )
+
+
+def test_externality_consensus_full_graph_contains_only_other_uavs():
+    local_advantages = np.array(
+        [
+            [[[-2.0]], [[0.0]], [[4.0]]],
+            [[[1.0]], [[3.0]], [[8.0]]],
+            [[[-5.0]], [[2.0]], [[6.0]]],
+        ],
+        dtype=np.float32,
+    )
+    exact_mean = np.broadcast_to(
+        np.mean(local_advantages, axis=0, keepdims=True),
+        local_advantages.shape,
+    )
+
+    training, externality = MECRunner.externality_consensus_advantages(
+        local_advantages,
+        exact_mean,
+        beta=0.2,
+        component_sizes=np.full((1, 3), 3, dtype=np.float32),
+        self_contribution_coefficients=np.ones((1, 3), dtype=np.float32),
+    )
+    expected_externality = (
+        np.sum(local_advantages, axis=0, keepdims=True) - local_advantages
+    )
+    expected_training = (
+        local_advantages
+        + 0.2 * expected_externality
+    )
+
+    np.testing.assert_allclose(externality, expected_externality, atol=1e-7)
+    np.testing.assert_allclose(training, expected_training, atol=1e-7)
+
+
+def test_externality_consensus_rejects_invalid_contract():
+    local_advantages = np.zeros((3, 2, 1, 1), dtype=np.float32)
+
+    for beta in (-0.1, 1.1):
+        try:
+            MECRunner.externality_consensus_advantages(
+                local_advantages, local_advantages, beta
+            )
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid beta must raise ValueError")
+
+    try:
+        MECRunner.externality_consensus_advantages(
+            local_advantages, local_advantages[:2], beta=0.1
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("shape mismatch must raise ValueError")
+
+    try:
+        MECRunner.externality_consensus_advantages(
+            local_advantages,
+            local_advantages,
+            beta=0.1,
+            component_sizes=np.ones((3, 1), dtype=np.float32),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("component-size shape mismatch must raise ValueError")
+
+
+def test_externality_consensus_mixed_batch_keeps_isolated_samples_local():
+    local_advantages = np.array(
+        [
+            [[[1.0], [2.0]], [[3.0], [4.0]]],
+            [[[5.0], [6.0]], [[7.0], [8.0]]],
+            [[[9.0], [10.0]], [[11.0], [12.0]]],
+        ],
+        dtype=np.float32,
+    )
+    consensus_advantages = local_advantages / 3.0
+    consensus_advantages[:, :, 1] = np.mean(
+        local_advantages[:, :, 1], axis=0, keepdims=True
+    )
+    component_sizes = np.array(
+        [[1.0, 1.0, 1.0], [3.0, 3.0, 3.0]], dtype=np.float32
+    )
+
+    training, externality = MECRunner.externality_consensus_advantages(
+        local_advantages,
+        consensus_advantages,
+        beta=0.2,
+        component_sizes=component_sizes,
+        self_contribution_coefficients=np.ones((2, 3), dtype=np.float32),
+    )
+
+    np.testing.assert_array_equal(
+        externality[:, :, 0], np.zeros_like(externality[:, :, 0])
+    )
+    np.testing.assert_allclose(
+        training[:, :, 0], local_advantages[:, :, 0], atol=1e-7
+    )
+
+
+def test_finite_round_externality_removes_actual_self_contribution():
+    local_advantages = np.array([1.0, 5.0], dtype=np.float32).reshape(2, 1, 1, 1)
+    one_round_weights = np.array(
+        [[0.75, 0.25], [0.25, 0.75]], dtype=np.float32
+    )
+    consensus_advantages = (one_round_weights @ local_advantages[:, 0, 0, 0])\
+        .reshape(2, 1, 1, 1)
+    self_coefficients = np.full((1, 2), 1.5, dtype=np.float32)
+
+    training, externality = MECRunner.externality_consensus_advantages(
+        local_advantages,
+        consensus_advantages,
+        beta=0.2,
+        component_sizes=np.full((1, 2), 2, dtype=np.float32),
+        self_contribution_coefficients=self_coefficients,
+    )
+
+    expected_externality = np.array([2.5, 0.5], dtype=np.float32).reshape(
+        2, 1, 1, 1
+    )
+    np.testing.assert_allclose(externality, expected_externality, atol=1e-7)
+    np.testing.assert_allclose(
+        training,
+        local_advantages + 0.2 * expected_externality,
+        atol=1e-7,
+    )
