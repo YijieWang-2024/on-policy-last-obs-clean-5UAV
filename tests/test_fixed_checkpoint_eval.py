@@ -12,6 +12,7 @@ from onpolicy.scripts.eval.evaluate_dynamic_mappo_fixed import (
 )
 from onpolicy.scripts.eval.render_dynamic_mappo_episode import (
     mask_actor_message_observations,
+    mask_actor_messages_beyond_distance,
     snapshot_checkpoint,
 )
 from onpolicy.runner.separated.mec_runner import MECRunner
@@ -125,6 +126,56 @@ def test_actor_message_masking_rejects_non_message_checkpoint():
         ValueError, "message-capable checkpoint"
     ):
         mask_actor_message_observations(normers, np.ones((2, 8)))
+
+
+def test_actor_message_distance_mask_retains_near_and_zeros_far_packets():
+    obs = np.arange(2 * 46, dtype=np.float32).reshape(2, 46)
+    normers = [
+        SimpleNamespace(obs_preserve_slices=[(3, 43)]),
+        SimpleNamespace(obs_preserve_slices=[(3, 43)]),
+    ]
+    packets = np.zeros((2, 4, 10), dtype=np.float32)
+    packets[:, 0, :2] = [0.2, 0.0]       # 120 m
+    packets[:, 1, :2] = [0.5, 0.0]       # 300 m
+    packets[:, 2, :2] = [0.3, 0.4]       # 300 m
+    packets[:, 3, :2] = [260.0 / 600.0, 0.0]  # boundary retained
+    packets[:, :, 2:9] = 7.0
+    packets[:, :, 9] = 1.0
+    obs[:, 3:43] = packets.reshape(2, 40)
+
+    masked = mask_actor_messages_beyond_distance(
+        normers,
+        obs,
+        distance_limit=260.0,
+        map_scale=600.0,
+    )
+    masked_packets = masked[:, 3:43].reshape(2, 4, 10)
+
+    np.testing.assert_array_equal(masked_packets[:, 0], packets[:, 0])
+    np.testing.assert_array_equal(masked_packets[:, 1:3], 0.0)
+    np.testing.assert_allclose(masked_packets[:, 3], packets[:, 3])
+    np.testing.assert_array_equal(masked[:, :3], obs[:, :3])
+    np.testing.assert_array_equal(masked[:, 43:], obs[:, 43:])
+    np.testing.assert_array_equal(obs[:, 3:43], packets.reshape(2, 40))
+
+
+def test_actor_message_distance_mask_validates_contract():
+    normers = [SimpleNamespace(obs_preserve_slices=[(2, 11)])]
+    with np.testing.assert_raises_regex(ValueError, "10-value packets"):
+        mask_actor_messages_beyond_distance(
+            normers,
+            np.ones((1, 12), dtype=np.float32),
+            distance_limit=260.0,
+            map_scale=600.0,
+        )
+    for invalid_limit in (0.0, -1.0, np.nan, np.inf):
+        with np.testing.assert_raises_regex(ValueError, "distance limit"):
+            mask_actor_messages_beyond_distance(
+                [SimpleNamespace(obs_preserve_slices=[(2, 12)])],
+                np.ones((1, 12), dtype=np.float32),
+                distance_limit=invalid_limit,
+                map_scale=600.0,
+            )
 
 
 def _write_checkpoint_files(models_dir):

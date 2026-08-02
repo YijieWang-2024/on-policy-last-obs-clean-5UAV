@@ -172,9 +172,70 @@ def mask_actor_message_observations(normers, obs):
     return obs
 
 
-def prepare_policy_inputs(normers, obs, states, mask_actor_messages=False):
+def mask_actor_messages_beyond_distance(
+    normers,
+    obs,
+    distance_limit,
+    map_scale,
+):
+    """Zero sender packets farther than a physical distance threshold.
+
+    Actor message relative coordinates are stored in raw, map-normalized form
+    inside Normer's preserved slices.  This counterfactual therefore operates
+    before frozen observation normalization and leaves every non-message input,
+    the environment dynamics, and the critic state unchanged.
+    """
+    if not np.isfinite(distance_limit) or distance_limit <= 0.0:
+        raise ValueError(
+            "actor message distance limit must be finite and positive"
+        )
+    if not np.isfinite(map_scale) or map_scale <= 0.0:
+        raise ValueError("actor message map scale must be finite and positive")
+    obs = np.asarray(obs, dtype=np.float32).copy()
+    layouts = [
+        tuple(getattr(normer, "obs_preserve_slices", ()))
+        for normer in normers
+    ]
+    if not layouts or any(layout != layouts[0] for layout in layouts):
+        raise ValueError("actor message slice layouts differ across normers")
+    if not layouts[0]:
+        raise ValueError(
+            "distance masking requires a message-capable checkpoint"
+        )
+    for agent_id, layout in enumerate(layouts):
+        for slice_start, slice_end in layout:
+            width = slice_end - slice_start
+            if width <= 0 or width % 10:
+                raise ValueError(
+                    "actor message slice width must contain 10-value packets"
+                )
+            packets = obs[agent_id, slice_start:slice_end].reshape(-1, 10)
+            physical_distance = (
+                np.linalg.norm(packets[:, :2], axis=-1) * map_scale
+            )
+            packets[physical_distance > distance_limit] = 0.0
+    return obs
+
+
+def prepare_policy_inputs(
+    normers,
+    obs,
+    states,
+    mask_actor_messages=False,
+    actor_message_distance_limit=None,
+    actor_message_map_scale=None,
+):
     if mask_actor_messages:
         obs = mask_actor_message_observations(normers, obs)
+    elif actor_message_distance_limit is not None:
+        if actor_message_map_scale is None:
+            raise ValueError("actor message map scale is required")
+        obs = mask_actor_messages_beyond_distance(
+            normers,
+            obs,
+            actor_message_distance_limit,
+            actor_message_map_scale,
+        )
     return frozen_normalize(normers, obs, states)
 
 

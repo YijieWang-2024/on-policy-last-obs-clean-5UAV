@@ -116,12 +116,23 @@ def parse_cli():
             "actors and normers are saved sequentially."
         ),
     )
-    parser.add_argument(
+    message_group = parser.add_mutually_exclusive_group()
+    message_group.add_argument(
         "--mask-actor-messages",
         action="store_true",
         help=(
             "Counterfactually zero actor communication payloads and masks before "
             "deterministic inference. The environment and critic state are unchanged."
+        ),
+    )
+    message_group.add_argument(
+        "--actor-message-distance-limit",
+        type=float,
+        default=None,
+        help=(
+            "Counterfactually retain only actor sender packets at or below this "
+            "physical UAV-to-UAV distance in metres. The checkpoint, environment, "
+            "critic state, and all non-message observations remain unchanged."
         ),
     )
     return parser.parse_args()
@@ -187,6 +198,7 @@ def evaluate_episode(
     args,
     seed,
     mask_actor_messages=False,
+    actor_message_distance_limit=None,
 ):
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -194,11 +206,18 @@ def evaluate_episode(
     obs, states, available_actions, _, attention_mask = env.reset()
     if bool(getattr(env, "curriculum_random_reset", False)):
         raise RuntimeError("fixed evaluation unexpectedly used a random reset")
+    actor_message_map_scale = max(
+        float(args.x_max_uav - args.x_min_uav),
+        float(args.y_max_uav - args.y_min_uav),
+        1.0,
+    )
     obs, states = prepare_policy_inputs(
         normers,
         obs,
         states,
         mask_actor_messages=mask_actor_messages,
+        actor_message_distance_limit=actor_message_distance_limit,
+        actor_message_map_scale=actor_message_map_scale,
     )
 
     n_uavs = int(args.n_UAVs)
@@ -248,6 +267,8 @@ def evaluate_episode(
                 obs,
                 states,
                 mask_actor_messages=mask_actor_messages,
+                actor_message_distance_limit=actor_message_distance_limit,
+                actor_message_map_scale=actor_message_map_scale,
             )
             masks[:] = 0.0 if np.all(dones) else 1.0
 
@@ -306,6 +327,16 @@ def main():
         )
     if cli.training_step <= 0:
         raise ValueError("training step must be positive")
+    if (
+        cli.actor_message_distance_limit is not None
+        and (
+            not np.isfinite(cli.actor_message_distance_limit)
+            or cli.actor_message_distance_limit <= 0.0
+        )
+    ):
+        raise ValueError(
+            "actor message distance limit must be finite and positive"
+        )
     if output_dir.exists():
         raise FileExistsError(f"output directory already exists: {output_dir}")
     output_dir.mkdir(parents=True)
@@ -361,6 +392,7 @@ def main():
                 args,
                 seed,
                 mask_actor_messages=cli.mask_actor_messages,
+                actor_message_distance_limit=cli.actor_message_distance_limit,
             ))
     finally:
         env.close()
@@ -395,7 +427,19 @@ def main():
         "matched_config_sha256": config_sha256(comparison_config),
         "actor_mode": "deterministic",
         "actor_message_evaluation": (
-            "masked_to_zero" if cli.mask_actor_messages else "as_observed"
+            "masked_to_zero"
+            if cli.mask_actor_messages
+            else (
+                f"masked_beyond_{cli.actor_message_distance_limit:g}m"
+                if cli.actor_message_distance_limit is not None
+                else "as_observed"
+            )
+        ),
+        "actor_message_distance_limit_m": cli.actor_message_distance_limit,
+        "actor_message_map_scale_m": max(
+            float(args.x_max_uav - args.x_min_uav),
+            float(args.y_max_uav - args.y_min_uav),
+            1.0,
         ),
         "reset_mode": "fixed",
         "normalization": "frozen saved statistics",
