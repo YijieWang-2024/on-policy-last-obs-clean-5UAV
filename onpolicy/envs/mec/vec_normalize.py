@@ -4,20 +4,23 @@ import pickle
 
 
 def normalize_batch(normers, obs, states, rews=None, dones=None):
-    """Normalize all agents while preserving each agent's independent statistics."""
+    """Normalize all agents, optionally sharing only the return scale."""
     if not normers:
         return obs, states, rews
 
     first = normers[0]
     if any(
-        (normer.ob_norm, normer.ret_norm, normer.not_norm, normer.clipob,
-         normer.cliprew, normer.gamma, normer.epsilon)
-        != (first.ob_norm, first.ret_norm, first.not_norm, first.clipob,
-            first.cliprew, first.gamma, first.epsilon)
+        (normer.ob_norm, normer.ret_norm, normer.shared_ret_norm,
+         normer.not_norm, normer.clipob, normer.cliprew, normer.gamma,
+         normer.epsilon)
+        != (first.ob_norm, first.ret_norm, first.shared_ret_norm,
+            first.not_norm, first.clipob, first.cliprew, first.gamma,
+            first.epsilon)
         for normer in normers[1:]
     ):
         raise ValueError("batched normalization requires identical Normer settings")
 
+    discounted_returns = []
     for agent_id, normer in enumerate(normers):
         if normer.ob_rms:
             normer.ob_rms.update(obs[:, agent_id])
@@ -33,7 +36,18 @@ def normalize_batch(normers, obs, states, rews=None, dones=None):
                 if agent_dones.shape != normer.returns.shape:
                     agent_dones = agent_dones[..., np.newaxis]
                 normer.returns = normer.returns * (1.0 - agent_dones)
-            normer.ret_rms.update(normer.returns.reshape(-1, 1))
+            discounted_returns.append(normer.returns.reshape(-1, 1))
+            if not first.shared_ret_norm:
+                normer.ret_rms.update(discounted_returns[-1])
+
+    if rews is not None and first.ret_rms and first.shared_ret_norm:
+        # Every agent observes the same pooled return distribution.  The RMS
+        # objects remain separate so existing per-agent checkpoint files stay
+        # self-contained, but receive identical samples and therefore retain
+        # identical statistics.
+        pooled_returns = np.concatenate(discounted_returns, axis=0)
+        for normer in normers:
+            normer.ret_rms.update(pooled_returns)
 
     if first.ob_rms:
         start = first.not_norm
@@ -72,6 +86,7 @@ class Normer():
     def __init__(self, args=None, obs_space=None, states_space=None, clipob=10., cliprew=10., gamma=0.99, epsilon=1e-8):
         self.ob_norm = args.ob_norm
         self.ret_norm = args.ret_norm
+        self.shared_ret_norm = getattr(args, 'shared_ret_norm', False)
         self.ob_state_with_timestep = getattr(args, 'ob_state_with_timestep', False)
         self.ob_state_with_id = getattr(args, 'ob_state_with_id', False)
         self.n_UAVs = getattr(args, 'n_UAVs', 1)

@@ -41,6 +41,7 @@ class R_MAPPO():
         self.average_local_advantage = args.average_local_advantage
         self.average_local_advantage_timely = args.average_local_advantage_timely
         self.average_neighbor_advantage = args.average_neighbor_advantage
+        self.advantage_mode = getattr(args, "advantage_mode", "default")
         self.num_updates = 0
         self.continue_training = True
 
@@ -245,7 +246,9 @@ class R_MAPPO():
         """
         使用小批量梯度下降进行训练更新，增加了训练稳定性监控
         """
-        if self.average_local_advantage_timely and self.average_local_advantage:
+        if self.advantage_mode != "default":
+            advantages = buffer.advantages
+        elif self.average_local_advantage_timely and self.average_local_advantage:
             advantages = buffer.advantages
         elif (not self.average_local_advantage_timely) and (self.average_local_advantage or self.average_neighbor_advantage):
             advantages = buffer.advantages

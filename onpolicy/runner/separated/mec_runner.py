@@ -30,6 +30,8 @@ class MECRunner(Runner):
         self.average_neighbor_advantage = config['all_args'].average_neighbor_advantage
         self.whether_average_network_parameters = config['all_args'].whether_average_network_parameters
         self.average_network_parameters_interval = config['all_args'].average_network_parameters_interval
+        self.advantage_mode = getattr(config['all_args'], "advantage_mode", "default")
+        self.consensus_alpha = getattr(config['all_args'], "consensus_alpha", 0.5)
         if self.whether_average_network_parameters:
             self.average_network_parameters()
         # self.n_UAVs = config['all_args'].n_UAVs
@@ -318,7 +320,60 @@ class MECRunner(Runner):
     def train(self):
         train_infos = []
         consensus_infos = {}
-        if self.average_local_advantage_timely and self.average_local_advantage:
+        if self.advantage_mode != "default":
+            local_advantage = self.collect_local_advantages()
+
+            if self.advantage_mode == "local":
+                training_advantage = local_advantage
+            elif self.advantage_mode == "legacy_noise":
+                exact_mean = np.mean(local_advantage, axis=0, keepdims=True)
+                raw_consensus = self.run_consensus_algorithm(
+                    local_advantage, self.all_args.n_iterations
+                )
+                consensus_residual = self.normalized_consensus_residual(
+                    local_advantage, raw_consensus
+                )
+                std_advantage = np.std(local_advantage, axis=0, keepdims=True)
+                training_advantage = local_advantage + exact_mean
+                training_advantage += (
+                    consensus_residual
+                    * 0.12
+                    * std_advantage
+                    * np.random.randn(*local_advantage.shape)
+                )
+                consensus_infos = {
+                    'consensus_residual_mean': float(np.mean(consensus_residual)),
+                    'consensus_residual_max': float(np.max(consensus_residual)),
+                }
+            else:
+                consensus_advantage, graph_stats = self.run_consensus_algorithm(
+                    local_advantage,
+                    self.all_args.n_iterations,
+                    scale_by_component=True,
+                    return_graph_stats=True,
+                )
+                if self.advantage_mode == "pure_consensus":
+                    training_advantage = consensus_advantage
+                elif self.advantage_mode == "mixed_consensus":
+                    training_advantage = (
+                        (1.0 - self.consensus_alpha) * local_advantage
+                        + self.consensus_alpha * consensus_advantage
+                    )
+                else:
+                    raise ValueError(
+                        f"unsupported advantage_mode: {self.advantage_mode}"
+                    )
+                consensus_infos = self.consensus_diagnostics(
+                    local_advantage,
+                    consensus_advantage,
+                    training_advantage,
+                    graph_stats,
+                )
+
+            for agent_id in range(self.num_agents):
+                self.buffer[agent_id].advantages = training_advantage[agent_id].copy()
+
+        elif self.average_local_advantage_timely and self.average_local_advantage:
             if self.whether_local_add_direct_ave_adv:
                 # 直接local+True_mean
                 local_advantage = np.zeros((self.num_agents, self.episode_length, self.n_rollout_threads, 1), dtype=np.float32)
@@ -663,8 +718,78 @@ class MECRunner(Runner):
         # normer_path = str(self.model_dir) + "/normer.pkl"
         # self.normer.load(normer_path)
 
-    def run_consensus_algorithm(self, local_observations, max_iterations):
-        """Run finite consensus on the rollout-ending Metropolis graph."""
+    def collect_local_advantages(self):
+        """Collect per-UAV GAE advantages in a common array."""
+        local_advantages = np.zeros(
+            (self.num_agents, self.episode_length, self.n_rollout_threads, 1),
+            dtype=np.float32,
+        )
+        for agent_id in range(self.num_agents):
+            value_preds = self.buffer[agent_id].value_preds[:-1]
+            trainer = self.trainer[agent_id]
+            if trainer._use_popart or trainer._use_valuenorm:
+                value_preds = trainer.value_normalizer.denormalize(value_preds)
+            local_advantages[agent_id] = (
+                self.buffer[agent_id].returns[:-1] - value_preds
+            )
+        return local_advantages
+
+    @staticmethod
+    def _safe_correlation(left, right, epsilon=1e-8):
+        left = np.asarray(left).reshape(-1)
+        right = np.asarray(right).reshape(-1)
+        finite = np.isfinite(left) & np.isfinite(right)
+        if np.count_nonzero(finite) < 2:
+            return 0.0
+        left = left[finite]
+        right = right[finite]
+        if np.std(left) <= epsilon or np.std(right) <= epsilon:
+            return 0.0
+        return float(np.corrcoef(left, right)[0, 1])
+
+    def consensus_diagnostics(
+        self, local_advantages, consensus_advantages, training_advantages,
+        graph_stats, epsilon=1e-8,
+    ):
+        """Return low-cost scalar diagnostics without running eval episodes."""
+        exact_mean = np.mean(local_advantages, axis=0, keepdims=True)
+        initial_error = np.linalg.norm(local_advantages - exact_mean, axis=0)
+        global_error = np.linalg.norm(consensus_advantages - exact_mean, axis=0)
+        relative_global_error = np.divide(
+            global_error,
+            initial_error,
+            out=np.zeros_like(global_error),
+            where=initial_error > epsilon,
+        )
+        local_std = float(np.std(local_advantages))
+        consensus_std = float(np.std(consensus_advantages))
+        return {
+            'consensus_global_error_mean': float(np.mean(relative_global_error)),
+            'consensus_global_error_max': float(np.max(relative_global_error)),
+            'consensus_component_count_mean': float(np.mean(graph_stats['component_counts'])),
+            'consensus_component_size_mean': float(np.mean(graph_stats['component_sizes'])),
+            'consensus_graph_connected_fraction': float(graph_stats['connected_fraction']),
+            'consensus_local_corr': self._safe_correlation(
+                local_advantages, consensus_advantages
+            ),
+            'training_local_corr': self._safe_correlation(
+                local_advantages, training_advantages
+            ),
+            'consensus_to_local_std_ratio': consensus_std / (local_std + epsilon),
+        }
+
+    def run_consensus_algorithm(
+        self, local_observations, max_iterations, scale_by_component=False,
+        return_graph_stats=False,
+    ):
+        """Run finite consensus on the rollout-ending Metropolis graph.
+
+        With ``scale_by_component``, each component estimate is multiplied by
+        ``component_size / num_agents``.  Consequently R=0 produces A_i/M,
+        while a connected converged graph produces the exact global mean.
+        """
+        if max_iterations < 0:
+            raise ValueError("max_iterations must be non-negative")
         estimates = np.transpose(local_observations, (2, 0, 1, 3))
         estimate_shape = estimates.shape
         estimates = estimates.reshape(self.n_rollout_threads, self.num_agents, -1)
@@ -676,8 +801,31 @@ class MECRunner(Runner):
         for _ in range(max_iterations):
             estimates = weights @ estimates
 
+        component_counts = np.zeros(self.n_rollout_threads, dtype=np.int32)
+        component_sizes = np.ones(
+            (self.n_rollout_threads, self.num_agents), dtype=local_observations.dtype
+        )
+        for env_id in range(self.n_rollout_threads):
+            component_count, labels = connected_components(
+                weights[env_id] > 0.0, directed=False, return_labels=True
+            )
+            component_counts[env_id] = component_count
+            sizes = np.bincount(labels, minlength=component_count)
+            component_sizes[env_id] = sizes[labels]
+
+        if scale_by_component:
+            estimates *= component_sizes[..., np.newaxis] / float(self.num_agents)
+
         estimates = estimates.reshape(estimate_shape)
-        return np.transpose(estimates, (1, 2, 0, 3))
+        estimates = np.transpose(estimates, (1, 2, 0, 3))
+        if not return_graph_stats:
+            return estimates
+        graph_stats = {
+            'component_counts': component_counts,
+            'component_sizes': component_sizes,
+            'connected_fraction': np.mean(component_counts == 1),
+        }
+        return estimates, graph_stats
 
     @staticmethod
     def normalized_consensus_residual(

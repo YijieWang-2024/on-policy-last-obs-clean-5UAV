@@ -7,6 +7,9 @@ param(
     [int]$CommunicationDistance = 260,
     [int]$ActorNeighborDistance = 260,
     [int]$ConsensusRounds = 50,
+    [ValidateSet('local', 'mixed_consensus', 'pure_consensus', 'legacy_noise')]
+    [string]$AdvantageMode = 'mixed_consensus',
+    [double]$ConsensusAlpha = 0.5,
     [string]$Python = 'python',
     [string]$ExperimentName = '',
     [switch]$CartesianFlight,
@@ -14,7 +17,9 @@ param(
     [switch]$SpatialFlightActor,
     [switch]$DistanceOnlyUserSort,
     [switch]$CompletionPriorityUserSort,
-    [switch]$UAVResetCurriculum
+    [switch]$UAVResetCurriculum,
+    [switch]$LegacyMeanPoolCritic,
+    [switch]$IndependentReturnNorm
 )
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
@@ -107,11 +112,16 @@ if ($UAVResetCurriculum) {
 if ($Method -eq 'dcppo') {
     $arguments += @(
         '--neighbor_distance', $CommunicationDistance,
-        '--average_local_advantage_timely',
-        '--average_local_advantage',
-        '--whether_local_add_direct_ave_adv',
+        '--advantage_mode', $AdvantageMode,
+        '--consensus_alpha', $ConsensusAlpha,
         '--n_iterations', $ConsensusRounds
     )
+    if ($AdvantageMode -ne 'legacy_noise' -and -not $LegacyMeanPoolCritic) {
+        $arguments += '--ego_query_critic'
+    }
+    if ($AdvantageMode -ne 'legacy_noise' -and -not $IndependentReturnNorm) {
+        $arguments += '--shared_ret_norm'
+    }
 } elseif ($Method -eq 'mappo') {
     $arguments += @('--neighbor_distance', '1000')
 } else {

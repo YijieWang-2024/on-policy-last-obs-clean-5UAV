@@ -155,6 +155,8 @@ def parse_args(args, parser):
     # 在config.py里有"--use_valuenorm", action='store_false', default=True, help="by default True, use running mean and std to normalize rewards."
     parser.add_argument("--ret_norm", action='store_false', default=True, help=" if true, scale the reward according to averaged discounted returns. do not use it with use_valuenorm==True")
     parser.add_argument("--ob-norm", action='store_false', default=True, help="If true, normalize the observation using running mean and std")
+    parser.add_argument("--shared_ret_norm", action='store_true', default=False,
+                        help="Use one pooled discounted-return scale for all UAVs while keeping observation statistics independent")
 
     parser.add_argument("--ob_state_with_timestep", action='store_true', default=False, help="If true, observation and state with timestep in first dimension")
     parser.add_argument("--use_kl_threshold", action='store_true', default=False, help="If true, r_mappo.py use kl threshold to stop update early")
@@ -166,6 +168,8 @@ def parse_args(args, parser):
     parser.add_argument('--max_UAVs_obs_concat', type=int, default=3, help="max number of UAVs' obs to concat")
     parser.add_argument("--use_atten_actor", action='store_true', default=False, help="If true, use R_Actor_Attention")
     parser.add_argument("--use_atten_critic", action='store_true', default=False, help="If true, use R_Critic_Attention")
+    parser.add_argument("--ego_query_critic", action='store_true', default=False,
+                        help="For attention critics, keep the first (self) query output instead of mean-pooling all query outputs")
     parser.add_argument("--local_reward", action='store_true', default=False,
                         help="If true, calculate different reward in calculate_reward() of mec.py")
     parser.add_argument("--discrete_associate", action='store_true', default=False, help="If true, offloading_actions is Binary, and Network's output_layer is MultiBornrlia")
@@ -198,6 +202,16 @@ def parse_args(args, parser):
     parser.add_argument("--local_add_T_ave_adv", type=int, default=0, help="how many steps of the advantage to average")
     parser.add_argument("--average_neighbor_advantage", action='store_true', default=False, help="If true, Execute the average of all neighbor's Advantage in the mec_runner.py with neighbor_weights")
     parser.add_argument("--n_iterations", type=int, default=50, help="Number of iterations for weighted summation when finding the global advantage function")
+    parser.add_argument(
+        "--advantage_mode",
+        choices=["default", "local", "mixed_consensus", "pure_consensus", "legacy_noise"],
+        default="default",
+        help="Actor advantage contract. Consensus modes use the rollout-ending communication graph.",
+    )
+    parser.add_argument(
+        "--consensus_alpha", type=float, default=0.5,
+        help="Team-consensus weight for mixed_consensus: (1-alpha)*A_local + alpha*A_consensus",
+    )
     parser.add_argument("--whether_average_network_parameters", action='store_true', default=False, help="If true, Execute the average of all network's parameters in the mec_runner.py")
     # 测试使用tanh来处理下动作会不会有影响。
     parser.add_argument("--tanh_gaussian", action='store_true', default=False, help="If true, act.py use (tanh(u)+1)/2 to process action")
@@ -208,6 +222,12 @@ def parse_args(args, parser):
     assert default_parser.alpha_r==0 and default_parser.epsilon_r==0, "这两个参数要默认为0。哪个输入了新的值，不为零，就是考虑了对应的惩罚。"
     assert default_parser.local_add_T_ave_adv == 0, "这个参数要默认为0，不为0的话，就是使用了这样一个平均方式。"
     all_args = parser.parse_known_args(args)[0]
+    if not 0.0 <= all_args.consensus_alpha <= 1.0:
+        parser.error("--consensus_alpha must be in [0, 1]")
+    if all_args.ego_query_critic and not all_args.use_atten_critic:
+        parser.error("--ego_query_critic requires --use_atten_critic")
+    if all_args.shared_ret_norm and not all_args.ret_norm:
+        parser.error("--shared_ret_norm requires ret_norm to be enabled")
     return all_args
 
 

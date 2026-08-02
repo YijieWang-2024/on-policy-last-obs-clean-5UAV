@@ -232,6 +232,7 @@ class R_Critic_Attention(nn.Module):
         self.state_is_k_hops = args.state_is_k_hops
         self.n_UAVs = args.n_UAVs
         self.all_uav_k_hops = args.all_uav_k_hops
+        self.ego_query_critic = getattr(args, "ego_query_critic", False)
         if self.all_uav_k_hops:
             assert self.max_UAVs_obs_concat == self.n_UAVs
         self._use_orthogonal = args.use_orthogonal
@@ -294,8 +295,11 @@ class R_Critic_Attention(nn.Module):
             agent_features = self.agent_encoder(obs_reshaped)
             # Apply attention mechanism with agent mask
             attended_features = self.attention(agent_features, attention_active_mask)
-            # 上边的代码使用了self-attention。这里对max_UAVs_obs_concat求了平均。（不平均的话，其实只取第一个观测，即自己的观测就好。）
-            if attention_active_mask is not None:
+            # Token 0 is the current UAV. Keeping its query output preserves
+            # the ego anchor while all visible UAVs remain keys and values.
+            if self.ego_query_critic:
+                aggregated_features = attended_features[:, 0]
+            elif attention_active_mask is not None:
                 # Expand mask to match attended_features shape for broadcasting
                 expanded_mask = attention_active_mask.unsqueeze(-1)
                 # Compute weighted sum (using mask as weights)
@@ -306,9 +310,6 @@ class R_Critic_Attention(nn.Module):
             else:
                 # Simple mean if no mask provided
                 aggregated_features = attended_features.mean(dim=1)
-            # # 不平均，只取自己的观测试一下。
-            # aggregated_features = attended_features[:, 0]
-
             # Final MLP processing
             features = self.mlp_after_attention(aggregated_features)
         else:
