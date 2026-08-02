@@ -6,6 +6,7 @@ import torch
 from onpolicy.algorithms.r_mappo.algorithm.r_actor_critic import R_Actor
 from onpolicy.config import get_config
 from onpolicy.envs.mec.mec import MEC
+from onpolicy.envs.mec.vec_normalize import Normer, normalize_batch
 from onpolicy.scripts.train.train_mec import parse_args
 
 
@@ -189,6 +190,167 @@ class SpatialFlightActorTest(unittest.TestCase):
         eval_env = MEC(eval_args)
         eval_env.reset()
         np.testing.assert_allclose(eval_env.uav_positions[:, :2], fixed)
+
+    def test_actor_message_radius_endpoints_and_task_payload(self):
+        zero_env = MEC(self.make_args(
+            actor_message_mode="task_summary",
+            neighbor_distance=0.0,
+        ))
+        zero_env.seed(2)
+        zero_env.reset()
+        np.testing.assert_array_equal(
+            zero_env.get_actor_message_block(),
+            np.zeros((5, 40), dtype=np.float32),
+        )
+
+        geometry_env = MEC(self.make_args(
+            actor_message_mode="geometry",
+            neighbor_distance=1000.0,
+        ))
+        geometry_env.seed(2)
+        geometry_env.reset()
+        geometry = geometry_env.get_actor_message_block().reshape(5, 4, 10)
+        np.testing.assert_array_equal(geometry[:, :, 9], 1.0)
+        np.testing.assert_array_equal(geometry[:, :, 2:9], 0.0)
+
+        task_env = MEC(self.make_args(
+            actor_message_mode="task_summary",
+            neighbor_distance=1000.0,
+        ))
+        task_env.seed(2)
+        task_env.reset()
+        task_messages = task_env.get_actor_message_block().reshape(5, 4, 10)
+        np.testing.assert_array_equal(task_messages[:, :, 9], 1.0)
+        self.assertGreater(np.max(task_messages[:, :, 2]), 0.0)
+        self.assertTrue(np.all(np.isfinite(task_messages)))
+        for receiver_id in range(task_env.n_UAVs):
+            sender_ids = [
+                sender_id for sender_id in range(task_env.n_UAVs)
+                if sender_id != receiver_id
+            ]
+            expected_counts = np.asarray([
+                np.count_nonzero(task_env.nearby_gus_of_uavs[sender_id] != -1)
+                / task_env.n_GUs
+                for sender_id in sender_ids
+            ])
+            np.testing.assert_allclose(
+                task_messages[receiver_id, :, 2], expected_counts
+            )
+
+        observations_after_reset = task_env.actor_message_observation_count
+        task_env.get_actor_message_block()
+        self.assertEqual(
+            task_env.actor_message_observation_count,
+            observations_after_reset + 1,
+        )
+        task_env.reset()
+        self.assertEqual(
+            task_env.actor_message_observation_count,
+            1,
+        )
+
+    def test_message_encoder_is_permutation_invariant_and_flight_only(self):
+        torch.manual_seed(17)
+        args = self.make_args(
+            actor_message_mode="task_summary",
+            neighbor_distance=1000.0,
+        )
+        env = MEC(args)
+        env.seed(2)
+        obs, _, available, _, _ = env.reset()
+        actor = R_Actor(args, env.observation_space, env.action_space)
+        obs_a = torch.as_tensor(obs, dtype=torch.float32)
+        obs_b = obs_a.clone()
+        start = 2
+        messages = obs_b[:, start:start + 40].reshape(5, 4, 10)
+        obs_b[:, start:start + 40] = messages[:, [2, 0, 3, 1]].reshape(5, 40)
+        available = torch.as_tensor(available, dtype=torch.float32)
+        rnn = torch.zeros(args.n_UAVs, args.recurrent_N, args.hidden_size)
+        masks = torch.ones(args.n_UAVs, 1)
+
+        with torch.no_grad():
+            flight_a = actor.flight_base(obs_a, available)
+            flight_b = actor.flight_base(obs_b, available)
+            actions_a, _, _ = actor(
+                obs_a, rnn, masks, available.clone(), deterministic=True
+            )
+            actions_b, _, _ = actor(
+                obs_b, rnn, masks, available.clone(), deterministic=True
+            )
+            obs_c = obs_a.clone()
+            obs_c[:, start:start + 40] = 0.0
+            flight_c = actor.flight_base(obs_c, available)
+            actions_c, _, _ = actor(
+                obs_c, rnn, masks, available.clone(), deterministic=True
+            )
+        torch.testing.assert_close(flight_a, flight_b, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(actions_a[:, 2:], actions_b[:, 2:])
+        self.assertFalse(torch.allclose(flight_a, flight_c))
+        torch.testing.assert_close(actions_a[:, 2:], actions_c[:, 2:])
+
+    def test_actor_message_block_bypasses_running_observation_normalization(self):
+        args = self.make_args(
+            actor_message_mode="task_summary",
+            neighbor_distance=1000.0,
+            ob_norm=True,
+            ret_norm=False,
+        )
+        env = MEC(args)
+        env.seed(2)
+        obs, _, _, _, _ = env.reset()
+        normer = Normer(
+            args=args,
+            obs_space=env.observation_space.shape,
+            states_space=env.state_space.shape,
+        )
+        raw = obs.copy()
+        normalized = normer._obfilt(obs.copy())
+        start, end = normer.obs_preserve_slices[0]
+        np.testing.assert_array_equal(
+            normalized[:, start:end], raw[:, start:end]
+        )
+        self.assertFalse(np.allclose(normalized[:, end:], raw[:, end:]))
+
+        normers = [
+            Normer(
+                args=args,
+                obs_space=env.observation_space.shape,
+                states_space=env.state_space.shape,
+            )
+            for _ in range(args.n_UAVs)
+        ]
+        _, state, _, _, _ = env.reset()
+        obs_batch = np.stack((raw, raw), axis=0)
+        state_batch = np.stack((state, state), axis=0)
+        normalized_batch, _, _ = normalize_batch(
+            normers, obs_batch.copy(), state_batch.copy()
+        )
+        np.testing.assert_array_equal(
+            normalized_batch[..., start:end], obs_batch[..., start:end]
+        )
+
+    def test_actor_messages_do_not_change_critic_state_contract(self):
+        disabled_args = self.make_args(
+            actor_message_mode="disabled",
+            neighbor_distance=1000.0,
+        )
+        message_args = self.make_args(
+            actor_message_mode="task_summary",
+            neighbor_distance=1000.0,
+        )
+        disabled_env = MEC(disabled_args)
+        message_env = MEC(message_args)
+        disabled_env.seed(23)
+        disabled_obs, disabled_state, _, _, _ = disabled_env.reset()
+        message_env.seed(23)
+        message_obs, message_state, _, _, _ = message_env.reset()
+
+        self.assertEqual(message_obs.shape[-1] - disabled_obs.shape[-1], 40)
+        np.testing.assert_allclose(message_state, disabled_state)
+        np.testing.assert_allclose(
+            message_env.get_critic_local_obs(message_obs),
+            disabled_obs,
+        )
 
 
 if __name__ == "__main__":

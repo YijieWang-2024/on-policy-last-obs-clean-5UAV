@@ -182,6 +182,15 @@ def parse_args(args, parser):
                         help="Use an unconstrained Gaussian (vx, vy) proposal followed by speed-disk projection")
     parser.add_argument("--actor_neighbor_obs", action='store_true', default=False,
                         help="Add one-hop relative UAV positions and masks to each actor observation")
+    parser.add_argument(
+        "--actor_message_mode",
+        choices=["disabled", "zero", "geometry", "task_summary"],
+        default="disabled",
+        help=(
+            "Radius-gated actor-only UAV message block. zero/geometry/task_summary "
+            "share one fixed architecture; the block is removed from critic inputs."
+        ),
+    )
     parser.add_argument("--spatial_flight_actor", action='store_true', default=False,
                         help="Use an independent task-free DeepSets encoder for the flight action")
     parser.add_argument("--distance_only_user_sort", action='store_true', default=False,

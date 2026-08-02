@@ -22,7 +22,16 @@ class SpatialFlightEncoder(nn.Module):
         self.prefix = int(getattr(args, "ob_state_with_timestep", False))
         if getattr(args, "ob_state_with_id", False):
             self.prefix += args.n_UAVs
-        self.users_start = self.prefix + 3  # own x/y and local-user count
+        self.message_mode = getattr(args, "actor_message_mode", "disabled")
+        self.message_features = 10
+        self.message_count = args.n_UAVs - 1
+        self.message_dim = (
+            self.message_features * self.message_count
+            if self.message_mode != "disabled"
+            else 0
+        )
+        self.messages_start = self.prefix + 2
+        self.users_start = self.prefix + 3 + self.message_dim
         expected_dim = self.users_start + self.max_users * self.user_stride
         if obs_shape[0] != expected_dim:
             raise ValueError(
@@ -37,8 +46,19 @@ class SpatialFlightEncoder(nn.Module):
             nn.Linear(hidden, hidden),
             nn.ReLU(),
         )
+        if self.message_dim:
+            self.message_encoder = nn.Sequential(
+                nn.Linear(self.message_features - 1, hidden),
+                nn.ReLU(),
+                nn.LayerNorm(hidden),
+                nn.Linear(hidden, hidden),
+                nn.ReLU(),
+            )
         self.readout = nn.Sequential(
-            nn.Linear(hidden + 3, hidden),
+            nn.Linear(
+                hidden + 3 + (hidden + 1 if self.message_dim else 0),
+                hidden,
+            ),
             nn.ReLU(),
             nn.LayerNorm(hidden),
             nn.Linear(hidden, hidden),
@@ -64,7 +84,21 @@ class SpatialFlightEncoder(nn.Module):
         count = mask.sum(dim=1, keepdim=True)
         pooled = encoded.sum(dim=1) / count.clamp(min=1.0)
         occupancy = count / float(self.max_users)
-        return self.readout(torch.cat((own_position, occupancy, pooled), dim=-1))
+        features = [own_position, occupancy, pooled]
+        if self.message_dim:
+            messages = obs[
+                :, self.messages_start:self.messages_start + self.message_dim
+            ].reshape(obs.shape[0], self.message_count, self.message_features)
+            message_mask = messages[:, :, -1].clamp(min=0.0, max=1.0)
+            encoded_messages = self.message_encoder(messages[:, :, :-1])
+            encoded_messages = encoded_messages * message_mask.unsqueeze(-1)
+            message_count = message_mask.sum(dim=1, keepdim=True)
+            pooled_messages = encoded_messages.sum(dim=1) / message_count.clamp(
+                min=1.0
+            )
+            message_fraction = message_count / float(self.message_count)
+            features.extend((message_fraction, pooled_messages))
+        return self.readout(torch.cat(features, dim=-1))
 
 
 class R_Actor(nn.Module):
@@ -81,20 +115,46 @@ class R_Actor(nn.Module):
         self.tpdv = dict(dtype=torch.float32, device=device)
         obs_shape = get_shape_from_obs_space(obs_space)
         self._spatial_flight_actor = getattr(args, "spatial_flight_actor", False)
+        self._actor_message_mode = getattr(args, "actor_message_mode", "disabled")
+        self._actor_message_dim = (
+            10 * (args.n_UAVs - 1)
+            if self._actor_message_mode != "disabled"
+            else 0
+        )
+        self._actor_message_start = (
+            int(getattr(args, "ob_state_with_timestep", False))
+            + (args.n_UAVs if getattr(args, "ob_state_with_id", False) else 0)
+            + 2
+        )
         if self._spatial_flight_actor:
             if self._use_naive_recurrent_policy or self._use_recurrent_policy:
                 raise ValueError("spatial_flight_actor currently supports feed-forward policies only")
             self.flight_base = SpatialFlightEncoder(args, obs_shape)
 
+        base_obs_shape = (
+            (obs_shape[0] - self._actor_message_dim,)
+            if self._actor_message_dim
+            else obs_shape
+        )
+
         if self._use_naive_recurrent_policy or self._use_recurrent_policy:
-            self.base = MLPBase(args, obs_shape, layer_N=self._layer_N - 1)
+            self.base = MLPBase(args, base_obs_shape, layer_N=self._layer_N - 1)
             self.rnn = RNNLayer(self.hidden_size, self.hidden_size, self._recurrent_N, self._use_orthogonal)
         else:
-            self.base = MLPBase(args, obs_shape, layer_N=self._layer_N)
+            self.base = MLPBase(args, base_obs_shape, layer_N=self._layer_N)
 
         self.act = ACTLayer(action_space, self.hidden_size, self._use_orthogonal, self._gain, args)
         self.to(device)
         self.algo = args.algorithm_name
+
+    def _resource_actor_obs(self, obs):
+        """Keep communicated summaries exclusive to the spatial flight head."""
+        if not self._actor_message_dim:
+            return obs
+        message_end = self._actor_message_start + self._actor_message_dim
+        return torch.cat(
+            (obs[:, :self._actor_message_start], obs[:, message_end:]), dim=-1
+        )
 
     def forward(self, obs, rnn_states, masks, available_actions=None, deterministic=False):
         obs = check(obs).to(**self.tpdv)
@@ -102,7 +162,7 @@ class R_Actor(nn.Module):
         masks = check(masks).to(**self.tpdv)
         if available_actions is not None:
             available_actions = check(available_actions).to(**self.tpdv)
-        actor_features = self.base(obs)
+        actor_features = self.base(self._resource_actor_obs(obs))
         flight_features = (
             self.flight_base(obs, available_actions)
             if self._spatial_flight_actor else None
@@ -126,7 +186,7 @@ class R_Actor(nn.Module):
             available_actions = check(available_actions).to(**self.tpdv)
         if active_masks is not None:
             active_masks = check(active_masks).to(**self.tpdv)
-        actor_features = self.base(obs)
+        actor_features = self.base(self._resource_actor_obs(obs))
         flight_features = (
             self.flight_base(obs, available_actions)
             if self._spatial_flight_actor else None

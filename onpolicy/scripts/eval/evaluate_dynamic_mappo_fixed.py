@@ -72,6 +72,7 @@ METRIC_DIRECTIONS = {
 
 MATCHED_CONFIG_EXCLUSIONS = {
     "advantage_mode",
+    "actor_message_mode",
     "device",
     "experiment_name",
     "externality_beta",

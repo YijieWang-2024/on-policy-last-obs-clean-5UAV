@@ -178,6 +178,8 @@ class MECRunner(Runner):
                             'flight_disk_projection_ratio',
                             'curriculum_random_reset',
                             'curriculum_random_probability',
+                            'actor_message_neighbor_fraction',
+                            'actor_message_payload_norm',
                         ):
                             if metric in infos[0]:
                                 train_infos[agent_id][metric] = np.mean(

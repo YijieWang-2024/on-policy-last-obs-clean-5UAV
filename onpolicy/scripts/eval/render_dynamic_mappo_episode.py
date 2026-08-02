@@ -97,6 +97,12 @@ def frozen_normalize(normers, obs, states):
         if normer.ob_rms is None:
             continue
         start = normer.not_norm
+        preserved_obs = [
+            (slice_start, slice_end, obs[agent_id, slice_start:slice_end].copy())
+            for slice_start, slice_end in getattr(
+                normer, "obs_preserve_slices", ()
+            )
+        ]
         obs[agent_id, start:] = np.clip(
             (obs[agent_id, start:] - normer.ob_rms.mean[start:])
             / np.sqrt(normer.ob_rms.var[start:] + normer.epsilon),
@@ -109,6 +115,8 @@ def frozen_normalize(normers, obs, states):
             -normer.clipob,
             normer.clipob,
         )
+        for slice_start, slice_end, raw_values in preserved_obs:
+            obs[agent_id, slice_start:slice_end] = raw_values
     return obs, states
 
 

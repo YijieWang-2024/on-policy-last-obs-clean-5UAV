@@ -11,6 +11,9 @@ param(
     [string]$AdvantageMode = 'mixed_consensus',
     [double]$ConsensusAlpha = 0.5,
     [double]$ExternalityBeta = 0.1,
+    [ValidateSet('disabled', 'zero', 'geometry', 'task_summary')]
+    [string]$ActorMessageMode = 'disabled',
+    [double]$MeanVelocity = 0.5,
     [string]$Python = 'python',
     [string]$ExperimentName = '',
     [switch]$CartesianFlight,
@@ -78,7 +81,7 @@ $arguments = @(
     '--B', '30000000',
     '--F_m', '20000000000',
     '--v_max', '30',
-    '--mean_velocity', '0.5',
+    '--mean_velocity', $MeanVelocity,
     '--alpha_r', '32',
     '--gamma_r', '26',
     '--delta_r', '32',
@@ -96,6 +99,9 @@ if ($CartesianFlight) {
 }
 if ($ActorNeighborObs) {
     $arguments += '--actor_neighbor_obs'
+}
+if ($ActorMessageMode -ne 'disabled') {
+    $arguments += @('--actor_message_mode', $ActorMessageMode)
 }
 if ($SpatialFlightActor) {
     $arguments += '--spatial_flight_actor'

@@ -11,11 +11,11 @@ def normalize_batch(normers, obs, states, rews=None, dones=None):
     first = normers[0]
     if any(
         (normer.ob_norm, normer.ret_norm, normer.shared_ret_norm,
-         normer.not_norm, normer.clipob, normer.cliprew, normer.gamma,
-         normer.epsilon)
+         normer.not_norm, tuple(getattr(normer, "obs_preserve_slices", ())),
+         normer.clipob, normer.cliprew, normer.gamma, normer.epsilon)
         != (first.ob_norm, first.ret_norm, first.shared_ret_norm,
-            first.not_norm, first.clipob, first.cliprew, first.gamma,
-            first.epsilon)
+            first.not_norm, tuple(getattr(first, "obs_preserve_slices", ())),
+            first.clipob, first.cliprew, first.gamma, first.epsilon)
         for normer in normers[1:]
     ):
         raise ValueError("batched normalization requires identical Normer settings")
@@ -51,6 +51,12 @@ def normalize_batch(normers, obs, states, rews=None, dones=None):
 
     if first.ob_rms:
         start = first.not_norm
+        preserved_obs = [
+            (slice_start, slice_end, obs[..., slice_start:slice_end].copy())
+            for slice_start, slice_end in getattr(
+                first, "obs_preserve_slices", ()
+            )
+        ]
         obs_mean = np.stack([normer.ob_rms.mean for normer in normers])
         obs_var = np.stack([normer.ob_rms.var for normer in normers])
         state_mean = np.stack([normer.state_rms.mean for normer in normers])
@@ -67,6 +73,8 @@ def normalize_batch(normers, obs, states, rews=None, dones=None):
             -first.clipob,
             first.clipob,
         )
+        for slice_start, slice_end, raw_values in preserved_obs:
+            obs[..., slice_start:slice_end] = raw_values
 
     if rews is not None and first.ret_rms:
         scales = np.asarray([
@@ -95,6 +103,18 @@ class Normer():
             self.not_norm += 1
         if self.ob_state_with_id:
             self.not_norm += self.n_UAVs
+        self.obs_preserve_slices = []
+        actor_message_mode = getattr(args, "actor_message_mode", "disabled")
+        if actor_message_mode != "disabled":
+            legacy_neighbor_dim = (
+                3 * (self.n_UAVs - 1)
+                if getattr(args, "actor_neighbor_obs", False)
+                else 0
+            )
+            message_start = self.not_norm + 2 + legacy_neighbor_dim
+            self.obs_preserve_slices.append(
+                (message_start, message_start + 10 * (self.n_UAVs - 1))
+            )
 
         if self.ob_norm or self.ret_norm:
             self.ob_rms = RunningMeanStd(shape=obs_space) if self.ob_norm else None
@@ -137,7 +157,13 @@ class Normer():
     def _obfilt(self, obs):
         if self.ob_rms:
             self.ob_rms.update(obs)
+            preserved_obs = [
+                (start, end, obs[..., start:end].copy())
+                for start, end in getattr(self, "obs_preserve_slices", ())
+            ]
             obs[..., self.not_norm:] = np.clip((obs[..., self.not_norm:] - self.ob_rms.mean[..., self.not_norm:]) / np.sqrt(self.ob_rms.var[..., self.not_norm:] + self.epsilon), -self.clipob, self.clipob)
+            for start, end, raw_values in preserved_obs:
+                obs[..., start:end] = raw_values
         return obs
 
     def _statefilt(self, states):

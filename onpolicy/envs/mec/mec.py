@@ -288,6 +288,20 @@ class MEC(gym.Env):
         self.cartesian_flight = getattr(args, "cartesian_flight", False)
         self.actor_neighbor_obs = getattr(args, "actor_neighbor_obs", False)
         self.actor_neighbor_obs_dim = 3 * (self.n_UAVs - 1) if self.actor_neighbor_obs else 0
+        self.actor_message_mode = getattr(args, "actor_message_mode", "disabled")
+        if self.actor_message_mode not in {
+            "disabled", "zero", "geometry", "task_summary"
+        }:
+            raise ValueError(f"unknown actor_message_mode: {self.actor_message_mode}")
+        self.actor_message_features = 10
+        self.actor_message_dim = (
+            self.actor_message_features * (self.n_UAVs - 1)
+            if self.actor_message_mode != "disabled"
+            else 0
+        )
+        self.actor_only_obs_dim = (
+            self.actor_neighbor_obs_dim + self.actor_message_dim
+        )
         self.spatial_flight_actor = getattr(args, "spatial_flight_actor", False)
         explicit_distance_sort = getattr(args, "distance_only_user_sort", False)
         self.completion_priority_user_sort = getattr(
@@ -314,6 +328,13 @@ class MEC(gym.Env):
             assert self.dynamic_md
             assert not self.actor_neighbor_obs, \
                 "spatial_flight_actor must not receive neighbor UAV observations"
+        if self.actor_message_mode != "disabled":
+            assert self.spatial_flight_actor, \
+                "actor messages currently target only the spatial flight head"
+            assert not self.actor_neighbor_obs, \
+                "legacy actor_neighbor_obs and actor_message_mode are mutually exclusive"
+            assert not self.use_atten_actor, \
+                "actor messages require local actor observations"
         assert not (self.actor_neighbor_obs and self.use_atten_actor), \
             "actor_neighbor_obs requires local actor observations"
         if self.uav_reset_curriculum:
@@ -409,7 +430,7 @@ class MEC(gym.Env):
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            self.obs_dim = 3 + self.actor_neighbor_obs_dim + self.gu_obs_features * self.max_GUs_in_range
+            self.obs_dim = 3 + self.actor_only_obs_dim + self.gu_obs_features * self.max_GUs_in_range
             self.state_dim = self.obs_dim
         elif self.state_is_k_hops:  # last-obs的k跳。自己的s_{i,t}是包括覆盖范围内的无人机的。
             self.GUs_in_action_dim = self.max_GUs_in_range
@@ -421,7 +442,7 @@ class MEC(gym.Env):
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            self.obs_dim = 3 + self.actor_neighbor_obs_dim + self.gu_obs_features * self.max_GUs_in_range
+            self.obs_dim = 3 + self.actor_only_obs_dim + self.gu_obs_features * self.max_GUs_in_range
             self.state_dim = self.obs_dim
         else:
             # self.GUs_in_action_dim = self.n_GUs
@@ -430,7 +451,7 @@ class MEC(gym.Env):
             # self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            self.obs_dim = 3 + self.actor_neighbor_obs_dim + self.gu_obs_features * self.max_GUs_in_range
+            self.obs_dim = 3 + self.actor_only_obs_dim + self.gu_obs_features * self.max_GUs_in_range
 
             # self.state_dim = 1 + 3 +  2*self.n_UAVs+6*self.n_GUs +1
             # self.state_dim = self.n_UAVs * (self.obs_dim + int(self.ob_state_with_timestep))
@@ -449,7 +470,7 @@ class MEC(gym.Env):
 
         # One-hop UAV positions are actor-only. Keep the critic state identical
         # to the no-neighbor baseline so B0/B1 differ in one factor only.
-        self.critic_local_state_dim = self.obs_dim - self.actor_neighbor_obs_dim
+        self.critic_local_state_dim = self.obs_dim - self.actor_only_obs_dim
         if self.perform_with_local_state or self.state_is_k_hops:
             self.state_dim = self.critic_local_state_dim
         else:
@@ -574,6 +595,9 @@ class MEC(gym.Env):
         self.cartesian_proposal_norm_sum = 0.0
         self.cartesian_proposal_count = 0
         self.cartesian_projection_count = 0
+        self.actor_message_neighbor_fraction_sum = 0.0
+        self.actor_message_payload_norm_sum = 0.0
+        self.actor_message_observation_count = 0
 
         # Initialize ground user tasks
         self.gu_tasks = self.generate_tasks()
@@ -1048,6 +1072,9 @@ class MEC(gym.Env):
         self.cartesian_proposal_norm_sum = 0.0
         self.cartesian_proposal_count = 0
         self.cartesian_projection_count = 0
+        self.actor_message_neighbor_fraction_sum = 0.0
+        self.actor_message_payload_norm_sum = 0.0
+        self.actor_message_observation_count = 0
 
         # np.random.seed(None)
         # Initialize tasks for ground users
@@ -1965,6 +1992,17 @@ class MEC(gym.Env):
                         / max(self.cartesian_proposal_count, 1)
                     ),
                 })
+            if self.actor_message_mode != "disabled":
+                info.update({
+                    'actor_message_neighbor_fraction': (
+                        self.actor_message_neighbor_fraction_sum
+                        / max(self.actor_message_observation_count, 1)
+                    ),
+                    'actor_message_payload_norm': (
+                        self.actor_message_payload_norm_sum
+                        / max(self.actor_message_observation_count, 1)
+                    ),
+                })
         return self.obs, rewards, dones, self.state, self.avail_actions, info, self.Metropolis_weights, self.attention_active_mask
 
     def calculate_local_reward_raw_action(self, action):
@@ -2759,18 +2797,119 @@ class MEC(gym.Env):
         return weights_matrix
 
     def get_critic_local_obs(self, actor_obs):
-        """Remove the actor-only one-hop UAV block from local observations."""
-        if not self.actor_neighbor_obs:
+        """Remove actor-only UAV communication blocks from local observations."""
+        if not self.actor_only_obs_dim:
             return actor_obs
         prefix_dim = (
             int(self.ob_state_with_timestep)
             + (self.n_UAVs if self.ob_state_with_id else 0)
             + 2
         )
-        neighbor_end = prefix_dim + self.actor_neighbor_obs_dim
+        neighbor_end = prefix_dim + self.actor_only_obs_dim
         return np.concatenate(
             (actor_obs[:, :prefix_dim], actor_obs[:, neighbor_end:]), axis=-1
         )
+
+    def get_actor_message_block(self):
+        """Build radius-gated sender-local summaries for the flight policy.
+
+        Packet layout per other UAV is:
+        [dx, dy, active_count, centroid_dx, centroid_dy,
+         mean_velocity_x, mean_velocity_y, spread, hard_task_fraction, mask].
+        Geometry and task quantities are computed at the current decision slot.
+        """
+        messages = np.zeros(
+            (self.n_UAVs, self.n_UAVs - 1, self.actor_message_features),
+            dtype=np.float32,
+        )
+        if self.actor_message_mode == "zero" or self.neighbor_distance <= 0.0:
+            self._record_actor_message_diagnostics(messages)
+            return messages.reshape(self.n_UAVs, -1)
+
+        map_scale = max(
+            self.x_max_uav - self.x_min_uav,
+            self.y_max_uav - self.y_min_uav,
+            1.0,
+        )
+        # Use constants shared by all radius and mobility conditions. In
+        # particular, scaling by mean_velocity would erase the distinction
+        # between the 0.5 m/s and 10 m/s scenarios from the message itself.
+        velocity_scale = max(float(self.v_max), 1e-6)
+        sender_payloads = np.zeros((self.n_UAVs, 7), dtype=np.float32)
+        if self.actor_message_mode == "task_summary":
+            # A sender broadcasts the same local task summary to every
+            # reachable receiver. Compute it once per sender instead of once
+            # per directed communication edge.
+            for sender_id in range(self.n_UAVs):
+                sorted_ids = self.nearby_gus_of_uavs[sender_id]
+                in_range_count = int(np.count_nonzero(sorted_ids != -1))
+                local_ids = sorted_ids[:self.max_GUs_in_range]
+                local_ids = local_ids[local_ids != -1].astype(np.int64)
+                sender_payloads[sender_id, 0] = (
+                    in_range_count / float(max(self.n_GUs, 1))
+                )
+                if not local_ids.size:
+                    continue
+                local_positions = self.gu_positions[local_ids, :2]
+                centroid = np.mean(local_positions, axis=0)
+                sender_payloads[sender_id, 1:3] = (
+                    centroid - self.uav_positions[sender_id, :2]
+                ) / self.Cover_R
+                velocity_vectors = np.column_stack((
+                    self.gu_velocities[local_ids]
+                    * np.cos(self.gu_directions[local_ids]),
+                    self.gu_velocities[local_ids]
+                    * np.sin(self.gu_directions[local_ids]),
+                ))
+                sender_payloads[sender_id, 3:5] = (
+                    np.mean(velocity_vectors, axis=0) / velocity_scale
+                )
+                sender_payloads[sender_id, 5] = (
+                    np.sqrt(np.mean(np.sum(
+                        (local_positions - centroid) ** 2, axis=1
+                    ))) / self.Cover_R
+                )
+                tasks = self.gu_tasks[local_ids]
+                sender_payloads[sender_id, 6] = np.mean(
+                    tasks[:, 1] / self.F_n > tasks[:, 2]
+                )
+
+        for receiver_id in range(self.n_UAVs):
+            slot = 0
+            for sender_id in range(self.n_UAVs):
+                if sender_id == receiver_id:
+                    continue
+                if (
+                    self.uav_uav_distances_2d[receiver_id, sender_id]
+                    > self.neighbor_distance
+                ):
+                    slot += 1
+                    continue
+
+                relative_uav = (
+                    self.uav_positions[sender_id, :2]
+                    - self.uav_positions[receiver_id, :2]
+                ) / map_scale
+                messages[receiver_id, slot, :2] = relative_uav
+                messages[receiver_id, slot, 9] = 1.0
+
+                if self.actor_message_mode == "task_summary":
+                    messages[receiver_id, slot, 2:9] = sender_payloads[sender_id]
+                slot += 1
+        self._record_actor_message_diagnostics(messages)
+        return messages.reshape(self.n_UAVs, -1)
+
+    def _record_actor_message_diagnostics(self, messages):
+        mask = messages[:, :, 9]
+        self.actor_message_neighbor_fraction_sum += float(np.mean(mask))
+        if self.actor_message_mode == "task_summary" and np.any(mask):
+            task_payload = messages[:, :, 2:9]
+            active_payload = task_payload[mask > 0]
+            payload_norm = float(np.mean(np.linalg.norm(active_payload, axis=-1)))
+        else:
+            payload_norm = 0.0
+        self.actor_message_payload_norm_sum += payload_norm
+        self.actor_message_observation_count += 1
 
     def get_local_obs(self):
         """
@@ -2798,6 +2937,11 @@ class MEC(gym.Env):
             obs_dim = self.obs_dim
 
         local_obs = np.zeros((self.n_UAVs, obs_dim))
+        actor_messages = (
+            self.get_actor_message_block()
+            if self.actor_message_dim
+            else None
+        )
 
         idx = 0
         if self.ob_state_with_id:
@@ -2832,6 +2976,10 @@ class MEC(gym.Env):
                         local_obs[i, idx:idx + 2] = relative_position
                         local_obs[i, idx + 2] = 1.0
                     idx += 3
+
+            if actor_messages is not None:
+                local_obs[i, idx:idx + self.actor_message_dim] = actor_messages[i]
+                idx += self.actor_message_dim
 
             # # 3. Find neighboring UAVs (excluding self)
             # # neighbor_mask = (uav_uav_distances[i] <= self.Cover_R) & (np.arange(self.n_UAVs) != i)
