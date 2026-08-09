@@ -47,6 +47,11 @@ def parse_cli():
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--seed", type=int)
+    parser.add_argument(
+        "--layout-index",
+        type=int,
+        help="force one hidden episode_template12 layout without editing args.json",
+    )
     parser.add_argument("--frame-interval", type=int, default=5)
     parser.add_argument("--training-step", type=int)
     parser.add_argument(
@@ -247,18 +252,24 @@ def serving_uavs(service_matrix, threshold=1e-8):
     return result
 
 
-def draw_md_regions(ax):
-    ax.add_patch(Rectangle((0, 0), 175, 175, fill=False, edgecolor="0.45", linestyle="--", linewidth=1.2))
-    ax.add_patch(Rectangle((200, 200), 400, 400, fill=False, edgecolor="0.45", linestyle="--", linewidth=1.2))
+def draw_md_regions(ax, region_bounds=None):
+    """Draw the actual episode birth rectangles (including 700m layouts)."""
+    if region_bounds is None:
+        region_bounds = np.asarray(((0, 175, 0, 175), (200, 600, 200, 600)), dtype=float)
+    for x_min, x_max, y_min, y_max in np.asarray(region_bounds, dtype=float):
+        ax.add_patch(Rectangle(
+            (x_min, y_min), x_max - x_min, y_max - y_min,
+            fill=False, edgecolor="0.45", linestyle="--", linewidth=1.2,
+        ))
 
 
 def render_frame(path, method_label, slot, cover_radius, uav_positions, gu_positions, active_mask,
-                 service_matrix, uav_trail):
+                 service_matrix, uav_trail, map_size=600.0, region_bounds=None):
     fig, ax = plt.subplots(figsize=(7.2, 7.2))
-    ax.set(xlim=(0, 600), ylim=(0, 600), xlabel="X position (m)", ylabel="Y position (m)")
+    ax.set(xlim=(0, map_size), ylim=(0, map_size), xlabel="X position (m)", ylabel="Y position (m)")
     ax.set_aspect("equal", adjustable="box")
     ax.grid(True, alpha=0.28, linestyle="--")
-    draw_md_regions(ax)
+    draw_md_regions(ax, region_bounds)
 
     for i, (x, y) in enumerate(uav_positions):
         trail = uav_trail[:, i]
@@ -284,7 +295,7 @@ def render_frame(path, method_label, slot, cover_radius, uav_positions, gu_posit
                               label="MDs computing locally"))
     ax.legend(handles=handles, loc="upper right", framealpha=0.88, fontsize=8)
     served_count = int(np.sum(assignments[active_ids] >= 0))
-    ax.text(8, 590, f"Active MDs: {len(active_ids)}   Served: {served_count}   Local: {len(active_ids) - served_count}",
+    ax.text(8, map_size - 10, f"Active MDs: {len(active_ids)}   Served: {served_count}   Local: {len(active_ids) - served_count}",
             va="top", fontsize=9, bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"})
     ax.set_title(f"{method_label} Test Episode - Slot {slot} Decision")
     fig.tight_layout()
@@ -292,12 +303,12 @@ def render_frame(path, method_label, slot, cover_radius, uav_positions, gu_posit
     plt.close(fig)
 
 
-def render_trajectory(path, method_label, uav_positions):
+def render_trajectory(path, method_label, uav_positions, map_size=600.0, region_bounds=None):
     fig, ax = plt.subplots(figsize=(7.2, 7.2))
-    ax.set(xlim=(0, 600), ylim=(0, 600), xlabel="X position (m)", ylabel="Y position (m)")
+    ax.set(xlim=(0, map_size), ylim=(0, map_size), xlabel="X position (m)", ylabel="Y position (m)")
     ax.set_aspect("equal", adjustable="box")
     ax.grid(True, alpha=0.28, linestyle="--")
-    draw_md_regions(ax)
+    draw_md_regions(ax, region_bounds)
     for i in range(uav_positions.shape[1]):
         path_i = uav_positions[:, i]
         ax.plot(path_i[:, 0], path_i[:, 1], color=COLORS[i], linewidth=1.8, label=f"UAV {i + 1}")
@@ -346,6 +357,11 @@ def main():
         )
     with (run_dir / "args.json").open("r", encoding="utf-8") as handle:
         args = Namespace(**json.load(handle))
+    if cli.layout_index is not None:
+        args.hotspot_layout_indices = [int(cli.layout_index)]
+        # Training checkpoints intentionally omit this eval-only switch, so
+        # keep reset curriculum disabled while testing a fixed starting layout.
+        args.uav_reset_curriculum_training = False
     args.n_rollout_threads = 1
     args.n_training_threads = 1
     args.model_dir = str(checkpoint_dir)
@@ -378,6 +394,15 @@ def main():
         normers.append(normer)
 
     obs, states, available_actions, _, attention_mask = env.reset()
+    map_size = float(max(
+        getattr(args, "x_max_uav", 600.0),
+        getattr(args, "y_max_uav", 600.0),
+        getattr(args, "x_max_gu", 600.0),
+        getattr(args, "y_max_gu", 600.0),
+    ))
+    region_bounds = np.asarray(getattr(env, "episode_hotspot_bounds", ()), dtype=float)
+    if region_bounds.shape != (2, 4):
+        region_bounds = None
     obs, states = prepare_policy_inputs(
         normers,
         obs,
@@ -473,6 +498,8 @@ def main():
                     decision_active,
                     service,
                     uav_positions[:slot],
+                    map_size=map_size,
+                    region_bounds=region_bounds,
                 )
 
             obs, states = prepare_policy_inputs(
@@ -484,7 +511,13 @@ def main():
             masks[:] = 0.0 if np.all(dones) else 1.0
 
     env.close()
-    render_trajectory(output_dir / "uav_trajectory_overview.png", method_label, uav_positions)
+    render_trajectory(
+        output_dir / "uav_trajectory_overview.png",
+        method_label,
+        uav_positions,
+        map_size=map_size,
+        region_bounds=region_bounds,
+    )
 
     with (output_dir / "uav_trajectory.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=["timestep", "uav", "x", "y"])

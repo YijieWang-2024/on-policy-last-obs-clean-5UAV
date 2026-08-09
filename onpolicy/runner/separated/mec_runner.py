@@ -42,6 +42,7 @@ class MECRunner(Runner):
         self.advantage_mode = getattr(config['all_args'], "advantage_mode", "default")
         self.consensus_alpha = getattr(config['all_args'], "consensus_alpha", 0.5)
         self.externality_beta = getattr(config['all_args'], "externality_beta", 0.1)
+        self.noise_scale = getattr(config['all_args'], "noise_scale", 0.12)
         if self.whether_average_network_parameters:
             self.average_network_parameters()
         # self.n_UAVs = config['all_args'].n_UAVs
@@ -172,6 +173,16 @@ class MECRunner(Runner):
                         for metric in (
                             'candidate_md_arrivals',
                             'admitted_md_arrivals',
+                            'candidate_md_arrivals_small_region',
+                            'candidate_md_arrivals_large_region',
+                            'admitted_md_arrivals_small_region',
+                            'admitted_md_arrivals_large_region',
+                            'md_admission_ratio_small_region',
+                            'md_admission_ratio_large_region',
+                            'hotspot_layout_0_fraction',
+                            'hotspot_layout_1_fraction',
+                            'hotspot_layout_2_fraction',
+                            'hotspot_layout_3_fraction',
                             'candidate_md_arrivals_lower_left',
                             'candidate_md_arrivals_upper_right',
                             'admitted_md_arrivals_lower_left',
@@ -356,6 +367,34 @@ class MECRunner(Runner):
                 consensus_infos = {
                     'consensus_residual_mean': float(np.mean(consensus_residual)),
                     'consensus_residual_max': float(np.max(consensus_residual)),
+                }
+            elif self.advantage_mode == "per_agent_noise":
+                # Deliberately retain only each UAV's local advantage plus an
+                # independently sampled Gaussian perturbation.  No exact or
+                # communicated mean is added in this ablation.
+                raw_consensus = self.run_consensus_algorithm(
+                    local_advantage, self.all_args.n_iterations
+                )
+                noise_magnitude = self.per_agent_consensus_residual(
+                    local_advantage, raw_consensus
+                )
+                local_std = np.std(local_advantage, axis=0, keepdims=True)
+                training_advantage = local_advantage + (
+                    noise_magnitude
+                    * self.noise_scale
+                    * local_std
+                    * np.random.randn(*local_advantage.shape).astype(
+                        local_advantage.dtype, copy=False
+                    )
+                ).astype(local_advantage.dtype, copy=False)
+                consensus_infos = {
+                    'noise_scale': float(self.noise_scale),
+                    'noise_magnitude_mean': float(np.mean(noise_magnitude)),
+                    'noise_magnitude_min': float(np.min(noise_magnitude)),
+                    'noise_magnitude_max': float(np.max(noise_magnitude)),
+                    'consensus_local_corr': self._safe_correlation(
+                        local_advantage, raw_consensus
+                    ),
                 }
             else:
                 consensus_advantage, graph_stats = self.run_consensus_algorithm(
@@ -960,20 +999,26 @@ class MECRunner(Runner):
         self, local_observations, max_iterations, scale_by_component=False,
         return_graph_stats=False,
     ):
-        """Run finite consensus on the rollout-ending Metropolis graph.
+        """Run finite consensus on the terminal-position Metropolis graph.
 
         With ``scale_by_component``, each component estimate is multiplied by
         ``component_size / num_agents``.  Consequently R=0 produces A_i/M,
         while a connected converged graph produces the exact global mean.
+
+        The vectorized environment resets an episode before returning from a
+        terminal ``step`` and therefore its returned ``Metropolis_weights``
+        can describe the next episode's reset positions.  The runner already
+        retains the terminal positions from ``info['uav_positions']`` in
+        ``self.uav_positions``; rebuild the terminal graph here instead of
+        reading ``buffer[-1]``.
         """
         if max_iterations < 0:
             raise ValueError("max_iterations must be non-negative")
         estimates = np.transpose(local_observations, (2, 0, 1, 3))
         estimate_shape = estimates.shape
         estimates = estimates.reshape(self.n_rollout_threads, self.num_agents, -1)
-        weights = np.stack(
-            [self.buffer[i].Metropolis_weights[-1] for i in range(self.num_agents)],
-            axis=1,
+        weights = MECRunner._metropolis_weights_from_positions(
+            self.uav_positions, self.neighbor_distance
         ).astype(local_observations.dtype, copy=False)
 
         effective_weights = np.broadcast_to(
@@ -1016,6 +1061,46 @@ class MECRunner(Runner):
         return estimates, graph_stats
 
     @staticmethod
+    def _metropolis_weights_from_positions(uav_positions, neighbor_distance):
+        """Build the environment-compatible graph from terminal UAV positions."""
+        positions = np.asarray(uav_positions)
+        if positions.ndim != 3 or positions.shape[-1] < 2:
+            raise ValueError(
+                "uav_positions must have shape (n_rollout_threads, n_agents, 2)"
+            )
+        positions = positions[..., :2].astype(np.float64, copy=False)
+        n_rollout_threads, n_agents, _ = positions.shape
+
+        if neighbor_distance <= 0:
+            weights = np.zeros(
+                (n_rollout_threads, n_agents, n_agents), dtype=np.float64
+            )
+            diagonal = np.arange(n_agents)
+            weights[:, diagonal, diagonal] = 1.0
+            return weights
+
+        distances = np.linalg.norm(
+            positions[:, :, None, :] - positions[:, None, :, :], axis=-1
+        )
+        adjacency = distances <= float(neighbor_distance)
+        adjacency &= ~np.eye(n_agents, dtype=bool)[None, :, :]
+
+        degrees = adjacency.sum(axis=-1, dtype=np.float64)
+        max_degrees = np.maximum(
+            degrees[:, :, None], degrees[:, None, :]
+        )
+        weights = np.where(
+            adjacency,
+            1.0 / (1.0 + max_degrees),
+            0.0,
+        )
+        diagonal = np.arange(n_agents)
+        weights[:, diagonal, diagonal] = np.maximum(
+            1.0 - weights.sum(axis=-1), 0.0
+        )
+        return weights
+
+    @staticmethod
     def normalized_consensus_residual(
         local_advantages, consensus_advantages, epsilon=1e-8
     ):
@@ -1034,6 +1119,34 @@ class MECRunner(Runner):
             numerator,
             denominator,
             out=np.zeros_like(numerator),
+            where=denominator > epsilon,
+        )
+        return np.clip(residual, 0.0, 1.0)
+
+    @staticmethod
+    def per_agent_consensus_residual(
+        local_advantages, consensus_advantages, epsilon=1e-8
+    ):
+        """Return one bounded consensus-error magnitude per UAV/sample.
+
+        Unlike ``normalized_consensus_residual``, this keeps the UAV axis:
+        ``|A_consensus_i - mean(A)| / |A_local_i - mean(A)|``.  The fallback
+        is one for a zero-over-zero entry so an R=0/self-only graph retains
+        the intended unit noise magnitude for every UAV.
+        """
+        local_advantages = np.asarray(local_advantages)
+        consensus_advantages = np.asarray(consensus_advantages)
+        if local_advantages.shape != consensus_advantages.shape:
+            raise ValueError(
+                "local_advantages and consensus_advantages must have the same shape"
+            )
+        exact_mean = np.mean(local_advantages, axis=0, keepdims=True)
+        numerator = np.abs(consensus_advantages - exact_mean)
+        denominator = np.abs(local_advantages - exact_mean)
+        residual = np.divide(
+            numerator,
+            denominator,
+            out=np.ones_like(numerator),
             where=denominator > epsilon,
         )
         return np.clip(residual, 0.0, 1.0)

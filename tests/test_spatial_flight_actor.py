@@ -159,6 +159,34 @@ class SpatialFlightActorTest(unittest.TestCase):
         self.assertTrue(np.all((clipped_flight >= 0.0) & (clipped_flight <= 1.0)))
         torch.testing.assert_close(rollout_log_prob, evaluated_log_prob)
 
+    def test_spatial_flight_actor_accepts_episode_layout_context(self):
+        torch.manual_seed(17)
+        args = self.make_args(
+            x_max_uav=700,
+            y_max_uav=700,
+            x_max_gu=700,
+            y_max_gu=700,
+            hotspot_layout_mode="episode_template12",
+            hotspot_layout_indices=[0],
+            episode_layout_context=True,
+        )
+        env = MEC(args)
+        obs, _, available, _, _ = env.reset()
+        self.assertEqual(env.layout_context_dim, 8)
+        actor = R_Actor(args, env.observation_space, env.action_space)
+        obs = torch.as_tensor(obs, dtype=torch.float32)
+        available = torch.as_tensor(available, dtype=torch.float32)
+        rnn = torch.zeros(args.n_UAVs, args.recurrent_N, args.hidden_size)
+        masks = torch.ones(args.n_UAVs, 1)
+
+        with torch.no_grad():
+            actions, log_prob, _ = actor(
+                obs, rnn, masks, available.clone(), deterministic=True
+            )
+
+        self.assertEqual(actions.shape[0], args.n_UAVs)
+        self.assertTrue(torch.isfinite(log_prob).all())
+
     def test_curriculum_is_training_only_and_finishes_by_half_budget(self):
         training_args = self.make_args(
             uav_reset_curriculum=True,

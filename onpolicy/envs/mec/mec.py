@@ -260,17 +260,105 @@ class MEC(gym.Env):
         self.md_arrivals_max = args.md_arrivals_max
         self.md_arrivals_per_region = getattr(args, "md_arrivals_per_region", None)
         self.regional_dynamic_md = self.dynamic_md and self.md_arrivals_per_region is not None
+        self.hotspot_layout_mode = getattr(args, "hotspot_layout_mode", "fixed_legacy")
+        if self.hotspot_layout_mode not in {
+            "fixed_legacy", "episode_template4", "episode_template4_600_200",
+            "episode_template12", "episode_moving_template4"
+        }:
+            raise ValueError(f"unknown hotspot_layout_mode: {self.hotspot_layout_mode}")
+        raw_layout_indices = getattr(args, "hotspot_layout_indices", None)
+        if raw_layout_indices is None:
+            self.hotspot_layout_indices = None
+        else:
+            self.hotspot_layout_indices = tuple(int(index) for index in raw_layout_indices)
+            if not self.hotspot_layout_indices:
+                raise ValueError("hotspot_layout_indices must contain at least one index")
+            if len(set(self.hotspot_layout_indices)) != len(self.hotspot_layout_indices):
+                raise ValueError("hotspot_layout_indices must not contain duplicates")
+        self.five_uav_start_layout = getattr(args, "five_uav_start_layout", "line")
+        if self.five_uav_start_layout not in {"line", "staggered"}:
+            raise ValueError(
+                f"unknown five_uav_start_layout: {self.five_uav_start_layout}"
+            )
+        raw_uav_start_positions = getattr(args, "uav_start_positions", None)
+        if raw_uav_start_positions is None:
+            self.uav_start_positions = None
+        else:
+            values = np.asarray(raw_uav_start_positions, dtype=np.float32).reshape(-1)
+            expected = 2 * self.n_UAVs
+            if values.size != expected:
+                raise ValueError(
+                    f"uav_start_positions must contain {expected} values "
+                    f"for {self.n_UAVs} UAVs, got {values.size}"
+                )
+            self.uav_start_positions = values.reshape(self.n_UAVs, 2).copy()
+        self.hotspot_layout_rng = np.random.default_rng()
+        self.candidate_birth_rng = np.random.default_rng()
+        self.hotspot_layout_index = 0
+        self.hotspot_route_direction = 1
+        self.episode_layout_context_enabled = bool(
+            getattr(args, "episode_layout_context", False)
+        )
+        if self.episode_layout_context_enabled and not self.regional_dynamic_md:
+            raise ValueError(
+                "episode_layout_context requires dynamic_md with regional arrivals"
+            )
+        if (
+            self.episode_layout_context_enabled
+            and self.hotspot_layout_mode == "episode_moving_template4"
+        ):
+            raise ValueError(
+                "episode_layout_context is only defined for static hotspot layouts"
+            )
+        self.layout_context_dim = 8 if self.episode_layout_context_enabled else 0
+        self.episode_layout_context = np.zeros(
+            self.layout_context_dim, dtype=np.float32
+        )
+        regional_map_size = float(args.x_max_gu - args.x_min_gu)
+        regional_large_near = regional_map_size - 400.0
+        self.episode_hotspot_bounds = np.array(
+            [
+                [0.0, 175.0, 0.0, 175.0],
+                [regional_large_near, regional_map_size,
+                 regional_large_near, regional_map_size],
+            ],
+            dtype=np.float64,
+        )
         self.md_lifetime_min = args.md_lifetime_min
         self.md_lifetime_max = args.md_lifetime_max
         if self.dynamic_md:
-            assert self.n_UAVs == 5 and args.x_min_gu == 0 and args.x_max_gu == 600, \
-                "dynamic_md is currently defined for the 5-UAV 600m x 600m scenario."
+            assert (
+                self.n_UAVs == 5
+                and args.x_min_gu == args.y_min_gu == 0
+                and args.x_max_gu == args.y_max_gu
+                and args.x_min_uav == args.y_min_uav == 0
+                and args.x_max_uav == args.y_max_uav == args.x_max_gu
+            ), "dynamic_md requires matching square UAV/GU maps for the 5-UAV scenario."
             assert 0 <= self.md_arrivals_min <= self.md_arrivals_max
             assert 1 <= self.md_lifetime_min <= self.md_lifetime_max
             max_arrivals = self.md_arrivals_max
             if self.regional_dynamic_md:
                 assert args.fix_hotspot and len(self.md_arrivals_per_region) == 2
                 assert all(count >= 0 for count in self.md_arrivals_per_region)
+                assert self.hotspot_layout_mode in {
+                    "fixed_legacy", "episode_template4",
+                    "episode_template4_600_200", "episode_template12",
+                    "episode_moving_template4"
+                }
+                if self.hotspot_layout_mode == "fixed_legacy":
+                    assert args.x_max_gu == 600, \
+                        "fixed_legacy preserves the original 600m hotspot geometry."
+                else:
+                    assert args.x_max_gu in {600, 700}, \
+                        "template hotspot layouts are validated only for 600m and 700m maps."
+                if self.hotspot_layout_mode in {
+                    "episode_template12", "episode_moving_template4"
+                }:
+                    assert args.x_max_gu == 700, \
+                        f"{self.hotspot_layout_mode} is defined for the 700m map."
+                if self.hotspot_layout_mode == "episode_moving_template4":
+                    assert args.x_max_gu == 700, \
+                        "episode_moving_template4 is defined for the 700m map."
                 max_arrivals = sum(self.md_arrivals_per_region)
             assert self.n_GUs >= max_arrivals * self.md_lifetime_max, \
                 "dynamic_md requires n_GUs >= maximum arrivals * md_lifetime_max"
@@ -320,6 +408,16 @@ class MEC(gym.Env):
             getattr(args, "uav_reset_curriculum", False)
             and getattr(args, "uav_reset_curriculum_training", False)
         )
+        self.uav_reset_curriculum_schedule = getattr(
+            args, "uav_reset_curriculum_schedule", "legacy"
+        )
+        if self.uav_reset_curriculum_schedule not in {
+            "legacy", "p0p7_10m_25m"
+        }:
+            raise ValueError(
+                f"unknown uav_reset_curriculum_schedule: "
+                f"{self.uav_reset_curriculum_schedule}"
+            )
         self.curriculum_reset_count = 0
         self.curriculum_random_reset = False
         self.curriculum_random_probability = 0.0
@@ -409,6 +507,37 @@ class MEC(gym.Env):
         if self.nearest_associate and (self.ave_resource or self.ave_bandwidth):
             assert self.not_process_action, "只写了怎么计算奖励。只有飞行动作，不需要处理动作。"
         self.mean_velocity = args.mean_velocity
+        self.md_velocity_init_std = float(
+            getattr(args, "md_velocity_init_std", 0.3)
+        )
+        self.md_velocity_init_min_factor = float(
+            getattr(args, "md_velocity_init_min_factor", 0.7)
+        )
+        self.md_velocity_init_max_factor = float(
+            getattr(args, "md_velocity_init_max_factor", 1.3)
+        )
+        self.md_velocity_update_clip_min = getattr(
+            args, "md_velocity_update_clip_min", None
+        )
+        self.md_velocity_update_clip_max = getattr(
+            args, "md_velocity_update_clip_max", None
+        )
+        if self.md_velocity_init_std < 0:
+            raise ValueError("md_velocity_init_std must be non-negative")
+        if self.md_velocity_init_min_factor > self.md_velocity_init_max_factor:
+            raise ValueError(
+                "md_velocity_init_min_factor must not exceed "
+                "md_velocity_init_max_factor"
+            )
+        if (
+            self.md_velocity_update_clip_min is not None
+            and self.md_velocity_update_clip_max is not None
+            and self.md_velocity_update_clip_min > self.md_velocity_update_clip_max
+        ):
+            raise ValueError(
+                "md_velocity_update_clip_min must not exceed "
+                "md_velocity_update_clip_max"
+            )
         # Define the UAV flight direction and distance action space (continuous)
         self.not_served_rew_to_ave = args.not_served_rew_to_ave
         self.not_served_rew_to_nearest = args.not_served_rew_to_nearest
@@ -430,7 +559,12 @@ class MEC(gym.Env):
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            self.obs_dim = 3 + self.actor_only_obs_dim + self.gu_obs_features * self.max_GUs_in_range
+            self.obs_dim = (
+                3
+                + self.actor_only_obs_dim
+                + self.layout_context_dim
+                + self.gu_obs_features * self.max_GUs_in_range
+            )
             self.state_dim = self.obs_dim
         elif self.state_is_k_hops:  # last-obs的k跳。自己的s_{i,t}是包括覆盖范围内的无人机的。
             self.GUs_in_action_dim = self.max_GUs_in_range
@@ -442,7 +576,12 @@ class MEC(gym.Env):
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
             # self.state_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            self.obs_dim = 3 + self.actor_only_obs_dim + self.gu_obs_features * self.max_GUs_in_range
+            self.obs_dim = (
+                3
+                + self.actor_only_obs_dim
+                + self.layout_context_dim
+                + self.gu_obs_features * self.max_GUs_in_range
+            )
             self.state_dim = self.obs_dim
         else:
             # self.GUs_in_action_dim = self.n_GUs
@@ -451,7 +590,12 @@ class MEC(gym.Env):
             # self.obs_dim = 1 + 2 + 1 + 2 * self.max_UAVs_in_neighbor + 1 + 9 * self.max_GUs_in_range
             # 不要邻居无人机的位置。
             # self.obs_dim = 1 + 2 + 1 + 9 * self.max_GUs_in_range
-            self.obs_dim = 3 + self.actor_only_obs_dim + self.gu_obs_features * self.max_GUs_in_range
+            self.obs_dim = (
+                3
+                + self.actor_only_obs_dim
+                + self.layout_context_dim
+                + self.gu_obs_features * self.max_GUs_in_range
+            )
 
             # self.state_dim = 1 + 3 +  2*self.n_UAVs+6*self.n_GUs +1
             # self.state_dim = self.n_UAVs * (self.obs_dim + int(self.ob_state_with_timestep))
@@ -575,14 +719,14 @@ class MEC(gym.Env):
         # self.alpha_gaussian = 0.95
         self.alpha_gaussian = 0.7
         self.std_dev_gaussian = 1
-        self.gu_velocities = np.random.normal(self.mean_velocity, 0.3*self.std_dev_gaussian, self.n_GUs)
-        self.gu_velocities = np.clip(self.gu_velocities, 0.7* self.mean_velocity, 1.3 * self.mean_velocity)
+        self.gu_velocities = self._sample_md_velocities(self.n_GUs)
         # np.random.seed(0)
         self.gu_directions = np.random.uniform(0, 2 * np.pi, self.n_GUs)
         self.gu_directions_0 = self.gu_directions.copy()
         self.active_md_mask = np.ones(self.n_GUs, dtype=bool)
         self.md_remaining_lifetime = np.zeros(self.n_GUs, dtype=np.int32)
         self.md_session_ids = np.full(self.n_GUs, -1, dtype=np.int64)
+        self.md_region_ids = np.full(self.n_GUs, -1, dtype=np.int8)
         self.next_md_session_id = 0
         self.dynamic_md_candidates = 0
         self.dynamic_md_admitted = 0
@@ -592,6 +736,8 @@ class MEC(gym.Env):
         self.dynamic_md_departed = 0
         self.dynamic_md_active_sum = 0
         self.dynamic_md_active_sum_second_half = 0
+        self.hotspot_small_nearest_uav_distance_sum = 0.0
+        self.hotspot_large_four_uav_distance_sum = 0.0
         self.cartesian_proposal_norm_sum = 0.0
         self.cartesian_proposal_count = 0
         self.cartesian_projection_count = 0
@@ -663,20 +809,40 @@ class MEC(gym.Env):
 
     def _admit_dynamic_mds(self):
         if self.regional_dynamic_md:
-            lower_count, upper_count = self.md_arrivals_per_region
-            candidate_count = lower_count + upper_count
+            candidate_rng = (
+                self.candidate_birth_rng
+                if self.hotspot_layout_mode in {
+                    "episode_template4", "episode_template12",
+                    "episode_moving_template4"
+                }
+                else np.random
+            )
+            small_count, large_count = self.md_arrivals_per_region
+            candidate_count = small_count + large_count
             candidate_positions = np.zeros((candidate_count, 3), dtype=np.float64)
             candidate_bounds = np.empty((candidate_count, 4), dtype=np.float64)
+            candidate_region_ids = np.concatenate((
+                np.zeros(small_count, dtype=np.int8),
+                np.ones(large_count, dtype=np.int8),
+            ))
             candidate_positions[:, 2] = self.H_GU
-            candidate_positions[:lower_count, 0] = np.random.uniform(0, 175, lower_count)
-            candidate_positions[:lower_count, 1] = np.random.uniform(0, 175, lower_count)
-            candidate_bounds[:lower_count] = [0, 175, 0, 175]
-            candidate_positions[lower_count:, 0] = np.random.uniform(200, 600, upper_count)
-            candidate_positions[lower_count:, 1] = np.random.uniform(200, 600, upper_count)
-            candidate_bounds[lower_count:] = [200, 600, 200, 600]
+            for region_id, count in enumerate((small_count, large_count)):
+                start = 0 if region_id == 0 else small_count
+                stop = start + count
+                x_min, x_max, y_min, y_max = self.episode_hotspot_bounds[region_id]
+                candidate_positions[start:stop, 0] = candidate_rng.uniform(x_min, x_max, count)
+                candidate_positions[start:stop, 1] = candidate_rng.uniform(y_min, y_max, count)
+                candidate_bounds[start:stop] = self.episode_hotspot_bounds[region_id]
         else:
             candidate_count = np.random.randint(self.md_arrivals_min, self.md_arrivals_max + 1)
             candidate_positions, candidate_bounds = self._sample_dynamic_md_positions(candidate_count)
+            # Preserve the legacy regional accounting for non-regional dynamic
+            # arrivals (e.g. the older 3-arrivals/20-slot environment).
+            candidate_region_ids = (candidate_bounds[:, 0] != 0).astype(np.int8)
+        # Diagnostic-only snapshots. Keeping the candidate-birth stream separate
+        # from admission-dependent randomness permits paired environment checks.
+        self.last_candidate_positions = candidate_positions.copy()
+        self.last_candidate_region_ids = candidate_region_ids.copy()
         covered = np.any(
             np.linalg.norm(
                 self.uav_positions[:, None, :2] - candidate_positions[None, :, :2],
@@ -686,6 +852,7 @@ class MEC(gym.Env):
         )
         admitted_positions = candidate_positions[covered]
         admitted_bounds = candidate_bounds[covered]
+        admitted_region_ids = candidate_region_ids[covered]
         free_slots = np.flatnonzero(~self.active_md_mask)
         assert len(admitted_positions) <= len(free_slots), "Dynamic MD capacity bound was violated."
         slots = free_slots[:len(admitted_positions)]
@@ -696,11 +863,7 @@ class MEC(gym.Env):
             self.x_max_all_gus[slots] = admitted_bounds[:, 1]
             self.y_min_all_gus[slots] = admitted_bounds[:, 2]
             self.y_max_all_gus[slots] = admitted_bounds[:, 3]
-            self.gu_velocities[slots] = np.clip(
-                np.random.normal(self.mean_velocity, 0.3 * self.std_dev_gaussian, len(slots)),
-                0.7 * self.mean_velocity,
-                1.3 * self.mean_velocity,
-            )
+            self.gu_velocities[slots] = self._sample_md_velocities(len(slots))
             self.gu_directions[slots] = np.random.uniform(0, 2 * np.pi, len(slots))
             self.gu_directions_0[slots] = self.gu_directions[slots]
             self.md_remaining_lifetime[slots] = np.random.randint(
@@ -709,13 +872,16 @@ class MEC(gym.Env):
             self.md_session_ids[slots] = np.arange(
                 self.next_md_session_id, self.next_md_session_id + len(slots), dtype=np.int64
             )
+            self.md_region_ids[slots] = admitted_region_ids
             self.next_md_session_id += len(slots)
         self.dynamic_md_candidates += candidate_count
         self.dynamic_md_admitted += len(slots)
-        lower_candidates = candidate_bounds[:, 0] == 0
-        lower_admitted = admitted_bounds[:, 0] == 0
-        self.dynamic_md_candidates_by_region += [np.sum(lower_candidates), np.sum(~lower_candidates)]
-        self.dynamic_md_admitted_by_region += [np.sum(lower_admitted), np.sum(~lower_admitted)]
+        self.dynamic_md_candidates_by_region += np.bincount(
+            candidate_region_ids, minlength=2
+        )[:2]
+        self.dynamic_md_admitted_by_region += np.bincount(
+            admitted_region_ids, minlength=2
+        )[:2]
 
     def _advance_dynamic_md_population(self):
         active_slots = np.flatnonzero(self.active_md_mask)
@@ -735,27 +901,218 @@ class MEC(gym.Env):
         self.active_md_mask[removed] = False
         self.md_remaining_lifetime[removed] = 0
         self.md_session_ids[removed] = -1
+        self.md_region_ids[removed] = -1
         self.gu_positions[removed] = np.array([0.0, 0.0, self.H_GU])
         self.gu_velocities[removed] = 0
         self.gu_directions[removed] = 0
         self.gu_directions_0[removed] = 0
         self.gu_tasks[removed] = 0
+        if self.hotspot_layout_mode == "episode_moving_template4":
+            centers = np.column_stack((
+                self.episode_hotspot_bounds[:, :2].mean(axis=1),
+                self.episode_hotspot_bounds[:, 2:].mean(axis=1),
+            ))
+            distances = np.linalg.norm(
+                self.uav_positions[:, None, :2] - centers[None, :, :], axis=2
+            )
+            self.hotspot_small_nearest_uav_distance_sum += float(distances[:, 0].min())
+            self.hotspot_large_four_uav_distance_sum += float(
+                np.sort(distances[:, 1])[:4].mean()
+            )
         if self.time_step < self.MAX_SIMULATION_TIME:
+            self._update_moving_hotspot_layout(self.time_step)
             self._admit_dynamic_mds()
 
     def seed(self, seed=None):
         random.seed(seed)
         np.random.seed(seed)
         self.curriculum_reset_rng = np.random.default_rng(seed)
+        layout_seed, candidate_seed = np.random.SeedSequence(seed).spawn(2)
+        self.hotspot_layout_rng = np.random.default_rng(layout_seed)
+        self.candidate_birth_rng = np.random.default_rng(candidate_seed)
+
+    @staticmethod
+    def _regional_hotspot_layouts(map_size):
+        """Four area-preserving diagonal layouts on a square map."""
+        map_size = float(map_size)
+        small_far = map_size - 175.0
+        large_near = map_size - 400.0
+        return np.array([
+            [[0, 175, 0, 175], [large_near, map_size, large_near, map_size]],
+            [[small_far, map_size, 0, 175], [0, 400, large_near, map_size]],
+            [[0, 175, small_far, map_size], [large_near, map_size, 0, 400]],
+            [[small_far, map_size, small_far, map_size], [0, 400, 0, 400]],
+        ], dtype=np.float64)
+
+    @staticmethod
+    def _regional_hotspot_layouts600_200(map_size):
+        """Four diagonal layouts for the 600m 200m/400m protocol."""
+        map_size = float(map_size)
+        small_far = map_size - 200.0
+        large_near = map_size - 400.0
+        return np.array([
+            [[0, 200, 0, 200], [large_near, map_size, large_near, map_size]],
+            [[small_far, map_size, 0, 200], [0, 400, large_near, map_size]],
+            [[0, 200, small_far, map_size], [large_near, map_size, 0, 400]],
+            [[small_far, map_size, small_far, map_size], [0, 400, 0, 400]],
+        ], dtype=np.float64)
+
+    @staticmethod
+    def _regional_hotspot_layouts12(map_size):
+        """All ordered non-overlapping corner pairs for the 700m layout.
+
+        Region 0 is always the small (175m) birth region and region 1 is
+        always the large (400m) birth region.  The large corner is sampled
+        first, then the small corner is sampled from the other three corners.
+        This removes the diagonal-only shortcut while keeping both region
+        sizes and their corner geometry unchanged.
+        """
+        map_size = float(map_size)
+        corners = ((0.0, 0.0), (map_size - 175.0, 0.0),
+                   (0.0, map_size - 175.0),
+                   (map_size - 175.0, map_size - 175.0))
+        large_near = map_size - 400.0
+        large_corners = ((0.0, 0.0), (large_near, 0.0),
+                         (0.0, large_near), (large_near, large_near))
+        layouts = []
+        for large_id, (large_x, large_y) in enumerate(large_corners):
+            for small_id, (small_x, small_y) in enumerate(corners):
+                if small_id == large_id:
+                    continue
+                layouts.append([
+                    [small_x, small_x + 175.0, small_y, small_y + 175.0],
+                    [large_x, large_x + 400.0, large_y, large_y + 400.0],
+                ])
+        return np.asarray(layouts, dtype=np.float64)
+
+    def _set_episode_hotspot_layout(self, layout_index=None):
+        """Select the episode layout and refresh the optional task context."""
+        if not self.regional_dynamic_md:
+            return
+        map_size = self.x_max_gu - self.x_min_gu
+        layouts = (
+            self._regional_hotspot_layouts600_200(map_size)
+            if self.hotspot_layout_mode == "episode_template4_600_200"
+            else self._regional_hotspot_layouts12(map_size)
+            if self.hotspot_layout_mode == "episode_template12"
+            else self._regional_hotspot_layouts(map_size)
+        )
+        if self.hotspot_layout_mode in {"fixed_legacy", "episode_template4_600_200"}:
+            layout_index = 0
+        elif layout_index is None:
+            candidate_indices = (
+                self.hotspot_layout_indices
+                if self.hotspot_layout_indices is not None
+                else tuple(range(len(layouts)))
+            )
+            if any(index < 0 or index >= len(layouts) for index in candidate_indices):
+                raise ValueError(
+                    f"hotspot_layout_indices must be within [0, {len(layouts) - 1}]"
+                )
+            layout_index = int(self.hotspot_layout_rng.choice(candidate_indices))
+        if not 0 <= int(layout_index) < len(layouts):
+            raise ValueError(f"invalid regional hotspot layout index: {layout_index}")
+        self.hotspot_layout_index = int(layout_index)
+        if self.hotspot_layout_mode == "episode_moving_template4":
+            self.hotspot_route_direction = int(
+                self.hotspot_layout_rng.choice(np.array([-1, 1], dtype=np.int8))
+            )
+            self._update_moving_hotspot_layout(0)
+        else:
+            self.episode_hotspot_bounds = layouts[self.hotspot_layout_index].copy()
+        self._refresh_episode_layout_context()
+
+    def _refresh_episode_layout_context(self):
+        """Encode static birth-region bounds for the optional task prior.
+
+        The context contains only the two reset-time birth rectangles, in the
+        fixed order [small, large], normalized to the GU map. It contains no
+        active-user state, current counts, or future random arrivals.
+        """
+        if not self.episode_layout_context_enabled:
+            return
+        x_scale = max(float(self.x_max_gu - self.x_min_gu), 1.0)
+        y_scale = max(float(self.y_max_gu - self.y_min_gu), 1.0)
+        bounds = np.asarray(self.episode_hotspot_bounds, dtype=np.float64).copy()
+        bounds[:, [0, 1]] = (
+            bounds[:, [0, 1]] - float(self.x_min_gu)
+        ) / x_scale
+        bounds[:, [2, 3]] = (
+            bounds[:, [2, 3]] - float(self.y_min_gu)
+        ) / y_scale
+        self.episode_layout_context = bounds.astype(np.float32).reshape(-1)
+
+    @staticmethod
+    def _moving_hotspot_waypoints_700():
+        """Symmetric region waypoints with equal 300 m center translations."""
+        small_half = 87.5
+        large_half = 200.0
+        centers = np.array([
+            [200.0, 200.0], [500.0, 200.0],
+            [500.0, 500.0], [200.0, 500.0],
+        ])
+        opposite = np.roll(centers, 2, axis=0)
+        layouts = np.empty((4, 2, 4), dtype=np.float64)
+        for index, (small_center, large_center) in enumerate(zip(centers, opposite)):
+            layouts[index, 0] = [
+                small_center[0] - small_half, small_center[0] + small_half,
+                small_center[1] - small_half, small_center[1] + small_half,
+            ]
+            layouts[index, 1] = [
+                large_center[0] - large_half, large_center[0] + large_half,
+                large_center[1] - large_half, large_center[1] + large_half,
+            ]
+        return layouts
+
+    def _update_moving_hotspot_layout(self, time_step):
+        """Move two hidden birth regions continuously; active MDs are untouched."""
+        if self.hotspot_layout_mode != "episode_moving_template4":
+            return
+        waypoints = self._moving_hotspot_waypoints_700()
+        # Two 300 m route edges per 400-slot episode: 3 m/s at Delta_t=0.5 s.
+        route_progress = 2.0 * min(max(float(time_step), 0.0), self.MAX_SIMULATION_TIME) \
+            / float(self.MAX_SIMULATION_TIME)
+        completed_edges = int(min(np.floor(route_progress), 1.0))
+        fraction = route_progress - completed_edges
+        start = (
+            self.hotspot_layout_index
+            + self.hotspot_route_direction * completed_edges
+        ) % len(waypoints)
+        stop = (start + self.hotspot_route_direction) % len(waypoints)
+        self.episode_hotspot_bounds = (
+            (1.0 - fraction) * waypoints[start] + fraction * waypoints[stop]
+        )
+
+    def _sample_md_velocities(self, count):
+        """Sample newly born MD speeds using the configured Gaussian profile."""
+        if count <= 0:
+            return np.empty(0, dtype=np.float64)
+        speeds = np.random.normal(
+            self.mean_velocity, self.md_velocity_init_std, int(count)
+        )
+        return np.clip(
+            speeds,
+            self.md_velocity_init_min_factor * self.mean_velocity,
+            self.md_velocity_init_max_factor * self.mean_velocity,
+        )
 
     def _curriculum_random_reset_probability(self):
-        """Hold random starts at 0.5 through 20%, then anneal to fixed by 50%."""
+        """Return the random-UAV-reset probability for the current budget."""
         completed_steps = (
             self.curriculum_reset_count
             * self.MAX_SIMULATION_TIME
             * max(int(getattr(self.args, "n_rollout_threads", 1)), 1)
         )
         progress = completed_steps / max(float(getattr(self.args, "num_env_steps", 1)), 1.0)
+        if self.uav_reset_curriculum_schedule == "p0p7_10m_25m":
+            completed_budget_steps = completed_steps
+            if completed_budget_steps < 10_000_000:
+                return 0.70
+            if completed_budget_steps < 25_000_000:
+                return 0.70 * (
+                    25_000_000 - completed_budget_steps
+                ) / 15_000_000
+            return 0.0
         if progress < 0.20:
             return 0.50
         if progress < 0.50:
@@ -863,10 +1220,68 @@ class MEC(gym.Env):
                 self.x_max_all_gus = np.array([600] * 40)
                 self.y_min_all_gus = np.array([200] * 40)
                 self.y_max_all_gus = np.array([600] * 40)
-        elif self.n_UAVs == 5 and self.x_min_gu == 0 and self.x_max_gu == 600:
-            upper_uav = [200, 525, self.H_UAV] if self.regional_dynamic_md else [400, 400, self.H_UAV]
-            self.uav_positions = np.array([upper_uav, [110, 70, self.H_UAV], [220, 70, self.H_UAV],
-                                           [330, 70, self.H_UAV], [440, 70, self.H_UAV]], dtype=np.float32)
+        elif self.n_UAVs == 5 and self.x_min_gu == 0 and self.x_max_gu in {600, 700}:
+            if self.uav_start_positions is not None:
+                self.uav_positions = np.column_stack((
+                    self.uav_start_positions,
+                    np.full((self.n_UAVs, 1), self.H_UAV, dtype=np.float32),
+                ))
+            elif (
+                self.regional_dynamic_md
+                and self.hotspot_layout_mode == "episode_template4_600_200"
+                and self.x_max_gu == 600
+            ):
+                self.uav_positions = np.array([
+                    [110, 180, self.H_UAV],
+                    [220, 180, self.H_UAV],
+                    [330, 180, self.H_UAV],
+                    [440, 180, self.H_UAV],
+                    [400, 400, self.H_UAV],
+                ], dtype=np.float32)
+            elif (
+                self.regional_dynamic_md
+                and self.hotspot_layout_mode in {
+                    "episode_template4", "episode_template12"
+                }
+                and self.x_max_gu == 700
+            ):
+                if self.hotspot_layout_mode == "episode_template4":
+                    # Rotation-neutral fixed reset for the four hidden layouts.
+                    self.uav_positions = np.array([
+                        [350, 350, self.H_UAV],
+                        [150, 350, self.H_UAV],
+                        [550, 350, self.H_UAV],
+                        [350, 150, self.H_UAV],
+                        [350, 550, self.H_UAV],
+                    ], dtype=np.float32)
+                else:
+                    # Fixed asymmetric scout/service starts for the 12-layout
+                    # coordination diagnostic.  ``staggered`` is an optional
+                    # geometry ablation; the default keeps the lower four on
+                    # one line so the R520 topology is unambiguous.
+                    lower = (
+                        [[100, 70], [200, 70], [300, 140], [400, 140]]
+                        if self.five_uav_start_layout == "staggered"
+                        else [[100, 70], [200, 70], [300, 70], [400, 70]]
+                    )
+                    base_xy = np.asarray(lower + [[450, 550]], dtype=np.float32)
+                    self.uav_positions = np.column_stack((
+                        base_xy,
+                        np.full((self.n_UAVs, 1), self.H_UAV, dtype=np.float32),
+                    ))
+            else:
+                upper_uav = (
+                    [200, 525, self.H_UAV]
+                    if self.regional_dynamic_md
+                    else [400, 400, self.H_UAV]
+                )
+                self.uav_positions = np.array([
+                    upper_uav,
+                    [110, 70, self.H_UAV],
+                    [220, 70, self.H_UAV],
+                    [330, 70, self.H_UAV],
+                    [440, 70, self.H_UAV],
+                ], dtype=np.float32)
             if self.dynamic_md:
                 self.x_min_all_gus = np.full(self.n_GUs, self.x_min_gu)
                 self.x_max_all_gus = np.full(self.n_GUs, self.x_max_gu)
@@ -1010,6 +1425,8 @@ class MEC(gym.Env):
                 self.uav_positions = self._sample_curriculum_uav_positions()
             self.curriculum_reset_count += 1
 
+        self._set_episode_hotspot_layout()
+
         # self.uav_positions = np.array([[120, 120,self.H_UAV], [480, 120, self.H_UAV], [120, 480, self.H_UAV],[480, 480, self.H_UAV]], dtype=np.float32)
         # assert self.uav_positions.shape[0] == self.n_UAVs
 
@@ -1042,6 +1459,7 @@ class MEC(gym.Env):
             self.active_md_mask = np.zeros(self.n_GUs, dtype=bool)
             self.md_remaining_lifetime = np.zeros(self.n_GUs, dtype=np.int32)
             self.md_session_ids = np.full(self.n_GUs, -1, dtype=np.int64)
+            self.md_region_ids = np.full(self.n_GUs, -1, dtype=np.int8)
             self.next_md_session_id = 0
             self.dynamic_md_candidates = 0
             self.dynamic_md_admitted = 0
@@ -1051,6 +1469,8 @@ class MEC(gym.Env):
             self.dynamic_md_departed = 0
             self.dynamic_md_active_sum = 0
             self.dynamic_md_active_sum_second_half = 0
+            self.hotspot_small_nearest_uav_distance_sum = 0.0
+            self.hotspot_large_four_uav_distance_sum = 0.0
             self._admit_dynamic_mds()
         else:
             gu_x = self.x_min_all_gus + np.random.uniform(0, 1, self.n_GUs)*(self.x_max_all_gus - self.x_min_all_gus)
@@ -1064,8 +1484,7 @@ class MEC(gym.Env):
             self.x_max_all_gus = self.x_max_all_gus[sorted_indices]
             self.y_min_all_gus = self.y_min_all_gus[sorted_indices]
             self.y_max_all_gus = self.y_max_all_gus[sorted_indices]
-            self.gu_velocities = np.random.normal(self.mean_velocity, 0.3*self.std_dev_gaussian, self.n_GUs)
-            self.gu_velocities = np.clip(self.gu_velocities, 0.7* self.mean_velocity, 1.3 * self.mean_velocity)
+            self.gu_velocities = self._sample_md_velocities(self.n_GUs)
             self.gu_directions = np.random.uniform(0, 2 * np.pi, self.n_GUs)
             self.active_md_mask = np.ones(self.n_GUs, dtype=bool)
 
@@ -1955,19 +2374,27 @@ class MEC(gym.Env):
                 info.update({
                     'candidate_md_arrivals': self.dynamic_md_candidates,
                     'admitted_md_arrivals': self.dynamic_md_admitted,
-                    'candidate_md_arrivals_lower_left': self.dynamic_md_candidates_by_region[0],
-                    'candidate_md_arrivals_upper_right': self.dynamic_md_candidates_by_region[1],
-                    'admitted_md_arrivals_lower_left': self.dynamic_md_admitted_by_region[0],
-                    'admitted_md_arrivals_upper_right': self.dynamic_md_admitted_by_region[1],
-                    'md_admission_ratio': self.dynamic_md_admitted / max(self.dynamic_md_candidates, 1),
-                    'md_admission_ratio_lower_left': (
+                    'candidate_md_arrivals_small_region': self.dynamic_md_candidates_by_region[0],
+                    'candidate_md_arrivals_large_region': self.dynamic_md_candidates_by_region[1],
+                    'admitted_md_arrivals_small_region': self.dynamic_md_admitted_by_region[0],
+                    'admitted_md_arrivals_large_region': self.dynamic_md_admitted_by_region[1],
+                    'md_admission_ratio_small_region': (
                         self.dynamic_md_admitted_by_region[0]
                         / max(self.dynamic_md_candidates_by_region[0], 1)
                     ),
-                    'md_admission_ratio_upper_right': (
+                    'md_admission_ratio_large_region': (
                         self.dynamic_md_admitted_by_region[1]
                         / max(self.dynamic_md_candidates_by_region[1], 1)
                     ),
+                    **{
+                        f'hotspot_layout_{layout_id}_fraction': float(
+                            self.hotspot_layout_index == layout_id
+                        )
+                        for layout_id in range(
+                            12 if self.hotspot_layout_mode == "episode_template12" else 4
+                        )
+                    },
+                    'md_admission_ratio': self.dynamic_md_admitted / max(self.dynamic_md_candidates, 1),
                     'expired_md_accesses': self.dynamic_md_expired,
                     'coverage_departed_md_accesses': self.dynamic_md_departed,
                     'average_active_mds': self.dynamic_md_active_sum / self.MAX_SIMULATION_TIME,
@@ -1976,6 +2403,32 @@ class MEC(gym.Env):
                         / max(self.MAX_SIMULATION_TIME / 2, 1)
                     ),
                 })
+                if self.hotspot_layout_mode == "episode_moving_template4":
+                    info.update({
+                        'moving_hotspot_small_nearest_uav_distance': (
+                            self.hotspot_small_nearest_uav_distance_sum
+                            / self.MAX_SIMULATION_TIME
+                        ),
+                        'moving_hotspot_large_mean_four_uav_distance': (
+                            self.hotspot_large_four_uav_distance_sum
+                            / self.MAX_SIMULATION_TIME
+                        ),
+                    })
+                if self.hotspot_layout_mode == "fixed_legacy":
+                    info.update({
+                        'candidate_md_arrivals_lower_left': self.dynamic_md_candidates_by_region[0],
+                        'candidate_md_arrivals_upper_right': self.dynamic_md_candidates_by_region[1],
+                        'admitted_md_arrivals_lower_left': self.dynamic_md_admitted_by_region[0],
+                        'admitted_md_arrivals_upper_right': self.dynamic_md_admitted_by_region[1],
+                        'md_admission_ratio_lower_left': (
+                            self.dynamic_md_admitted_by_region[0]
+                            / max(self.dynamic_md_candidates_by_region[0], 1)
+                        ),
+                        'md_admission_ratio_upper_right': (
+                            self.dynamic_md_admitted_by_region[1]
+                            / max(self.dynamic_md_candidates_by_region[1], 1)
+                        ),
+                    })
                 if getattr(self.args, "uav_reset_curriculum", False):
                     info.update({
                         'curriculum_random_reset': float(self.curriculum_random_reset),
@@ -2337,11 +2790,29 @@ class MEC(gym.Env):
         # Update ground user velocities and directions using Gauss-Markov Model
         moving_gu_ids = reward_active_ids if self.dynamic_md else np.arange(self.n_GUs)
         random_normal_vel = np.random.normal(0, 0.01 * self.std_dev_gaussian, len(moving_gu_ids))
-        self.gu_velocities[moving_gu_ids] = (
+        updated_gu_velocities = (
             self.alpha_gaussian * self.gu_velocities[moving_gu_ids]
             + (1 - self.alpha_gaussian) * self.mean_velocity
             + np.sqrt(1 - self.alpha_gaussian ** 2) * random_normal_vel
         )
+        if (
+            self.md_velocity_update_clip_min is not None
+            or self.md_velocity_update_clip_max is not None
+        ):
+            clip_min = (
+                -np.inf
+                if self.md_velocity_update_clip_min is None
+                else self.md_velocity_update_clip_min
+            )
+            clip_max = (
+                np.inf
+                if self.md_velocity_update_clip_max is None
+                else self.md_velocity_update_clip_max
+            )
+            updated_gu_velocities = np.clip(
+                updated_gu_velocities, clip_min, clip_max
+            )
+        self.gu_velocities[moving_gu_ids] = updated_gu_velocities
         random_normal_dir = np.random.normal(0, 0.01 * self.std_dev_gaussian, len(moving_gu_ids))
         self.gu_directions[moving_gu_ids] = (
             self.alpha_gaussian * self.gu_directions[moving_gu_ids]
@@ -2980,6 +3451,14 @@ class MEC(gym.Env):
             if actor_messages is not None:
                 local_obs[i, idx:idx + self.actor_message_dim] = actor_messages[i]
                 idx += self.actor_message_dim
+
+            # Common reset-time task prior, not a UAV-to-UAV packet. Keep it
+            # outside actor_only_obs_dim so the critic retains the same context.
+            if self.layout_context_dim:
+                local_obs[
+                    i, idx:idx + self.layout_context_dim
+                ] = self.episode_layout_context
+                idx += self.layout_context_dim
 
             # # 3. Find neighboring UAVs (excluding self)
             # # neighbor_mask = (uav_uav_distances[i] <= self.Cover_R) & (np.arange(self.n_UAVs) != i)

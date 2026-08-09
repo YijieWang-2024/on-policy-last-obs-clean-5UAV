@@ -7,7 +7,15 @@ from onpolicy.runner.separated.mec_runner import MECRunner
 
 
 def test_finite_consensus_approaches_component_mean():
-    runner = SimpleNamespace(num_agents=3, n_rollout_threads=1, episode_length=2)
+    runner = SimpleNamespace(
+        num_agents=3,
+        n_rollout_threads=1,
+        episode_length=2,
+        neighbor_distance=1.1,
+        uav_positions=np.array(
+            [[[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]], dtype=np.float32
+        ),
+    )
     weights = np.array(
         [
             [2 / 3, 1 / 3, 0],
@@ -38,6 +46,64 @@ def test_finite_consensus_approaches_component_mean():
     )
     np.testing.assert_allclose(
         after_fifty, np.broadcast_to(exact_mean, after_fifty.shape), atol=1e-5
+    )
+
+
+def test_terminal_consensus_uses_positions_and_neighbor_distance_not_buffer_graph():
+    runner = SimpleNamespace(
+        num_agents=3,
+        n_rollout_threads=1,
+        episode_length=1,
+        neighbor_distance=1.0,
+        uav_positions=np.array(
+            [[[0.0, 0.0], [0.5, 0.0], [10.0, 0.0]]], dtype=np.float32
+        ),
+        buffer=[
+            SimpleNamespace(
+                Metropolis_weights=np.array(
+                    [[[1.0, 0.0, 0.0]]], dtype=np.float32
+                )
+            )
+            for _ in range(3)
+        ],
+    )
+    local_advantages = np.array(
+        [[[[1.0]]], [[[5.0]]], [[[9.0]]]], dtype=np.float32
+    )
+
+    terminal_result = MECRunner.run_consensus_algorithm(
+        runner, local_advantages, max_iterations=1
+    )
+    np.testing.assert_allclose(
+        terminal_result[:, 0, 0, 0], [3.0, 3.0, 9.0], atol=1e-6
+    )
+    terminal_noise = MECRunner.per_agent_consensus_residual(
+        local_advantages, terminal_result
+    )
+    np.testing.assert_allclose(
+        terminal_noise[:, 0, 0, 0], [0.5, 1.0, 1.0], atol=1e-6
+    )
+
+    runner.neighbor_distance = 100.0
+    connected_result = MECRunner.run_consensus_algorithm(
+        runner, local_advantages, max_iterations=1
+    )
+    np.testing.assert_allclose(
+        connected_result[:, 0, 0, 0], [5.0, 5.0, 5.0], atol=1e-6
+    )
+    connected_noise = MECRunner.per_agent_consensus_residual(
+        local_advantages, connected_result
+    )
+    np.testing.assert_allclose(
+        connected_noise[:, 0, 0, 0], [0.0, 1.0, 0.0], atol=1e-6
+    )
+
+    runner.neighbor_distance = 0.0
+    self_only_result = MECRunner.run_consensus_algorithm(
+        runner, local_advantages, max_iterations=1
+    )
+    np.testing.assert_allclose(
+        self_only_result, local_advantages, atol=1e-6
     )
 
 

@@ -33,8 +33,14 @@ class SpatialFlightEncoder(nn.Module):
             if self.message_mode != "disabled"
             else 0
         )
+        self.layout_context_dim = (
+            8 if getattr(args, "episode_layout_context", False) else 0
+        )
         self.messages_start = self.prefix + 2
-        self.users_start = self.prefix + 3 + self.message_dim
+        self.context_start = self.messages_start + self.message_dim
+        self.users_start = (
+            self.context_start + self.layout_context_dim + 1
+        )
         expected_dim = self.users_start + self.max_users * self.user_stride
         if obs_shape[0] != expected_dim:
             raise ValueError(
@@ -60,7 +66,10 @@ class SpatialFlightEncoder(nn.Module):
             )
         self.readout = nn.Sequential(
             nn.Linear(
-                hidden + 3 + (hidden + 1 if self.message_dim else 0),
+                hidden
+                + 3
+                + self.layout_context_dim
+                + (hidden + 1 if self.message_dim else 0),
                 hidden,
             ),
             nn.ReLU(),
@@ -142,6 +151,12 @@ class SpatialFlightEncoder(nn.Module):
         occupancy = count / float(self.max_users)
         self_descriptor = torch.cat((own_position, occupancy, pooled), dim=-1)
         features = [self_descriptor]
+        if self.layout_context_dim:
+            features.append(
+                obs[
+                    :, self.context_start:self.context_start + self.layout_context_dim
+                ]
+            )
         if self.message_dim:
             messages = obs[
                 :, self.messages_start:self.messages_start + self.message_dim

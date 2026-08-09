@@ -302,3 +302,62 @@ g_{ij}=\sigma\!\left(f_g(d_i,\phi(x_{ij}),\Delta p_{ij})\right).
 | admission overall | 25 / 100 | +0.21% / +0.02% | −0.86% / −0.13% |
 
 fixed-reset与overall几乎重合，说明本地Mixed反序不是random/fixed样本混合造成的；接纳率差异很小，主要差异伴随任务完成率下降。三路无异常，预计约08:33--08:58到达50M，因此仍按预注册计划保留到50M统一固定起点评估，而不在32--34M临时挑选停止。
+
+## 2026-08-03 09:34 共同step审计续接
+
+已冻结本地、远程9001和远程9012共29条正式实验的TensorBoard事件与`args.json`，并按每组共同TensorBoard step重算最近25点。完整可复现证据位于：
+
+`paper_artifacts/diagnostics/dcppo_radius_review_20260803/`
+
+其中每张图均包含`data.csv`、`plot.py`、`plot.png`、`figure-spec.md`、`audit.md`和`final-status.md`，没有对曲线做人工平移、延长或修正。
+
+### 超过50M后可以固定的负结论
+
+- 归一化残差旧三路在54.656M仍为R0>R260>R1000，相邻差`−3.10%/−5.07%`。
+- Mixed三路在约53M仍为R0>R260>R1000，相邻差`−5.71%/−2.68%`，fixed-reset同方向。
+- Local-`A_i` critic-only在53.376M的R1000−R260仅`+0.004%`，更多critic信息没有可测策略收益。
+- Pure-consensus的R1000比R260低`16.34%`，纯团队优势信用分配失败。
+- K1/K50运行到62.438M后，K50比K1低`0.66%`；34M的早期轮次弱单调没有持续。
+
+### Actor消息机制审计
+
+| 对比 | 共同step | True60差异 | 含义 |
+|---|---:|---:|---|
+| mean task R260−R0 | 29.005M | −0.77% | mean-pool未形成下界收益 |
+| mean task R1000−R260 | 29.005M | +1.44% | R1000已能从Actor消息获益 |
+| zero R1000−R260 | 29.670M | −11.76% | critic-only的R1000明显失败 |
+| R260 task−zero | 29.261M | −0.51% | R260完整任务包暂无收益 |
+| R1000 task−zero | 29.005M | +14.72% | Actor消息对R1000是决定性变量 |
+| R1000 geometry−zero | 29.005M | +13.99% | 几何消息贡献绝大部分收益 |
+| R1000 task−geometry | 29.005M | +0.64% | 额外任务统计仅弱增益 |
+| 高速R260−R0 | 29.773M | +0.40% | 中半径弱正信号 |
+| 高速R1000−R260 | 29.773M | −5.39% | 提高MD速度不能解决上界反序 |
+
+### Receiver-gated首次通过20M筛选
+
+在共同21.9904M步：
+
+| 指标 | R0 | R260 | R1000 | R260−R0 | R1000−R260 |
+|---|---:|---:|---:|---:|---:|
+| overall True60 | 534.81k | 536.02k | 541.59k | +0.225% | +1.040% |
+| fixed-reset True60 | 535.47k | 536.87k | 542.31k | +0.262% | +1.013% |
+
+这是当前第一次在overall与fixed-reset中同时得到`R0<R260<R1000`。同半径结构比较中，gated相对mean为R0`−0.54%`、R260`−0.07%`、R1000`+1.77%`，说明门控主要改善邻居最密集、最容易被均值稀释的R1000。
+
+该结果仍只有seed=2且刚超过20M，当前状态仅为“通过机制筛选”。G0/G260/G1000必须继续到50M，冻结checkpoint后做固定起点评估；若仍同序，才进入至少3个独立训练seed确认。期间不临时修改优势、消息字段、速度或停止门槛。
+
+## 2026-08-03 约36M复核与路线收缩
+
+- receiver-gated在共同36.1728M的末25/末100：R0 544.253k/545.670k，R260 543.565k/542.423k，R1000 548.457k/549.083k。
+- 当前为`R260 < R0 < R1000`，所以21.9904M的完整排序是暂态证据；继续到50M，但不再提前宣称成功。
+- 本地mixed、mean-pool Actor消息、v10和K轮次实验均未支持半径单调收益，已停止并保留输出。
+- 最可靠的新组件结论是R1000 geometry-message相对zero提高约12%–13%；完整task payload未稳定优于geometry。
+- 完整曲线、表格和进程决策见`paper_artifacts/diagnostics/all_devices_refresh_20260803/README.md`。
+
+## RandomLayout-700 对称起点训练前 gate
+
+正式环境接通700m并采用旋转中性的中心十字起点后，重新做了与600m严格匹配的启发式上界预检。700m的R260-R0为`+7.579%`（99.90% episode为正），但R1000-R260只有`+0.158%`（57.05%为正），低于预先约定的0.5%/70%门槛。因此不启动三路长训练。结果说明随机热点足以产生“通信相对无通信”的价值，但尚未产生稳定的“全局通信相对260m通信”的额外控制价值。证据见`paper_artifacts/diagnostics/random_layout_symmetric_preflight_20260803/README.md`。
+
+## MovingHotspot700 matched 30M gate (started 2026-08-03)
+
+To test whether the static task was suppressing the value of communication, a hidden continuously moving birth-intensity environment was added. The 175x175 and 400x400 regions remain center-symmetric and traverse two square-route edges per episode at 3 m/s. Active MD sessions retain their own motion/lifetime and frozen birth-time reflection bounds. Four matched local-advantage experiments use R0/R200/R400/R600 for a geometry-aligned topology ladder: isolated, disconnected local components, connected sparse, and complete. The 30M runs are active on 9001 under `/data/home/tanglanProf_user02/wyj/Projects/on-policy-movinghotspot700-20260803`; see `HANDOFF.md` for PGIDs. Early launch snapshots are not ranking evidence.

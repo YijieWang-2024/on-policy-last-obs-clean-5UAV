@@ -1,6 +1,6 @@
 # 5-UAV Paper Reproduction Workspace
 
-> 2026-07-31 最新入口：当前结论和待办见 [`HANDOFF.md`](HANDOFF.md)，最近两周时间线见 [`WORK_NOTES.md`](WORK_NOTES.md)，Q0/Q1/Q2 最终结果见 [`RECENT_EXPERIMENT_SUMMARY_20260729_20260731.md`](RECENT_EXPERIMENT_SUMMARY_20260729_20260731.md)。下方 2026-07-28 状态保留为历史快照。
+> 2026-08-05 最新入口：本周实验总结和交接见 [`RECENT_EXPERIMENT_SUMMARY_20260801_20260805.md`](RECENT_EXPERIMENT_SUMMARY_20260801_20260805.md) 第 11–13 节（七类环境的总表、最终完整曲线、数值和轨迹）；最终曲线脚本与端点表见 `paper_artifacts/final_curve_refresh_20260805/`。主状态和待办见 [`HANDOFF.md`](HANDOFF.md) 文末，时间线见 [`WORK_NOTES.md`](WORK_NOTES.md)，通信半径专项账本见 [`DCPPO_RADIUS_TUNING_20260802.md`](DCPPO_RADIUS_TUNING_20260802.md)。下方旧状态保留为历史快照。
 
 > 2026-07-28 状态：本文件保留仓库来源与旧论文图复现约束。当前动态用户实验的最新进展、正负结果和运行状态请以 [`RECENT_EXPERIMENT_SUMMARY_20260725_20260728.md`](RECENT_EXPERIMENT_SUMMARY_20260725_20260728.md) 为准。当前工作分支是 `agent/dcppo-runtime-optimization`；下方 `paper-5uav-repro` 是该工作区建立时的历史身份，不代表当前 checkout。
 

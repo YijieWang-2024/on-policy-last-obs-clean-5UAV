@@ -7,15 +7,29 @@ param(
     [int]$CommunicationDistance = 260,
     [int]$ActorNeighborDistance = 260,
     [int]$ConsensusRounds = 50,
-    [ValidateSet('local', 'mixed_consensus', 'pure_consensus', 'externality_consensus', 'legacy_noise')]
+    [ValidateSet('local', 'mixed_consensus', 'pure_consensus', 'externality_consensus', 'legacy_noise', 'per_agent_noise')]
     [string]$AdvantageMode = 'mixed_consensus',
+    [double]$NoiseScale = 0.12,
     [double]$ConsensusAlpha = 0.5,
     [double]$ExternalityBeta = 0.1,
     [ValidateSet('disabled', 'zero', 'geometry', 'task_summary')]
     [string]$ActorMessageMode = 'disabled',
     [ValidateSet('mean', 'receiver_gated_sum')]
     [string]$ActorMessagePool = 'mean',
+    [ValidateSet('fixed_legacy', 'episode_template4', 'episode_template4_600_200', 'episode_template12', 'episode_moving_template4')]
+    [string]$HotspotLayoutMode = 'fixed_legacy',
+    [int[]]$HotspotLayoutIndices = @(),
+    [ValidateSet('line', 'staggered')]
+    [string]$FiveUAVStartLayout = 'line',
+    [ValidateSet(600, 700)]
+    [int]$MapSize = 600,
+    [int]$UAVMaxSpeed = 30,
     [double]$MeanVelocity = 0.5,
+    [double]$MDVelocityInitStd = 0.3,
+    [double]$MDVelocityInitMinFactor = 0.7,
+    [double]$MDVelocityInitMaxFactor = 1.3,
+    [Nullable[double]]$MDVelocityUpdateClipMin = $null,
+    [Nullable[double]]$MDVelocityUpdateClipMax = $null,
     [string]$Python = 'python',
     [string]$ExperimentName = '',
     [switch]$CartesianFlight,
@@ -24,12 +38,18 @@ param(
     [switch]$DistanceOnlyUserSort,
     [switch]$CompletionPriorityUserSort,
     [switch]$UAVResetCurriculum,
+    [ValidateSet('legacy', 'p0p7_10m_25m')]
+    [string]$UAVResetCurriculumSchedule = 'legacy',
+    [switch]$EpisodeLayoutContext,
     [switch]$LegacyMeanPoolCritic,
     [switch]$IndependentReturnNorm
 )
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $trainScript = Join-Path $repoRoot 'onpolicy\scripts\train\train_mec.py'
+if ($MapSize -eq 700 -and $HotspotLayoutMode -notin @('episode_template4', 'episode_template12', 'episode_moving_template4')) {
+    throw 'MapSize=700 requires episode_template4, episode_template12, or episode_moving_template4; fixed_legacy is the original 600m environment.'
+}
 $env:PYTHONUTF8 = '1'
 $env:OMP_NUM_THREADS = '1'
 $env:MKL_NUM_THREADS = '1'
@@ -37,6 +57,11 @@ $env:OPENBLAS_NUM_THREADS = '1'
 $env:NUMEXPR_NUM_THREADS = '1'
 if (-not $ExperimentName) {
     $ExperimentName = "regional_dynamic_$Method"
+}
+$regionArrivals = if ($HotspotLayoutMode -eq 'episode_template4_600_200') {
+    @('1', '4')
+} else {
+    @('1', '5')
 }
 
 $arguments = @(
@@ -53,13 +78,16 @@ $arguments = @(
     '--dynamic_md',
     '--md_arrivals_min', '6',
     '--md_arrivals_max', '6',
-    '--md_arrivals_per_region', '1', '5',
+    '--md_arrivals_per_region', $regionArrivals[0], $regionArrivals[1],
+    '--hotspot_layout_mode', $HotspotLayoutMode,
+    '--five_uav_start_layout', $FiveUAVStartLayout,
     '--md_lifetime_min', '10',
     '--md_lifetime_max', '10',
-    '--x_min_uav', '0', '--x_max_uav', '600',
-    '--y_min_uav', '0', '--y_max_uav', '600',
-    '--x_min_gu', '0', '--x_max_gu', '600',
-    '--y_min_gu', '0', '--y_max_gu', '600',
+    '--x_max', $MapSize,
+    '--x_min_uav', '0', '--x_max_uav', $MapSize,
+    '--y_min_uav', '0', '--y_max_uav', $MapSize,
+    '--x_min_gu', '0', '--x_max_gu', $MapSize,
+    '--y_min_gu', '0', '--y_max_gu', $MapSize,
     '--fix_hotspot',
     '--max_UAVs_in_neighbor', '5',
     '--max_UAVs_obs_concat', '5',
@@ -82,8 +110,11 @@ $arguments = @(
     '--entropy_coef', '0',
     '--B', '30000000',
     '--F_m', '20000000000',
-    '--v_max', '30',
+    '--v_max', $UAVMaxSpeed,
     '--mean_velocity', $MeanVelocity,
+    '--md_velocity_init_std', $MDVelocityInitStd,
+    '--md_velocity_init_min_factor', $MDVelocityInitMinFactor,
+    '--md_velocity_init_max_factor', $MDVelocityInitMaxFactor,
     '--alpha_r', '32',
     '--gamma_r', '26',
     '--delta_r', '32',
@@ -91,6 +122,13 @@ $arguments = @(
     '--mu_r', '64',
     '--use_valuenorm'
 )
+
+if ($HotspotLayoutIndices.Count -gt 0) {
+    $arguments += @('--hotspot_layout_indices') + $HotspotLayoutIndices
+}
+if ($EpisodeLayoutContext) {
+    $arguments += '--episode_layout_context'
+}
 
 if ($Method -ne 'ippo') {
     $arguments += '--use_atten_critic'
@@ -117,6 +155,13 @@ if ($CompletionPriorityUserSort) {
 }
 if ($UAVResetCurriculum) {
     $arguments += '--uav_reset_curriculum'
+    $arguments += @('--uav_reset_curriculum_schedule', $UAVResetCurriculumSchedule)
+}
+if ($null -ne $MDVelocityUpdateClipMin) {
+    $arguments += @('--md_velocity_update_clip_min', $MDVelocityUpdateClipMin)
+}
+if ($null -ne $MDVelocityUpdateClipMax) {
+    $arguments += @('--md_velocity_update_clip_max', $MDVelocityUpdateClipMax)
 }
 
 if ($Method -eq 'dcppo') {
@@ -127,6 +172,9 @@ if ($Method -eq 'dcppo') {
         '--externality_beta', $ExternalityBeta,
         '--n_iterations', $ConsensusRounds
     )
+    if ($AdvantageMode -eq 'per_agent_noise') {
+        $arguments += @('--noise_scale', $NoiseScale)
+    }
     if ($AdvantageMode -ne 'legacy_noise' -and -not $LegacyMeanPoolCritic) {
         $arguments += '--ego_query_critic'
     }

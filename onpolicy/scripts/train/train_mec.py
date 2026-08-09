@@ -86,6 +86,68 @@ def parse_args(args, parser):
     parser.add_argument("--md_arrivals_per_region", type=int, nargs=2, default=None,
                         metavar=("LOWER_LEFT", "UPPER_RIGHT"),
                         help="Fixed candidate arrivals in the two 5-UAV hotspot rectangles.")
+    parser.add_argument(
+        "--hotspot_layout_mode",
+        choices=(
+            "fixed_legacy", "episode_template4", "episode_template4_600_200",
+            "episode_template12", "episode_moving_template4"
+        ),
+        default="fixed_legacy",
+        help=(
+            "Regional dynamic-MD layout. fixed_legacy preserves the original "
+            "lower-left/upper-right rectangles; episode_template4 samples one "
+            "of four area-preserving diagonal layouts per episode; "
+            "episode_template4_600_200 is the fixed 600m 200m/400m "
+            "double-hotspot protocol; "
+            "episode_template12 samples all ordered non-overlapping corner "
+            "pairs (large corner first, small corner from the other three); "
+            "episode_moving_template4 moves a hidden pair of birth regions "
+            "continuously along a symmetric square route."
+        ),
+    )
+    parser.add_argument(
+        "--hotspot_layout_indices",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="INDEX",
+        help=(
+            "Optional subset of episode_template12 layout indices to sample "
+            "uniformly. Use one index for a fixed layout."
+        ),
+    )
+    parser.add_argument(
+        "--episode_layout_context",
+        action="store_true",
+        default=False,
+        help=(
+            "Expose reset-time regional hotspot geometry to every actor and "
+            "critic as 8 normalized [xmin,xmax,ymin,ymax] values; no "
+            "active-user or future-arrival information is included."
+        ),
+    )
+    parser.add_argument(
+        "--five_uav_start_layout",
+        choices=("line", "staggered"),
+        default="line",
+        help=(
+            "Initial geometry for the 700m five-UAV episode_template12 "
+            "diagnostic. line uses y=70 for the lower four; staggered "
+            "uses (300,140) and (400,140) for the last two."
+        ),
+    )
+    parser.add_argument(
+        "--uav_start_positions",
+        type=float,
+        nargs="+",
+        default=None,
+        metavar="XY",
+        help=(
+            "Optional explicit UAV reset coordinates as 2*n_UAVs values "
+            "(x0 y0 x1 y1 ...). When supplied, this overrides the built-in "
+            "five-UAV reset geometry without changing the hotspot layout."
+        ),
+    )
     parser.add_argument("--md_lifetime_min", type=int, default=15,
                         help="Minimum active access lifetime in slots.")
     parser.add_argument("--md_lifetime_max", type=int, default=25,
@@ -150,6 +212,36 @@ def parse_args(args, parser):
     parser.add_argument("--p3", type=float, default=500, help="Penalty value for collision avoidance in reward calculation")
     parser.add_argument("--v_max", type=int, default=20, help="Maximum flight speed of UAV in m/s")
     parser.add_argument("--mean_velocity", type=float, default=5, help="Average moving speed of ground user in m/s")
+    parser.add_argument(
+        "--md_velocity_init_std",
+        type=float,
+        default=0.3,
+        help="Standard deviation of newly initialized MD speeds in m/s",
+    )
+    parser.add_argument(
+        "--md_velocity_init_min_factor",
+        type=float,
+        default=0.7,
+        help="Lower initial MD speed bound as a multiple of mean_velocity",
+    )
+    parser.add_argument(
+        "--md_velocity_init_max_factor",
+        type=float,
+        default=1.3,
+        help="Upper initial MD speed bound as a multiple of mean_velocity",
+    )
+    parser.add_argument(
+        "--md_velocity_update_clip_min",
+        type=float,
+        default=None,
+        help="Optional lower bound for Gauss-Markov MD speed updates",
+    )
+    parser.add_argument(
+        "--md_velocity_update_clip_max",
+        type=float,
+        default=None,
+        help="Optional upper bound for Gauss-Markov MD speed updates",
+    )
 
     # 占位，从tf代码里搞过来的，先不用这个，所以default改为了False。因为torch代码里有value_norm。
     # 在config.py里有"--use_valuenorm", action='store_false', default=True, help="by default True, use running mean and std to normalize rewards."
@@ -209,6 +301,16 @@ def parse_args(args, parser):
                         help="Sort all covered users by local infeasibility first, then by distance within each group")
     parser.add_argument("--uav_reset_curriculum", action='store_true', default=False,
                         help="Train with target-free random UAV resets, annealed to fixed resets by 50%%")
+    parser.add_argument(
+        "--uav_reset_curriculum_schedule",
+        choices=["legacy", "p0p7_10m_25m"],
+        default="legacy",
+        help=(
+            "UAV reset curriculum schedule. legacy is the existing 0.5/20M->50M "
+            "schedule; p0p7_10m_25m holds p=0.7 to 10M and linearly anneals "
+            "to zero at 25M."
+        ),
+    )
     parser.add_argument("--ave_resource", action='store_true', default=False, help="If true, allocate the resources of UAV equally to the connected users")
     parser.add_argument("--ave_bandwidth", action='store_true', default=False, help="If true, allocate the bandwidth resources only of UAV equally to the connected users")
     parser.add_argument("--not_served_rew_to_ave", action='store_true', default=False, help="If true, Rewards for unserved users are split evenly between covered drones")
@@ -230,9 +332,18 @@ def parse_args(args, parser):
             "pure_consensus",
             "externality_consensus",
             "legacy_noise",
+            "per_agent_noise",
         ],
         default="default",
         help="Actor advantage contract. Consensus modes use the rollout-ending communication graph.",
+    )
+    parser.add_argument(
+        "--noise_scale", type=float, default=0.12,
+        help=(
+            "Base Gaussian-noise scale for per_agent_noise. The final actor "
+            "advantage is A_local + noise_magnitude_i * noise_scale * "
+            "std(A_local) * N(0,1)."
+        ),
     )
     parser.add_argument(
         "--consensus_alpha", type=float, default=0.5,
@@ -259,6 +370,8 @@ def parse_args(args, parser):
         parser.error("--consensus_alpha must be in [0, 1]")
     if not 0.0 <= all_args.externality_beta <= 1.0:
         parser.error("--externality_beta must be in [0, 1]")
+    if all_args.noise_scale < 0.0:
+        parser.error("--noise_scale must be non-negative")
     if all_args.ego_query_critic and not all_args.use_atten_critic:
         parser.error("--ego_query_critic requires --use_atten_critic")
     if all_args.shared_ret_norm and not all_args.ret_norm:
