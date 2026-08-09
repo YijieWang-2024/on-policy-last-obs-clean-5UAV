@@ -160,3 +160,14 @@
 - 更正 Q2 10 episode True60 为 617,738 ± 4,096；更正 12-layout UAV curriculum 已完成约 50M；明确 600m/700m preflight 不是 PPO 结果，MovingHotspot seed=2、Subset29、K1/K50 等属于未完成或诊断状态。
 - 当前交接判断：RandomLayout700-v2 Full template12 无 curriculum 两 seed 是候选主线，但必须先做 small/large 分区审计和消息反事实；不再仅凭总 True60 或早期曲线宣布通信半径定律。
 - 本日期之后启动的 v_max=10/20/30/40 运行不纳入本周完成结果。
+
+## 2026-08-09: Random12-600 input-v2 implementation
+
+- Preserved the pre-change communication experiment baseline as `44b7575`.
+- Implemented the explicit `episode_template12_600_200` mode rather than changing the legacy 700m `episode_template12` semantics.
+- Versioned the observation contracts to prevent same-shape old checkpoints from silently receiving new semantics.
+- `absolute_raw_v2`: absolute/raw message fields, normal `ob_norm` for fields 0-8, raw binary mask at field 9.
+- `meters_v2`: raw meter-valued episode layout boundaries followed by normal `ob_norm`.
+- Updated frozen normalization, full-message masking, and distance counterfactuals for both v1 and v2.
+- Added the parameterized `run_random12_600_dcppo_noise3p0.ps1` launcher for R0/R260/R520/R780.
+- Targeted regression: 53 tests passed; one-step environment/normalizer smoke test and PowerShell parser checks passed.

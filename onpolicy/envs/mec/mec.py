@@ -263,7 +263,8 @@ class MEC(gym.Env):
         self.hotspot_layout_mode = getattr(args, "hotspot_layout_mode", "fixed_legacy")
         if self.hotspot_layout_mode not in {
             "fixed_legacy", "episode_template4", "episode_template4_600_200",
-            "episode_template12", "episode_moving_template4"
+            "episode_template12", "episode_template12_600_200",
+            "episode_moving_template4"
         }:
             raise ValueError(f"unknown hotspot_layout_mode: {self.hotspot_layout_mode}")
         raw_layout_indices = getattr(args, "hotspot_layout_indices", None)
@@ -299,6 +300,16 @@ class MEC(gym.Env):
         self.episode_layout_context_enabled = bool(
             getattr(args, "episode_layout_context", False)
         )
+        self.episode_layout_context_units = getattr(
+            args, "episode_layout_context_units", "normalized_v1"
+        )
+        if self.episode_layout_context_units not in {
+            "normalized_v1", "meters_v2"
+        }:
+            raise ValueError(
+                "unknown episode_layout_context_units: "
+                f"{self.episode_layout_context_units}"
+            )
         if self.episode_layout_context_enabled and not self.regional_dynamic_md:
             raise ValueError(
                 "episode_layout_context requires dynamic_md with regional arrivals"
@@ -315,10 +326,17 @@ class MEC(gym.Env):
             self.layout_context_dim, dtype=np.float32
         )
         regional_map_size = float(args.x_max_gu - args.x_min_gu)
+        regional_small_size = (
+            200.0
+            if self.hotspot_layout_mode in {
+                "episode_template4_600_200", "episode_template12_600_200"
+            }
+            else 175.0
+        )
         regional_large_near = regional_map_size - 400.0
         self.episode_hotspot_bounds = np.array(
             [
-                [0.0, 175.0, 0.0, 175.0],
+                [0.0, regional_small_size, 0.0, regional_small_size],
                 [regional_large_near, regional_map_size,
                  regional_large_near, regional_map_size],
             ],
@@ -343,7 +361,7 @@ class MEC(gym.Env):
                 assert self.hotspot_layout_mode in {
                     "fixed_legacy", "episode_template4",
                     "episode_template4_600_200", "episode_template12",
-                    "episode_moving_template4"
+                    "episode_template12_600_200", "episode_moving_template4"
                 }
                 if self.hotspot_layout_mode == "fixed_legacy":
                     assert args.x_max_gu == 600, \
@@ -356,6 +374,9 @@ class MEC(gym.Env):
                 }:
                     assert args.x_max_gu == 700, \
                         f"{self.hotspot_layout_mode} is defined for the 700m map."
+                if self.hotspot_layout_mode == "episode_template12_600_200":
+                    assert args.x_max_gu == 600, \
+                        "episode_template12_600_200 is defined for the 600m map."
                 if self.hotspot_layout_mode == "episode_moving_template4":
                     assert args.x_max_gu == 700, \
                         "episode_moving_template4 is defined for the 700m map."
@@ -381,6 +402,15 @@ class MEC(gym.Env):
             "disabled", "zero", "geometry", "task_summary"
         }:
             raise ValueError(f"unknown actor_message_mode: {self.actor_message_mode}")
+        self.actor_message_contract = getattr(
+            args, "actor_message_contract", "relative_scaled_v1"
+        )
+        if self.actor_message_contract not in {
+            "relative_scaled_v1", "absolute_raw_v2"
+        }:
+            raise ValueError(
+                f"unknown actor_message_contract: {self.actor_message_contract}"
+            )
         self.actor_message_features = 10
         self.actor_message_dim = (
             self.actor_message_features * (self.n_UAVs - 1)
@@ -813,6 +843,7 @@ class MEC(gym.Env):
                 self.candidate_birth_rng
                 if self.hotspot_layout_mode in {
                     "episode_template4", "episode_template12",
+                    "episode_template12_600_200",
                     "episode_moving_template4"
                 }
                 else np.random
@@ -958,19 +989,20 @@ class MEC(gym.Env):
         ], dtype=np.float64)
 
     @staticmethod
-    def _regional_hotspot_layouts12(map_size):
-        """All ordered non-overlapping corner pairs for the 700m layout.
+    def _regional_hotspot_layouts12(map_size, small_size=175.0):
+        """All ordered non-overlapping corner pairs on a square map.
 
-        Region 0 is always the small (175m) birth region and region 1 is
+        Region 0 is always the small birth region and region 1 is
         always the large (400m) birth region.  The large corner is sampled
         first, then the small corner is sampled from the other three corners.
-        This removes the diagonal-only shortcut while keeping both region
-        sizes and their corner geometry unchanged.
+        ``small_size`` is 175m for the legacy 700m protocol and 200m for the
+        600m protocol.
         """
         map_size = float(map_size)
-        corners = ((0.0, 0.0), (map_size - 175.0, 0.0),
-                   (0.0, map_size - 175.0),
-                   (map_size - 175.0, map_size - 175.0))
+        small_size = float(small_size)
+        corners = ((0.0, 0.0), (map_size - small_size, 0.0),
+                   (0.0, map_size - small_size),
+                   (map_size - small_size, map_size - small_size))
         large_near = map_size - 400.0
         large_corners = ((0.0, 0.0), (large_near, 0.0),
                          (0.0, large_near), (large_near, large_near))
@@ -980,7 +1012,8 @@ class MEC(gym.Env):
                 if small_id == large_id:
                     continue
                 layouts.append([
-                    [small_x, small_x + 175.0, small_y, small_y + 175.0],
+                    [small_x, small_x + small_size,
+                     small_y, small_y + small_size],
                     [large_x, large_x + 400.0, large_y, large_y + 400.0],
                 ])
         return np.asarray(layouts, dtype=np.float64)
@@ -993,6 +1026,8 @@ class MEC(gym.Env):
         layouts = (
             self._regional_hotspot_layouts600_200(map_size)
             if self.hotspot_layout_mode == "episode_template4_600_200"
+            else self._regional_hotspot_layouts12(map_size, small_size=200.0)
+            if self.hotspot_layout_mode == "episode_template12_600_200"
             else self._regional_hotspot_layouts12(map_size)
             if self.hotspot_layout_mode == "episode_template12"
             else self._regional_hotspot_layouts(map_size)
@@ -1026,20 +1061,21 @@ class MEC(gym.Env):
         """Encode static birth-region bounds for the optional task prior.
 
         The context contains only the two reset-time birth rectangles, in the
-        fixed order [small, large], normalized to the GU map. It contains no
-        active-user state, current counts, or future random arrivals.
+        fixed order [small, large]. It contains no active-user state, current
+        counts, or future random arrivals.
         """
         if not self.episode_layout_context_enabled:
             return
-        x_scale = max(float(self.x_max_gu - self.x_min_gu), 1.0)
-        y_scale = max(float(self.y_max_gu - self.y_min_gu), 1.0)
         bounds = np.asarray(self.episode_hotspot_bounds, dtype=np.float64).copy()
-        bounds[:, [0, 1]] = (
-            bounds[:, [0, 1]] - float(self.x_min_gu)
-        ) / x_scale
-        bounds[:, [2, 3]] = (
-            bounds[:, [2, 3]] - float(self.y_min_gu)
-        ) / y_scale
+        if self.episode_layout_context_units == "normalized_v1":
+            x_scale = max(float(self.x_max_gu - self.x_min_gu), 1.0)
+            y_scale = max(float(self.y_max_gu - self.y_min_gu), 1.0)
+            bounds[:, [0, 1]] = (
+                bounds[:, [0, 1]] - float(self.x_min_gu)
+            ) / x_scale
+            bounds[:, [2, 3]] = (
+                bounds[:, [2, 3]] - float(self.y_min_gu)
+            ) / y_scale
         self.episode_layout_context = bounds.astype(np.float32).reshape(-1)
 
     @staticmethod
@@ -1228,7 +1264,9 @@ class MEC(gym.Env):
                 ))
             elif (
                 self.regional_dynamic_md
-                and self.hotspot_layout_mode == "episode_template4_600_200"
+                and self.hotspot_layout_mode in {
+                    "episode_template4_600_200", "episode_template12_600_200"
+                }
                 and self.x_max_gu == 600
             ):
                 self.uav_positions = np.array([
@@ -2391,7 +2429,9 @@ class MEC(gym.Env):
                             self.hotspot_layout_index == layout_id
                         )
                         for layout_id in range(
-                            12 if self.hotspot_layout_mode == "episode_template12" else 4
+                            12 if self.hotspot_layout_mode in {
+                                "episode_template12", "episode_template12_600_200"
+                            } else 4
                         )
                     },
                     'md_admission_ratio': self.dynamic_md_admitted / max(self.dynamic_md_candidates, 1),
@@ -3285,9 +3325,11 @@ class MEC(gym.Env):
         """Build radius-gated sender-local summaries for the flight policy.
 
         Packet layout per other UAV is:
-        [dx, dy, active_count, centroid_dx, centroid_dy,
+        [sender_x, sender_y, active_count, centroid_x, centroid_y,
          mean_velocity_x, mean_velocity_y, spread, hard_task_fraction, mask].
-        Geometry and task quantities are computed at the current decision slot.
+        Under ``absolute_raw_v2`` the first eight quantities use raw physical
+        units and only the mask bypasses observation normalization. The legacy
+        contract retains relative/scaled values for old checkpoints.
         """
         messages = np.zeros(
             (self.n_UAVs, self.n_UAVs - 1, self.actor_message_features),
@@ -3297,15 +3339,13 @@ class MEC(gym.Env):
             self._record_actor_message_diagnostics(messages)
             return messages.reshape(self.n_UAVs, -1)
 
+        legacy_contract = self.actor_message_contract == "relative_scaled_v1"
         map_scale = max(
             self.x_max_uav - self.x_min_uav,
             self.y_max_uav - self.y_min_uav,
             1.0,
-        )
-        # Use constants shared by all radius and mobility conditions. In
-        # particular, scaling by mean_velocity would erase the distinction
-        # between the 0.5 m/s and 10 m/s scenarios from the message itself.
-        velocity_scale = max(float(self.v_max), 1e-6)
+        ) if legacy_contract else 1.0
+        velocity_scale = max(float(self.v_max), 1e-6) if legacy_contract else 1.0
         sender_payloads = np.zeros((self.n_UAVs, 7), dtype=np.float32)
         if self.actor_message_mode == "task_summary":
             # A sender broadcasts the same local task summary to every
@@ -3318,14 +3358,16 @@ class MEC(gym.Env):
                 local_ids = local_ids[local_ids != -1].astype(np.int64)
                 sender_payloads[sender_id, 0] = (
                     in_range_count / float(max(self.n_GUs, 1))
+                    if legacy_contract else in_range_count
                 )
                 if not local_ids.size:
                     continue
                 local_positions = self.gu_positions[local_ids, :2]
                 centroid = np.mean(local_positions, axis=0)
                 sender_payloads[sender_id, 1:3] = (
-                    centroid - self.uav_positions[sender_id, :2]
-                ) / self.Cover_R
+                    (centroid - self.uav_positions[sender_id, :2]) / self.Cover_R
+                    if legacy_contract else centroid
+                )
                 velocity_vectors = np.column_stack((
                     self.gu_velocities[local_ids]
                     * np.cos(self.gu_directions[local_ids]),
@@ -3335,11 +3377,9 @@ class MEC(gym.Env):
                 sender_payloads[sender_id, 3:5] = (
                     np.mean(velocity_vectors, axis=0) / velocity_scale
                 )
-                sender_payloads[sender_id, 5] = (
-                    np.sqrt(np.mean(np.sum(
-                        (local_positions - centroid) ** 2, axis=1
-                    ))) / self.Cover_R
-                )
+                sender_payloads[sender_id, 5] = np.sqrt(np.mean(np.sum(
+                    (local_positions - centroid) ** 2, axis=1
+                ))) / (self.Cover_R if legacy_contract else 1.0)
                 tasks = self.gu_tasks[local_ids]
                 sender_payloads[sender_id, 6] = np.mean(
                     tasks[:, 1] / self.F_n > tasks[:, 2]
@@ -3357,11 +3397,13 @@ class MEC(gym.Env):
                     slot += 1
                     continue
 
-                relative_uav = (
+                sender_position = (
                     self.uav_positions[sender_id, :2]
                     - self.uav_positions[receiver_id, :2]
-                ) / map_scale
-                messages[receiver_id, slot, :2] = relative_uav
+                ) / map_scale if legacy_contract else self.uav_positions[
+                    sender_id, :2
+                ]
+                messages[receiver_id, slot, :2] = sender_position
                 messages[receiver_id, slot, 9] = 1.0
 
                 if self.actor_message_mode == "task_summary":

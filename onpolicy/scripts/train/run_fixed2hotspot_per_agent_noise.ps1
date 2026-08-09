@@ -7,6 +7,13 @@ param(
     [int]$RolloutThreads = 64,
     [double]$NeighborDistance = 0,
     [int]$NeighborR = 0,
+    [ValidateSet('fixed_legacy', 'episode_template12_600_200')]
+    [string]$HotspotLayoutMode = 'fixed_legacy',
+    [switch]$EpisodeLayoutContext,
+    [ValidateSet('normalized_v1', 'meters_v2')]
+    [string]$EpisodeLayoutContextUnits = 'normalized_v1',
+    [ValidateSet('relative_scaled_v1', 'absolute_raw_v2')]
+    [string]$ActorMessageContract = 'relative_scaled_v1',
     [string]$UserName = $env:USERNAME,
     [string]$ExperimentName = ''
 )
@@ -79,7 +86,7 @@ $trainArgs = @(
     '--md_arrivals_min', '5',
     '--md_arrivals_max', '5',
     '--md_arrivals_per_region', '1', '4',
-    '--hotspot_layout_mode', 'fixed_legacy',
+    '--hotspot_layout_mode', $HotspotLayoutMode,
     '--five_uav_start_layout', 'line',
     '--uav_start_positions', '110', '180', '220', '180', '330', '180', '440', '180', '400', '400',
     '--md_lifetime_min', '10',
@@ -152,6 +159,7 @@ $trainArgs = @(
     '--cartesian_flight',
     '--actor_message_mode', 'task_summary',
     '--actor_message_pool', 'receiver_gated_sum',
+    '--actor_message_contract', $ActorMessageContract,
     '--spatial_flight_actor',
     '--completion_priority_user_sort',
     '--n_iterations', '50',
@@ -160,8 +168,15 @@ $trainArgs = @(
     '--noise_scale', $NoiseScale
 )
 
+if ($EpisodeLayoutContext) {
+    $trainArgs += '--episode_layout_context'
+    $trainArgs += @('--episode_layout_context_units', $EpisodeLayoutContextUnits)
+}
+
 Write-Host "Experiment : $ExperimentName"
 Write-Host "Noise scale: $NoiseScale"
+Write-Host "Layout     : $HotspotLayoutMode"
+Write-Host "Message    : $ActorMessageContract"
 Write-Host "Seed       : $Seed"
 Write-Host "Rollouts   : $RolloutThreads"
 Write-Host "Log        : $logPath"

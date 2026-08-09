@@ -439,6 +439,47 @@ class DynamicMDTest(unittest.TestCase):
             self.assertTrue(np.all(env_a.episode_hotspot_bounds <= 700))
         self.assertEqual(seen, set(range(12)))
 
+    def test_600m_template12_uses_all_ordered_200m_400m_corner_pairs(self):
+        settings = dict(
+            md_arrivals_min=5,
+            md_arrivals_max=5,
+            md_arrivals_per_region=[1, 4],
+            md_lifetime_min=10,
+            md_lifetime_max=10,
+            episode_length=2,
+            hotspot_layout_mode="episode_template12_600_200",
+        )
+        env_a = MEC(self.make_args(**settings))
+        env_b = MEC(self.make_args(**settings))
+        env_a.seed(31)
+        env_b.seed(31)
+        seen = set()
+        corner_ids = {
+            (0.0, 0.0): 0,
+            (1.0, 0.0): 1,
+            (0.0, 1.0): 2,
+            (1.0, 1.0): 3,
+        }
+        for _ in range(120):
+            env_a.reset()
+            env_b.reset()
+            self.assertEqual(env_a.hotspot_layout_index, env_b.hotspot_layout_index)
+            np.testing.assert_array_equal(
+                env_a.episode_hotspot_bounds,
+                env_b.episode_hotspot_bounds,
+            )
+            seen.add(env_a.hotspot_layout_index)
+            bounds = env_a.episode_hotspot_bounds
+            widths = bounds[:, 1] - bounds[:, 0]
+            heights = bounds[:, 3] - bounds[:, 2]
+            np.testing.assert_array_equal(widths * heights, [200 ** 2, 400 ** 2])
+            self.assertTrue(np.all(bounds >= 0))
+            self.assertTrue(np.all(bounds <= 600))
+            small_corner = corner_ids[(bounds[0, 0] / 400, bounds[0, 2] / 400)]
+            large_corner = corner_ids[(bounds[1, 0] / 200, bounds[1, 2] / 200)]
+            self.assertNotEqual(small_corner, large_corner)
+        self.assertEqual(seen, set(range(12)))
+
     def test_700m_template12_start_layouts_have_expected_topology(self):
         common = dict(
             x_max_uav=700,
@@ -501,7 +542,9 @@ class DynamicMDTest(unittest.TestCase):
             neighbor_distance=260,
         )
         context_args = self.make_args(
-            **settings, episode_layout_context=True
+            **settings,
+            episode_layout_context=True,
+            episode_layout_context_units="meters_v2",
         )
         baseline_args = self.make_args(
             **settings, episode_layout_context=False
@@ -523,12 +566,9 @@ class DynamicMDTest(unittest.TestCase):
             context_state.shape[1],
             baseline_state.shape[1] + 8 * context_env.n_UAVs,
         )
-        expected_context = context_env.episode_hotspot_bounds.copy()
-        expected_context[:, [0, 1]] /= 700.0
-        expected_context[:, [2, 3]] /= 700.0
         np.testing.assert_allclose(
             context_env.episode_layout_context.reshape(2, 4),
-            expected_context,
+            context_env.episode_hotspot_bounds,
             rtol=0.0,
             atol=1e-7,
         )
@@ -565,6 +605,32 @@ class DynamicMDTest(unittest.TestCase):
             baseline_env.system_performance_true_all_GUs,
             rtol=0.0,
             atol=1e-12,
+        )
+
+    def test_normalized_v1_layout_context_remains_checkpoint_compatible(self):
+        env = MEC(self.make_args(
+            x_max_uav=700,
+            y_max_uav=700,
+            x_max_gu=700,
+            y_max_gu=700,
+            x_max=700,
+            md_arrivals_min=6,
+            md_arrivals_max=6,
+            md_arrivals_per_region=[1, 5],
+            md_lifetime_min=10,
+            md_lifetime_max=10,
+            episode_length=2,
+            hotspot_layout_mode="episode_template12",
+            episode_layout_context=True,
+            episode_layout_context_units="normalized_v1",
+        ))
+        env.seed(37)
+        env.reset()
+        np.testing.assert_allclose(
+            env.episode_layout_context.reshape(2, 4),
+            env.episode_hotspot_bounds / 700.0,
+            rtol=0.0,
+            atol=1e-7,
         )
 
     def test_random_layout_candidate_birth_stream_is_admission_independent(self):

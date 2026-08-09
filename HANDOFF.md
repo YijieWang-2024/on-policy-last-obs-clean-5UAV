@@ -264,3 +264,12 @@ The new `episode_moving_template4` mode moves only the hidden MD birth-intensity
 - 8 月 6 日之后启动的 v_max=10/20/30/40 运行不属于本周完成结果。后续先做固定起点评估、small/large 分区指标和消息反事实，只有通过才补训练 seed。
 
 旧的主动运行描述是历史时间点记录；如果与上述状态或周总结冲突，以本节、周总结和对应原始 CSV/JSON 为准。
+
+## 2026-08-09: 600m Random12 input-v2 experiment preparation
+
+- Baseline work was preserved first in commit `44b7575`.
+- Added `episode_template12_600_200`: 12 ordered 200m/400m corner layouts on the 600m map.
+- Added versioned raw-message and meter-layout contracts. New message content enters `ob_norm`; only each packet mask is preserved.
+- Added a matched noise-3.0 R0/R260/R520/R780 launcher and backward-compatible evaluation masking.
+- Design and commands: `RANDOMLAYOUT600_NOISE3_INPUT_V2_20260809.md`.
+- No new long training run was launched during this implementation.

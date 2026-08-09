@@ -233,6 +233,7 @@ class SpatialFlightActorTest(unittest.TestCase):
 
         geometry_env = MEC(self.make_args(
             actor_message_mode="geometry",
+            actor_message_contract="absolute_raw_v2",
             neighbor_distance=1000.0,
         ))
         geometry_env.seed(2)
@@ -240,9 +241,19 @@ class SpatialFlightActorTest(unittest.TestCase):
         geometry = geometry_env.get_actor_message_block().reshape(5, 4, 10)
         np.testing.assert_array_equal(geometry[:, :, 9], 1.0)
         np.testing.assert_array_equal(geometry[:, :, 2:9], 0.0)
+        for receiver_id in range(geometry_env.n_UAVs):
+            sender_ids = [
+                sender_id for sender_id in range(geometry_env.n_UAVs)
+                if sender_id != receiver_id
+            ]
+            np.testing.assert_allclose(
+                geometry[receiver_id, :, :2],
+                geometry_env.uav_positions[sender_ids, :2],
+            )
 
         task_env = MEC(self.make_args(
             actor_message_mode="task_summary",
+            actor_message_contract="absolute_raw_v2",
             neighbor_distance=1000.0,
         ))
         task_env.seed(2)
@@ -258,12 +269,53 @@ class SpatialFlightActorTest(unittest.TestCase):
             ]
             expected_counts = np.asarray([
                 np.count_nonzero(task_env.nearby_gus_of_uavs[sender_id] != -1)
-                / task_env.n_GUs
                 for sender_id in sender_ids
             ])
             np.testing.assert_allclose(
                 task_messages[receiver_id, :, 2], expected_counts
             )
+            np.testing.assert_allclose(
+                task_messages[receiver_id, :, :2],
+                task_env.uav_positions[sender_ids, :2],
+            )
+            for slot, sender_id in enumerate(sender_ids):
+                local_ids = task_env.nearby_gus_of_uavs[
+                    sender_id, :task_env.max_GUs_in_range
+                ]
+                local_ids = local_ids[local_ids != -1].astype(np.int64)
+                if not local_ids.size:
+                    np.testing.assert_array_equal(
+                        task_messages[receiver_id, slot, 3:9], 0.0
+                    )
+                    continue
+                local_positions = task_env.gu_positions[local_ids, :2]
+                centroid = np.mean(local_positions, axis=0)
+                velocity_vectors = np.column_stack((
+                    task_env.gu_velocities[local_ids]
+                    * np.cos(task_env.gu_directions[local_ids]),
+                    task_env.gu_velocities[local_ids]
+                    * np.sin(task_env.gu_directions[local_ids]),
+                ))
+                spread = np.sqrt(np.mean(np.sum(
+                    (local_positions - centroid) ** 2, axis=1
+                )))
+                hard_fraction = np.mean(
+                    task_env.gu_tasks[local_ids, 1] / task_env.F_n
+                    > task_env.gu_tasks[local_ids, 2]
+                )
+                np.testing.assert_allclose(
+                    task_messages[receiver_id, slot, 3:5], centroid
+                )
+                np.testing.assert_allclose(
+                    task_messages[receiver_id, slot, 5:7],
+                    np.mean(velocity_vectors, axis=0),
+                )
+                np.testing.assert_allclose(
+                    task_messages[receiver_id, slot, 7], spread
+                )
+                np.testing.assert_allclose(
+                    task_messages[receiver_id, slot, 8], hard_fraction
+                )
 
         observations_after_reset = task_env.actor_message_observation_count
         task_env.get_actor_message_block()
@@ -446,10 +498,17 @@ class SpatialFlightActorTest(unittest.TestCase):
         torch.testing.assert_close(mean_four, torch.full_like(mean_four, 1.0))
         torch.testing.assert_close(gated_one, gated_four, rtol=1e-6, atol=1e-6)
 
-    def test_actor_message_block_bypasses_running_observation_normalization(self):
+    def test_absolute_raw_v2_normalizes_message_content_but_preserves_masks(self):
         args = self.make_args(
             actor_message_mode="task_summary",
+            actor_message_contract="absolute_raw_v2",
             neighbor_distance=1000.0,
+            hotspot_layout_mode="episode_template12_600_200",
+            md_arrivals_min=5,
+            md_arrivals_max=5,
+            md_arrivals_per_region=[1, 4],
+            episode_layout_context=True,
+            episode_layout_context_units="meters_v2",
             ob_norm=True,
             ret_norm=False,
         )
@@ -463,11 +522,26 @@ class SpatialFlightActorTest(unittest.TestCase):
         )
         raw = obs.copy()
         normalized = normer._obfilt(obs.copy())
-        start, end = normer.obs_preserve_slices[0]
+        start, end = normer.actor_message_slices[0]
+        mask_indices = np.asarray([
+            start + 10 * slot + 9 for slot in range(args.n_UAVs - 1)
+        ])
+        content_indices = np.asarray([
+            index for index in range(start, end) if index not in mask_indices
+        ])
         np.testing.assert_array_equal(
-            normalized[:, start:end], raw[:, start:end]
+            normalized[:, mask_indices], raw[:, mask_indices]
         )
-        self.assertFalse(np.allclose(normalized[:, end:], raw[:, end:]))
+        self.assertFalse(np.allclose(
+            normalized[:, content_indices], raw[:, content_indices]
+        ))
+        context_end = end + 8
+        self.assertFalse(np.allclose(
+            normalized[:, end:context_end], raw[:, end:context_end]
+        ))
+        self.assertFalse(np.allclose(
+            normalized[:, context_end:], raw[:, context_end:]
+        ))
 
         normers = [
             Normer(
@@ -484,8 +558,33 @@ class SpatialFlightActorTest(unittest.TestCase):
             normers, obs_batch.copy(), state_batch.copy()
         )
         np.testing.assert_array_equal(
-            normalized_batch[..., start:end], obs_batch[..., start:end]
+            normalized_batch[..., mask_indices], obs_batch[..., mask_indices]
         )
+        self.assertFalse(np.allclose(
+            normalized_batch[..., content_indices],
+            obs_batch[..., content_indices],
+        ))
+
+    def test_relative_scaled_v1_still_preserves_the_full_message_block(self):
+        args = self.make_args(
+            actor_message_mode="task_summary",
+            actor_message_contract="relative_scaled_v1",
+            neighbor_distance=1000.0,
+            ob_norm=True,
+            ret_norm=False,
+        )
+        env = MEC(args)
+        env.seed(2)
+        obs, _, _, _, _ = env.reset()
+        normer = Normer(
+            args=args,
+            obs_space=env.observation_space.shape,
+            states_space=env.state_space.shape,
+        )
+        normalized = normer._obfilt(obs.copy())
+        self.assertEqual(normer.obs_preserve_slices, normer.actor_message_slices)
+        start, end = normer.actor_message_slices[0]
+        np.testing.assert_array_equal(normalized[:, start:end], obs[:, start:end])
 
     def test_actor_messages_do_not_change_critic_state_contract(self):
         disabled_args = self.make_args(

@@ -104,6 +104,10 @@ class Normer():
         if self.ob_state_with_id:
             self.not_norm += self.n_UAVs
         self.obs_preserve_slices = []
+        self.actor_message_slices = []
+        self.actor_message_contract = getattr(
+            args, "actor_message_contract", "relative_scaled_v1"
+        )
         actor_message_mode = getattr(args, "actor_message_mode", "disabled")
         if actor_message_mode != "disabled":
             legacy_neighbor_dim = (
@@ -112,9 +116,16 @@ class Normer():
                 else 0
             )
             message_start = self.not_norm + 2 + legacy_neighbor_dim
-            self.obs_preserve_slices.append(
-                (message_start, message_start + 10 * (self.n_UAVs - 1))
-            )
+            message_end = message_start + 10 * (self.n_UAVs - 1)
+            self.actor_message_slices.append((message_start, message_end))
+            if self.actor_message_contract == "absolute_raw_v2":
+                self.obs_preserve_slices.extend(
+                    (message_start + 10 * slot + 9,
+                     message_start + 10 * slot + 10)
+                    for slot in range(self.n_UAVs - 1)
+                )
+            else:
+                self.obs_preserve_slices.append((message_start, message_end))
 
         if self.ob_norm or self.ret_norm:
             self.ob_rms = RunningMeanStd(shape=obs_space) if self.ob_norm else None

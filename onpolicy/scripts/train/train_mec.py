@@ -90,7 +90,8 @@ def parse_args(args, parser):
         "--hotspot_layout_mode",
         choices=(
             "fixed_legacy", "episode_template4", "episode_template4_600_200",
-            "episode_template12", "episode_moving_template4"
+            "episode_template12", "episode_template12_600_200",
+            "episode_moving_template4"
         ),
         default="fixed_legacy",
         help=(
@@ -99,8 +100,10 @@ def parse_args(args, parser):
             "of four area-preserving diagonal layouts per episode; "
             "episode_template4_600_200 is the fixed 600m 200m/400m "
             "double-hotspot protocol; "
-            "episode_template12 samples all ordered non-overlapping corner "
-            "pairs (large corner first, small corner from the other three); "
+            "episode_template12 samples all ordered non-overlapping 700m "
+            "corner pairs with a 175m/400m region pair; "
+            "episode_template12_600_200 applies the same 12 ordered corner "
+            "pairs to a 600m map with a 200m/400m region pair; "
             "episode_moving_template4 moves a hidden pair of birth regions "
             "continuously along a symmetric square route."
         ),
@@ -112,8 +115,8 @@ def parse_args(args, parser):
         default=None,
         metavar="INDEX",
         help=(
-            "Optional subset of episode_template12 layout indices to sample "
-            "uniformly. Use one index for a fixed layout."
+            "Optional subset of a 12-layout mode's indices to sample uniformly. "
+            "Use one index for a fixed layout."
         ),
     )
     parser.add_argument(
@@ -122,8 +125,18 @@ def parse_args(args, parser):
         default=False,
         help=(
             "Expose reset-time regional hotspot geometry to every actor and "
-            "critic as 8 normalized [xmin,xmax,ymin,ymax] values; no "
+            "critic as 8 [xmin,xmax,ymin,ymax] values; no "
             "active-user or future-arrival information is included."
+        ),
+    )
+    parser.add_argument(
+        "--episode_layout_context_units",
+        choices=("normalized_v1", "meters_v2"),
+        default="normalized_v1",
+        help=(
+            "Representation of episode_layout_context. normalized_v1 preserves "
+            "old checkpoints; meters_v2 emits raw map coordinates and lets "
+            "ob_norm standardize them."
         ),
     )
     parser.add_argument(
@@ -291,6 +304,17 @@ def parse_args(args, parser):
             "Permutation-invariant aggregation for actor UAV messages. "
             "receiver_gated_sum independently gates each sender using the "
             "receiver local descriptor and uses a fixed n_UAVs-1 denominator."
+        ),
+    )
+    parser.add_argument(
+        "--actor_message_contract",
+        choices=["relative_scaled_v1", "absolute_raw_v2"],
+        default="relative_scaled_v1",
+        help=(
+            "Message feature contract. relative_scaled_v1 preserves old "
+            "checkpoints and bypasses ob_norm for the full message block; "
+            "absolute_raw_v2 uses absolute/raw physical fields, applies ob_norm "
+            "to the first 9 values of each packet, and preserves only its mask."
         ),
     )
     parser.add_argument("--spatial_flight_actor", action='store_true', default=False,

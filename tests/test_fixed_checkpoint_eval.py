@@ -108,8 +108,12 @@ def test_matched_config_ignores_only_predeclared_radius_and_run_fields():
 def test_actor_message_masking_zeros_only_declared_preserved_slice():
     obs = np.arange(2 * 12, dtype=np.float32).reshape(2, 12)
     normers = [
-        SimpleNamespace(obs_preserve_slices=[(3, 7)]),
-        SimpleNamespace(obs_preserve_slices=[(3, 7)]),
+        SimpleNamespace(
+            actor_message_slices=[(3, 7)], obs_preserve_slices=[(6, 7)]
+        ),
+        SimpleNamespace(
+            actor_message_slices=[(3, 7)], obs_preserve_slices=[(6, 7)]
+        ),
     ]
 
     masked = mask_actor_message_observations(normers, obs)
@@ -157,6 +161,40 @@ def test_actor_message_distance_mask_retains_near_and_zeros_far_packets():
     np.testing.assert_array_equal(masked[:, :3], obs[:, :3])
     np.testing.assert_array_equal(masked[:, 43:], obs[:, 43:])
     np.testing.assert_array_equal(obs[:, 3:43], packets.reshape(2, 40))
+
+
+def test_absolute_message_distance_mask_uses_receiver_and_sender_positions():
+    obs = np.zeros((2, 46), dtype=np.float32)
+    normers = [
+        SimpleNamespace(
+            actor_message_slices=[(3, 43)],
+            obs_preserve_slices=[(12, 13), (22, 23), (32, 33), (42, 43)],
+            actor_message_contract="absolute_raw_v2",
+            not_norm=1,
+        )
+        for _ in range(2)
+    ]
+    receiver_positions = np.asarray([[100.0, 100.0], [200.0, 200.0]])
+    obs[:, 1:3] = receiver_positions
+    packets = np.zeros((2, 4, 10), dtype=np.float32)
+    offsets = np.asarray([
+        [120.0, 0.0], [300.0, 0.0], [180.0, 240.0], [260.0, 0.0]
+    ])
+    packets[:, :, :2] = receiver_positions[:, None, :] + offsets[None, :, :]
+    packets[:, :, 2:9] = 7.0
+    packets[:, :, 9] = 1.0
+    obs[:, 3:43] = packets.reshape(2, 40)
+
+    masked = mask_actor_messages_beyond_distance(
+        normers, obs, distance_limit=260.0
+    )
+    masked_packets = masked[:, 3:43].reshape(2, 4, 10)
+
+    np.testing.assert_array_equal(masked_packets[:, 0], packets[:, 0])
+    np.testing.assert_array_equal(masked_packets[:, 1:3], 0.0)
+    np.testing.assert_allclose(masked_packets[:, 3], packets[:, 3])
+    np.testing.assert_array_equal(masked[:, :3], obs[:, :3])
+    np.testing.assert_array_equal(masked[:, 43:], obs[:, 43:])
 
 
 def test_actor_message_distance_mask_validates_contract():

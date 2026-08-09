@@ -50,7 +50,7 @@ def parse_cli():
     parser.add_argument(
         "--layout-index",
         type=int,
-        help="force one hidden episode_template12 layout without editing args.json",
+        help="force one layout from either 12-layout mode without editing args.json",
     )
     parser.add_argument("--frame-interval", type=int, default=5)
     parser.add_argument("--training-step", type=int)
@@ -153,16 +153,24 @@ def frozen_normalize(normers, obs, states):
     return obs, states
 
 
+def _actor_message_slice_layout(normer):
+    """Return full message blocks, including legacy checkpoint metadata."""
+    message_slices = tuple(getattr(normer, "actor_message_slices", ()))
+    if message_slices:
+        return message_slices
+    return tuple(getattr(normer, "obs_preserve_slices", ()))
+
+
 def mask_actor_message_observations(normers, obs):
     """Return a copy with every actor-only communication block zeroed.
 
-    The slice layout is reconstructed by each saved Normer from args, so this
-    does not hard-code timestep/agent-ID offsets. Refuse a silent no-op when a
-    checkpoint was trained without a message-capable observation contract.
+    The full message layout is reconstructed by each saved Normer, separately
+    from the mask-only normalization exceptions in input-v2. Refuse a silent
+    no-op when a checkpoint was trained without a message-capable contract.
     """
     obs = np.asarray(obs, dtype=np.float32).copy()
     layouts = [
-        tuple(getattr(normer, "obs_preserve_slices", ()))
+        _actor_message_slice_layout(normer)
         for normer in normers
     ]
     if not layouts or any(layout != layouts[0] for layout in layouts):
@@ -181,24 +189,21 @@ def mask_actor_messages_beyond_distance(
     normers,
     obs,
     distance_limit,
-    map_scale,
+    map_scale=None,
 ):
     """Zero sender packets farther than a physical distance threshold.
 
-    Actor message relative coordinates are stored in raw, map-normalized form
-    inside Normer's preserved slices.  This counterfactual therefore operates
-    before frozen observation normalization and leaves every non-message input,
-    the environment dynamics, and the critic state unchanged.
+    This counterfactual operates on raw observations before frozen observation
+    normalization. New checkpoints carry absolute sender coordinates; legacy
+    checkpoints carry map-normalized sender-relative coordinates.
     """
     if not np.isfinite(distance_limit) or distance_limit <= 0.0:
         raise ValueError(
             "actor message distance limit must be finite and positive"
         )
-    if not np.isfinite(map_scale) or map_scale <= 0.0:
-        raise ValueError("actor message map scale must be finite and positive")
     obs = np.asarray(obs, dtype=np.float32).copy()
     layouts = [
-        tuple(getattr(normer, "obs_preserve_slices", ()))
+        _actor_message_slice_layout(normer)
         for normer in normers
     ]
     if not layouts or any(layout != layouts[0] for layout in layouts):
@@ -208,6 +213,23 @@ def mask_actor_messages_beyond_distance(
             "distance masking requires a message-capable checkpoint"
         )
     for agent_id, layout in enumerate(layouts):
+        normer = normers[agent_id]
+        contract = getattr(
+            normer, "actor_message_contract", "relative_scaled_v1"
+        )
+        if contract == "relative_scaled_v1":
+            if map_scale is None or not np.isfinite(map_scale) or map_scale <= 0.0:
+                raise ValueError(
+                    "actor message map scale must be finite and positive"
+                )
+            receiver_position = None
+        elif contract == "absolute_raw_v2":
+            position_start = int(normer.not_norm)
+            receiver_position = obs[
+                agent_id, position_start:position_start + 2
+            ]
+        else:
+            raise ValueError(f"unknown actor message contract: {contract}")
         for slice_start, slice_end in layout:
             width = slice_end - slice_start
             if width <= 0 or width % 10:
@@ -215,9 +237,14 @@ def mask_actor_messages_beyond_distance(
                     "actor message slice width must contain 10-value packets"
                 )
             packets = obs[agent_id, slice_start:slice_end].reshape(-1, 10)
-            physical_distance = (
-                np.linalg.norm(packets[:, :2], axis=-1) * map_scale
-            )
+            if contract == "absolute_raw_v2":
+                physical_distance = np.linalg.norm(
+                    packets[:, :2] - receiver_position, axis=-1
+                )
+            else:
+                physical_distance = np.linalg.norm(
+                    packets[:, :2], axis=-1
+                ) * map_scale
             packets[physical_distance > distance_limit] = 0.0
     return obs
 
@@ -233,8 +260,6 @@ def prepare_policy_inputs(
     if mask_actor_messages:
         obs = mask_actor_message_observations(normers, obs)
     elif actor_message_distance_limit is not None:
-        if actor_message_map_scale is None:
-            raise ValueError("actor message map scale is required")
         obs = mask_actor_messages_beyond_distance(
             normers,
             obs,
