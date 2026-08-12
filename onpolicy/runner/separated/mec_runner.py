@@ -106,6 +106,8 @@ class MECRunner(Runner):
         episodes = int(self.num_env_steps) // self.episode_length // self.n_rollout_threads
 
         for episode in range(episodes):
+            type_s_retrieval_seconds = 0.0
+            md_reconstruction_seconds = 0.0
             if self.use_linear_lr_decay:
                 for agent_id in range(self.num_agents):
                     self.trainer[agent_id].policy.lr_decay(episode, episodes)
@@ -117,10 +119,16 @@ class MECRunner(Runner):
                 # Obser reward and next obs
                 obs, share_obs, rewards, dones, infos, available_actions, Metropolis_weights, attention_active_mask = self.envs.step(actions)
                 if self.state_reconstructor is not None:
+                    type_s_start = time.perf_counter()
                     self.current_type_s_data = self.envs.get_type_s_data()
+                    type_s_retrieval_seconds += time.perf_counter() - type_s_start
+                    reconstruction_start = time.perf_counter()
                     share_obs, attention_active_mask = self.state_reconstructor.reconstruct(
                         self.current_type_s_data,
                         reset_environments=np.all(dones, axis=1),
+                    )
+                    md_reconstruction_seconds += (
+                        time.perf_counter() - reconstruction_start
                     )
                 normalize_batch(self.normer, obs, share_obs, rewards, dones)
                 # obs = self.normer._obfilt(obs)
@@ -160,7 +168,26 @@ class MECRunner(Runner):
                     raise RuntimeError(
                         "MD-GRU updates require rollout and episode boundaries to align"
                     )
+                prediction_training_start = time.perf_counter()
                 self.md_prediction_infos = self.state_reconstructor.train_predictors()
+                prediction_training_seconds = (
+                    time.perf_counter() - prediction_training_start
+                )
+                reconstruction_us_per_env_step = (
+                    1e6 * md_reconstruction_seconds
+                    / max(self.episode_length * self.n_rollout_threads, 1)
+                )
+                for prediction_info in self.md_prediction_infos:
+                    prediction_info.update({
+                        "type_s_retrieval_seconds": type_s_retrieval_seconds,
+                        "md_reconstruction_seconds": md_reconstruction_seconds,
+                        "md_reconstruction_us_per_env_step": (
+                            reconstruction_us_per_env_step
+                        ),
+                        "md_prediction_training_seconds": (
+                            prediction_training_seconds
+                        ),
+                    })
                 self.state_reconstructor.reset()
                 refreshed_share_obs, refreshed_attention = (
                     self.state_reconstructor.reconstruct(
@@ -181,6 +208,22 @@ class MECRunner(Runner):
                     self.buffer[agent_id].attention_active_mask[-1] = (
                         refreshed_attention[:, agent_id]
                     )
+            elif self.state_reconstructor is not None:
+                reconstruction_us_per_env_step = (
+                    1e6 * md_reconstruction_seconds
+                    / max(self.episode_length * self.n_rollout_threads, 1)
+                )
+                self.md_prediction_infos = [
+                    {
+                        "type_s_retrieval_seconds": type_s_retrieval_seconds,
+                        "md_reconstruction_seconds": md_reconstruction_seconds,
+                        "md_reconstruction_us_per_env_step": (
+                            reconstruction_us_per_env_step
+                        ),
+                        "md_prediction_training_seconds": 0.0,
+                    }
+                    for _ in range(self.n_UAVs)
+                ]
             train_infos = self.train()
 
             if self.whether_average_network_parameters and (episode % self.average_network_parameters_interval == 0):
@@ -719,7 +762,7 @@ class MECRunner(Runner):
             self.trainer[agent_id].prep_training()
             train_info = self.trainer[agent_id].train(self.buffer[agent_id])
             train_info.update(consensus_infos)
-            if self.state_reconstruction == "md_gru":
+            if self.state_reconstructor is not None:
                 train_info.update(self.md_prediction_infos[agent_id])
             if getattr(self.all_args, "cartesian_flight", False):
                 actor_act = self.trainer[agent_id].policy.actor.act
@@ -900,10 +943,10 @@ class MECRunner(Runner):
             normer_path = str(self.save_dir) + "/normer"+ str(agent_id) +".pkl"
             self.normer[agent_id].save(normer_path)
 
-        if getattr(self, "state_reconstructor", None) is not None:
+        if getattr(self, "state_reconstruction", "zero") == "md_gru":
             torch.save(
                 self.state_reconstructor.checkpoint_state(),
-                str(self.save_dir / "md_gru_shared.pt"),
+                str(Path(self.save_dir) / "md_gru_shared.pt"),
             )
 
         # Publish the step binding only after all five actor/critic/normer sets
@@ -922,7 +965,7 @@ class MECRunner(Runner):
             self.checkpoint_step_provenance,
             args_path=self.run_args_path,
             extra_checkpoint_names=("md_gru_shared.pt",)
-            if getattr(self, "state_reconstructor", None) is not None
+            if getattr(self, "state_reconstruction", "zero") == "md_gru"
             else (),
         )
         write_checkpoint_manifest_atomic(self.save_dir, manifest)
@@ -946,7 +989,7 @@ class MECRunner(Runner):
             source_args_path = model_dir / "args.json"
         extra_checkpoint_names = (
             ("md_gru_shared.pt",)
-            if getattr(self, "state_reconstructor", None) is not None
+            if getattr(self, "state_reconstruction", "zero") == "md_gru"
             else ()
         )
         manifest = read_checkpoint_manifest(
@@ -995,7 +1038,7 @@ class MECRunner(Runner):
             # 恢复 normer 对象
             normer_path = str(model_dir / ("normer" + str(agent_id) + ".pkl"))
             self.normer[agent_id].load(normer_path)
-        if getattr(self, "state_reconstructor", None) is not None:
+        if getattr(self, "state_reconstruction", "zero") == "md_gru":
             md_gru_path = model_dir / "md_gru_shared.pt"
             if not md_gru_path.is_file():
                 raise FileNotFoundError(

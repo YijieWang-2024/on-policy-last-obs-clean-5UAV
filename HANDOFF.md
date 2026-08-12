@@ -297,3 +297,12 @@ The new `episode_moving_template4` mode moves only the hidden MD birth-intensity
 - 本次归档只纳入主线源码、正式启动器、参数/曲线轻量汇总、生成脚本和文档直接引用的最终图；明确排除模型、TensorBoard 原始事件、控制台训练日志和历史分析中间目录。
 - 本地 v10/v20/v30 seed2 在提交时仍在训练；本次操作只读刷新曲线，没有停止或修改训练进程。
 - `feature/unreliable-dataplane` 的 GRU/不可靠通信 worktree 不属于本次主项目提交，继续独立保留。
+# 2026-08-13：不可靠数据面同步到最终速度基线
+
+- `feature/unreliable-dataplane` 的 2026-08-01 早期分叉已重建到速度分支归档提交 `fa53f3a` 之上；环境参数、Spatial Actor、Actor-message、ego-query critic、shared return normalization、advantage modes 和 checkpoint manifest 均以速度分支为准。
+- 保留并适配 Type-S 不可靠 critic 数据面、Type-A running-sum advantage 通信，以及共享 MD-GRU/last-observation/zero 三种重建模式。
+- 新正式入口：`onpolicy/scripts/train/run_fixed600_200_unreliable_dataplane.ps1`。默认关闭 Actor message，避免当前仅距离门控的 task-summary 成为可靠旁路；可显式开启做速度合同兼容对照。
+- 公平重建对比固定 `critic_md_metadata`，critic 为 `5×271=1355`；no-message Actor 为 211，task-summary Actor 为 251。
+- `externality_consensus` 不允许与不可靠 running-sum 混用；其可靠图系数语义未被伪造。
+- 验收：全套 `95 passed`，以及 reliable-zero / unreliable-zero / unreliable-last_obs / unreliable-md_gru 四组端到端 2-slot smoke 全部完成 PPO 更新和 checkpoint。
+- 详细合同见 `UNRELIABLE_DATAPLANE.md` 第 7–10 节。

@@ -196,3 +196,11 @@
 - 重新运行 `analysis/fixed600_speed_3seed_20260812/plot.py`，只读刷新当前事件：本地 seed2 v10/v20/v30 到 21.7856M/21.7344M/17.7408M；远端冻结 v40 到 23.1168M/22.5536M/21.7856M。
 - `tests/test_dynamic_md.py` 通过 17 项；仅保留两个已有除零 RuntimeWarning。
 - Git 归档不包含模型、TensorBoard 原始事件、`training_logs/` 或大批历史中间产物。
+# 2026-08-13 unreliable-dataplane speed-base sync
+
+- Common base: `b265913`; old unreliable head: `483db29`; speed archive baseline: `fa53f3a`.
+- Integration rule: speed branch owns environment/Actor/Critic/advantage contracts; unreliable Type-S/Type-A and MD reconstruction are orthogonal overlays.
+- Added shared roster ordering, layout-aware Type-S reconstruction, independent channel/advantage RNGs, current advantage-mode compatibility, MD-GRU timing metrics, and manifest-bound shared GRU checkpoints.
+- Added `EpisodeLength`/`MDLifetime` to the generic launcher and a Fixed600-v30-R520-MD12 unreliable wrapper.
+- Fixed smoke-only integration bugs: string `save_dir` path joining and avoiding GRU checkpoint publication in `last_obs` mode.
+- Verification: `95 passed`; four 2-step runner smokes passed. Test artifacts under `onpolicy/scripts/results/` remain ignored.

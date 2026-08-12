@@ -347,6 +347,25 @@ def test_snapshot_checkpoint_keeps_optional_md_gru_state(tmp_path):
     assert (checkpoint_dir / "md_gru_shared.pt").read_bytes() == b"shared-gru"
 
 
+def test_manifest_rejects_unknown_optional_checkpoint_file(tmp_path):
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    _write_checkpoint_files(models_dir)
+    (models_dir / "unexpected.pt").write_bytes(b"unexpected")
+
+    with np.testing.assert_raises_regex(ValueError, "unsupported extra"):
+        build_checkpoint_manifest(
+            models_dir,
+            num_agents=5,
+            episode_index=0,
+            session_total_num_steps=1,
+            source_total_num_steps=0,
+            save_interval_episodes=1,
+            cumulative_step_provenance="verified_chain",
+            extra_checkpoint_names=("unexpected.pt",),
+        )
+
+
 class _LoadTarget:
     def load_state_dict(self, state):
         assert state == {}

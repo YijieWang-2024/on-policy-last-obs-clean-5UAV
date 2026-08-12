@@ -125,6 +125,92 @@ def test_type_s_codec_matches_canonical_critic_block_elementwise():
         np.testing.assert_array_equal(attention[0, receiver], 1)
 
 
+def test_speed_layout_context_and_actor_message_do_not_change_type_s_codec():
+    args = _args(
+        md_arrivals_min=5,
+        md_arrivals_max=5,
+        md_arrivals_per_region=[1, 4],
+        md_lifetime_min=12,
+        md_lifetime_max=12,
+        hotspot_layout_mode="episode_template4_600_200",
+        episode_layout_context=True,
+        episode_layout_context_units="meters_v2",
+        actor_message_mode="task_summary",
+        actor_message_pool="receiver_gated_sum",
+        actor_message_contract="absolute_raw_v2",
+        neighbor_distance=520,
+        spatial_flight_actor=True,
+        completion_priority_user_sort=True,
+    )
+    env = MEC(args)
+    env.seed(41)
+    obs, _, _, _, _ = env.reset()
+    critic_local = env.get_critic_local_obs(obs)
+    data = _batched(env.get_type_s_data())
+
+    assert data["critic_prefix"].shape[-1] == (
+        int(args.ob_state_with_timestep)
+        + (args.n_UAVs if args.ob_state_with_id else 0)
+        + 2
+        + 8
+        + 1
+    )
+    for sender in range(args.n_UAVs):
+        np.testing.assert_allclose(_direct_block(data, sender), critic_local[sender])
+
+    data["geometric_mask"][:] = True
+    data["reception_mask"][:] = True
+    reconstructor = MDStateReconstructor(args, torch.device("cpu"))
+    states, _ = reconstructor.reconstruct(data)
+    for receiver in range(args.n_UAVs):
+        order = [receiver] + [i for i in range(args.n_UAVs) if i != receiver]
+        expected = np.concatenate([_direct_block(data, sender) for sender in order])
+        np.testing.assert_allclose(states[0, receiver], expected)
+
+
+def test_reliable_and_unreliable_modes_keep_actor_input_identical():
+    common = dict(
+        md_arrivals_min=5,
+        md_arrivals_max=5,
+        md_arrivals_per_region=[1, 4],
+        md_lifetime_min=12,
+        md_lifetime_max=12,
+        hotspot_layout_mode="episode_template4_600_200",
+        episode_layout_context=True,
+        episode_layout_context_units="meters_v2",
+        actor_message_mode="task_summary",
+        actor_message_pool="receiver_gated_sum",
+        actor_message_contract="absolute_raw_v2",
+        neighbor_distance=520,
+        spatial_flight_actor=True,
+        completion_priority_user_sort=True,
+    )
+    reliable = MEC(_args(mode="zero", communication_mode="reliable", **common))
+    unreliable = MEC(_args(mode="zero", communication_mode="unreliable", **common))
+    reliable.seed(43)
+    reliable_obs, _, _, _, _ = reliable.reset()
+    unreliable.seed(43)
+    unreliable_obs, _, _, _, _ = unreliable.reset()
+
+    np.testing.assert_allclose(reliable_obs, unreliable_obs)
+
+
+def test_shared_md_gru_checkpoint_round_trip_preserves_readiness():
+    args = _args(mode="md_gru")
+    source = MDStateReconstructor(args, torch.device("cpu"))
+    source.predictor_ready = True
+    state = source.checkpoint_state()
+    target = MDStateReconstructor(args, torch.device("cpu"))
+
+    target.load_checkpoint_state(state)
+
+    assert target.predictor_ready
+    for source_parameter, target_parameter in zip(
+        source.predictor.parameters(), target.predictor.parameters()
+    ):
+        torch.testing.assert_close(source_parameter, target_parameter)
+
+
 def test_packet_selection_uses_configured_sort_then_caps_at_twenty():
     for distance_only in (False, True):
         args = _args(distance_only_user_sort=distance_only)

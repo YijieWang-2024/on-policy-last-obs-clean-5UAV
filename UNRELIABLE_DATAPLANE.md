@@ -84,3 +84,82 @@ Last-observation 与 MD-GRU：
 ```powershell
 C:\Users\wyj2\.conda\envs\marl\python.exe -m pytest tests -q
 ```
+
+## 7. 2026-08-13：同步速度分支后的基线
+
+本项目不再以 2026-08-01 的早期 MEC 合同作为主干，而是以速度/Actor-message 分支归档提交 `fa53f3a` 为功能基线，再正交叠加 Type-S 不可靠 critic 数据面、Type-A 不可靠 advantage 数据面和共享 MD-GRU。同步后的正式 Fixed600 配置为：
+
+| 类别 | 值 |
+|---|---|
+| 地图/热点 | `600×600 m`，`episode_template4_600_200` index 0 |
+| 动态 MD | 每 slot 严格 `1+4`，lifetime `12`，容量 `60` |
+| MD 移动 | 均速 `3 m/s`，初始化 std `0.6`、倍率 `[0.4,1.6]`，更新裁剪 `[0,5]` |
+| UAV | 5 架，固定 line 起点，`v_max=30 m/s`，`Delta_t=0.5 s` |
+| Actor | Spatial Cartesian；completion-priority roster；layout context `meters_v2` |
+| Critic | ego-query attention；R520；共享 return normalization |
+| Advantage | `per_agent_noise`，`noise_scale=3`；不可靠模式用 running-sum ratio consensus |
+| 通信 | R520；Type-S `8000 bit / 13.54 ms`；Type-A `16000 bit / 21.54 ms`；50 rounds |
+
+通用入口 `run_dynamic_5uav.ps1` 现在显式接受 `EpisodeLength` 和 `MDLifetime`，不再把 speed 合同需要的 MD12 隐藏在另一套脚本中。正式入口为：
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File `
+  .\onpolicy\scripts\train\run_fixed600_200_unreliable_dataplane.ps1 `
+  -StateReconstruction md_gru -Seed 2
+```
+
+该入口默认 `ActorMessageMode=disabled`。原因不是认定 Actor message 永远无效，而是当前 `task_summary` 只有距离门控，尚未经过不可靠信道；默认关闭可避免给“不可靠通信 + GRU”实验留下可靠 Actor 旁路。若要做与速度分支逐参数一致的兼容对照，可显式使用：
+
+```powershell
+...run_fixed600_200_unreliable_dataplane.ps1 `
+  -StateReconstruction md_gru -ActorMessageMode task_summary
+```
+
+此时 Actor message 保持速度分支的 `receiver_gated_sum + absolute_raw_v2`，但必须标注为“Type-S/Type-A 不可靠，Actor message 仅距离门控”，不能写成全链路不可靠。
+
+## 8. 同步后的 Actor / Critic 输入合同
+
+- no-message Actor：`211` 维，即 `self xy(2) + layout(8) + count(1) + 20×MD(10)`。
+- message-capable Actor：`251` 维，在上述输入中加入 `4×10=40` 维 task-summary packet。
+- Critic 不读取 Actor-only 的 40 维消息。每个 UAV 的速度基线 token 为 `211` 维。
+- 公平的不可靠通信消融统一开启 `critic_md_metadata`，每个 token 追加 `20×(record_valid, task_valid, age)=60` 维，得到 `271` 维；5 个 ID 对齐 token 拼接后为 `1355` 维。
+- Type-S 成功接收时，其 decoded token 与 canonical critic token 逐元素一致；失败时只替换对应 sender token，不修改 Actor observation。
+- 8 维 hotspot layout 是 episode 开始时的共同先验，不计入 Type-S payload；sender UAV 位置由低速可靠控制面提供，GRU 只重建/预测 MD 记录。
+
+环境与重建器现在共用 `md_roster.py` 的稳定排序：completion-priority 或 distance-only、距离、session ID。这样真实 token 与重建 token 不会因并列距离或动态槽位复用产生不同顺序。
+
+## 9. Advantage 与兼容边界
+
+速度分支的 `local`、`mixed_consensus`、`pure_consensus`、`legacy_noise`、`per_agent_noise` 均保留。在 `communication_mode=unreliable` 下，Type-A 用独立随机流采样及时接收并执行 running-sum ratio consensus；`per_agent_noise` 仍是最终速度合同对应模式。
+
+`externality_consensus` 在不可靠模式下会明确报错。它依赖可靠有限轮 Metropolis 图的 component size 和 self-contribution coefficient，不能把 running-sum 输出直接代入而声称算法等价。
+
+MD-GRU 只在 episode/rollout 边界对齐时更新。`md_gru_shared.pt` 连同 optimizer 和 `predictor_ready` 一起进入 checkpoint manifest；`zero` 和 `last_obs` 不创建伪 GRU 文件。评估快照只接受这一种已知可选文件，其他未知 checkpoint 文件仍会被拒绝。
+
+## 10. 验收矩阵
+
+同步后通过：
+
+- 全部单元/回归测试：`95 passed`；
+- reliable + zero；
+- unreliable + zero；
+- unreliable + last_obs；
+- unreliable + md_gru。
+
+四个端到端 smoke 均使用 Fixed600-200、MD12、v30、R520、Spatial Actor、completion-priority、layout meters、per-agent-noise=3，并完成一次环境 rollout、PPO 更新和 checkpoint 发布。MD-GRU 清单额外绑定 `md_gru_shared.pt`；另外三组不绑定该文件。
+
+## 11. 旧分支思路如何迁移
+
+| 2026-08-01 早期实现/假设 | 当前处理 |
+|---|---|
+| 直接在早期 MEC 环境上叠加 Type-S/GRU | 放弃早期环境主干；以 `fa53f3a` 的速度环境和输入合同为基线 |
+| MD10、旧热点/出生过程、较低移动速度 | 换为 Fixed600-200、严格 1+4、MD12、MD 3m/s 与 `[0,5]` 更新裁剪 |
+| Actor/Critic 共用旧局部观测结构 | Actor 完全沿用速度分支；Type-S 只操作去掉 Actor-only message 后的 critic token |
+| 环境和重建器分别实现 MD 排序 | 合并为共享 `md_roster.py`，用 session ID 做稳定 tie-breaker |
+| 不可靠 advantage 仍围绕旧 exact-mean/legacy-noise 逻辑 | 接入当前统一 `advantage_mode`；正式合同使用 `per_agent_noise=3` 与 running-sum estimate |
+| 状态通信、advantage noise 与环境可能共享随机源 | 分离为独立 RNG，通信开关不改变 Actor/MD 环境随机流 |
+| GRU 文件独立保存，不受速度分支 manifest 约束 | `md_gru_shared.pt` 进入 manifest 和评估快照一致性校验 |
+| `last_obs` 和 `md_gru` 都被笼统当作“有重建器” | 只有 `md_gru` 发布模型文件；`last_obs` 只维护在线 memory |
+| Actor task-summary 默认随不可靠实验一起开启 | 正式不可靠入口默认关闭，避免当前未建模丢包的可靠旁路；显式开启仅作兼容对照 |
+
+没有迁移旧分支中“无条件把 Gaussian-Markov MD 速度裁剪到均速的 `[0.7,1.3]` 倍”这一修改，因为速度分支已经把移动初始化和每步更新裁剪拆成可配置参数；当前正式速度合同使用初始化倍率 `[0.4,1.6]` 和绝对更新范围 `[0,5] m/s`。这比硬编码旧范围更符合实际已跑速度实验。

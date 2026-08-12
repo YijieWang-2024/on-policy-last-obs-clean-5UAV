@@ -214,6 +214,31 @@ class MDStateReconstructor:
         self.environments = None
         self.last_data = None
 
+    def checkpoint_state(self):
+        """Return the complete trainable shared-predictor state."""
+        if self.predictor is None:
+            raise RuntimeError("only md_gru reconstruction has predictor state")
+        return {
+            "model": self.predictor.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "predictor_ready": self.predictor_ready,
+        }
+
+    def load_checkpoint_state(self, checkpoint):
+        """Load current checkpoints and the legacy model-only representation."""
+        if self.predictor is None:
+            raise RuntimeError("only md_gru reconstruction has predictor state")
+        if isinstance(checkpoint, dict) and "model" in checkpoint:
+            self.predictor.load_state_dict(checkpoint["model"])
+            optimizer_state = checkpoint.get("optimizer")
+            if optimizer_state is not None:
+                self.optimizer.load_state_dict(optimizer_state)
+            self.predictor_ready = checkpoint.get("predictor_ready", True)
+        else:
+            self.predictor.load_state_dict(checkpoint)
+            self.predictor_ready = True
+        self.predictor.eval()
+
     def _ensure_banks(self, environments):
         if self.banks is not None and self.environments == environments:
             return

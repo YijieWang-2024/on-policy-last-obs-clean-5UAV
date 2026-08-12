@@ -21,6 +21,10 @@ from matplotlib.patches import Circle
 from onpolicy.utils.unreliable_communication import (
     sample_configured_timely_receptions,
 )
+from onpolicy.utils.md_roster import (
+    order_md_candidates,
+    resolve_distance_only_user_sort,
+)
 
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
@@ -475,9 +479,7 @@ class MEC(gym.Env):
         # Preserve old Spatial-Actor checkpoints/configs, which implicitly used
         # distance-only sorting, while allowing new runs to request the legacy
         # completion-priority ordering explicitly.
-        self.distance_only_user_sort = explicit_distance_sort or (
-            self.spatial_flight_actor and not self.completion_priority_user_sort
-        )
+        self.distance_only_user_sort = resolve_distance_only_user_sort(args)
         self.uav_reset_curriculum = (
             getattr(args, "uav_reset_curriculum", False)
             and getattr(args, "uav_reset_curriculum_training", False)
@@ -3797,41 +3799,22 @@ class MEC(gym.Env):
         uav_gu_distances = self.uav_gu_distances_2d
         coverage_mask = self.coverage_mask
 
-        if self.distance_only_user_sort:
-            for i in range(self.n_UAVs):
-                in_range_indices = np.flatnonzero(coverage_mask[i])
-                if len(in_range_indices):
-                    order = np.argsort(uav_gu_distances[i, in_range_indices])
-                    nearby_users_sorted[i, :len(in_range_indices)] = in_range_indices[order]
-            return nearby_users_sorted
-
         can_finish = self.gu_tasks[:, 1] / self.F_n <= self.gu_tasks[:, 2]
         for i in range(self.n_UAVs):
-            # 把不能完成任务的放在前面。
-            cannot_finish__in_range_mask = coverage_mask[i] & (~can_finish)
-            cannot_finish__in_range_indices = np.where(cannot_finish__in_range_mask)[0]
-            if len(cannot_finish__in_range_indices) != 0:
-                cannot_finish__sorted_indices = cannot_finish__in_range_indices[np.argsort(uav_gu_distances[i][cannot_finish__in_range_indices])]
-                # Fill in the sorted user IDs for this UAV (up to the number of users in range)
-                nearby_users_sorted[i, :len(cannot_finish__in_range_indices)] = cannot_finish__sorted_indices
-            can_finish__in_range_mask = coverage_mask[i] & can_finish
-            can_finish__in_range_indices = np.where(can_finish__in_range_mask)[0]
-            if len(can_finish__in_range_indices) != 0:
-                can_finish__sorted_indices = can_finish__in_range_indices[np.argsort(uav_gu_distances[i][can_finish__in_range_indices])]
-                # Fill in the sorted user IDs for this UAV (up to the number of users in range)
-                nearby_users_sorted[i, len(cannot_finish__in_range_indices):len(cannot_finish__in_range_indices)+len(can_finish__in_range_indices)] \
-                    = can_finish__sorted_indices
-            # # 直接就按照距离排序，不管能不能完成。
-            # in_range_mask = uav_gu_distances[i] <= self.Cover_R
-            # # Get users that are within range
-            # in_range_indices = np.where(in_range_mask)[0]
-            # # If no users in range, continue to next UAV
-            # if len(in_range_indices) == 0:
-            #     continue
-            # # Sort the indices by their distances
-            # sorted_indices = in_range_indices[np.argsort(uav_gu_distances[i][in_range_indices])]
-            # # Fill in the sorted user IDs for this UAV (up to the number of users in range)
-            # nearby_users_sorted[i, :len(sorted_indices)] = sorted_indices
+            in_range_indices = np.flatnonzero(coverage_mask[i])
+            if not len(in_range_indices):
+                continue
+            stable_ids = (
+                self.md_session_ids[in_range_indices]
+                if self.dynamic_md else in_range_indices
+            )
+            order = order_md_candidates(
+                uav_gu_distances[i, in_range_indices],
+                stable_ids,
+                can_finish[in_range_indices],
+                distance_only=self.distance_only_user_sort,
+            )
+            nearby_users_sorted[i, :len(in_range_indices)] = in_range_indices[order]
         return nearby_users_sorted
 
     def get_info(self):

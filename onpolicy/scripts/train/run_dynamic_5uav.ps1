@@ -4,6 +4,8 @@ param(
     [int]$Seed = 2,
     [long]$NumEnvSteps = 100000000,
     [int]$RolloutThreads = 64,
+    [int]$EpisodeLength = 400,
+    [int]$MDLifetime = 10,
     [int]$CommunicationDistance = 0,
     [int]$ActorNeighborDistance = 260,
     [int]$ConsensusRounds = 50,
@@ -84,6 +86,9 @@ $env:NUMEXPR_NUM_THREADS = '1'
 if ($CommunicationDistance -eq 0) {
     $CommunicationDistance = if ($CommunicationMode -eq 'unreliable') { 520 } else { 260 }
 }
+if ($EpisodeLength -le 0 -or $MDLifetime -le 0) {
+    throw 'EpisodeLength and MDLifetime must be positive.'
+}
 if ($StateReconstruction -ne 'zero' -and (
     $Method -ne 'dcppo' -or $CommunicationMode -ne 'unreliable'
 )) {
@@ -119,8 +124,8 @@ $arguments = @(
     '--md_arrivals_per_region', $regionArrivals[0], $regionArrivals[1],
     '--hotspot_layout_mode', $HotspotLayoutMode,
     '--five_uav_start_layout', $FiveUAVStartLayout,
-    '--md_lifetime_min', '10',
-    '--md_lifetime_max', '10',
+    '--md_lifetime_min', $MDLifetime,
+    '--md_lifetime_max', $MDLifetime,
     '--x_max', $MapSize,
     '--x_min_uav', '0', '--x_max_uav', $MapSize,
     '--y_min_uav', '0', '--y_max_uav', $MapSize,
@@ -136,7 +141,7 @@ $arguments = @(
     '--continuous_associate',
     '--not_served_rew_to_nearest',
     '--n_rollout_threads', $RolloutThreads,
-    '--episode_length', '400',
+    '--episode_length', $EpisodeLength,
     '--num_env_steps', $NumEnvSteps,
     '--hidden_size', '256',
     '--layer_N', '2',

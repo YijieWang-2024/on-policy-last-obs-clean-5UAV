@@ -52,6 +52,13 @@ def build_checkpoint_manifest(
     extra_checkpoint_names=(),
 ):
     model_dir = Path(model_dir)
+    unknown_extra_names = set(extra_checkpoint_names) - set(
+        OPTIONAL_CHECKPOINT_NAMES
+    )
+    if unknown_extra_names:
+        raise ValueError(
+            f"unsupported extra checkpoint files: {sorted(unknown_extra_names)}"
+        )
     session_steps = int(session_total_num_steps)
     source_steps = int(source_total_num_steps)
     manifest = {
@@ -106,6 +113,13 @@ def read_checkpoint_manifest(
     if extra_checkpoint_names is None:
         extra_checkpoint_names = tuple(
             name for name in OPTIONAL_CHECKPOINT_NAMES if name in actual_names
+        )
+    unknown_extra_names = set(extra_checkpoint_names) - set(
+        OPTIONAL_CHECKPOINT_NAMES
+    )
+    if unknown_extra_names:
+        raise ValueError(
+            f"unsupported extra checkpoint files: {sorted(unknown_extra_names)}"
         )
     expected_file_names = expected_checkpoint_names(
         num_agents, extra_checkpoint_names
