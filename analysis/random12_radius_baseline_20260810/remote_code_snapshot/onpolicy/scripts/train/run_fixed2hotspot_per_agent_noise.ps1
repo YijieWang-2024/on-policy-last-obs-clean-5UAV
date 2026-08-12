@@ -5,13 +5,9 @@ param(
     [int]$Seed = 2,
     [long]$NumEnvSteps = 60000000,
     [int]$RolloutThreads = 64,
-    [ValidateRange(1, 400)]
-    [int]$MdLifetime = 10,
-    [ValidateRange(1, 100)]
-    [int]$UAVMaxSpeed = 30,
     [double]$NeighborDistance = 0,
     [int]$NeighborR = 0,
-    [ValidateSet('fixed_legacy', 'episode_template4_600_200', 'episode_template12_600_200')]
+    [ValidateSet('fixed_legacy', 'episode_template12_600_200')]
     [string]$HotspotLayoutMode = 'fixed_legacy',
     [switch]$EpisodeLayoutContext,
     [ValidateSet('normalized_v1', 'meters_v2')]
@@ -93,8 +89,8 @@ $trainArgs = @(
     '--hotspot_layout_mode', $HotspotLayoutMode,
     '--five_uav_start_layout', 'line',
     '--uav_start_positions', '110', '180', '220', '180', '330', '180', '440', '180', '400', '400',
-    '--md_lifetime_min', $MdLifetime,
-    '--md_lifetime_max', $MdLifetime,
+    '--md_lifetime_min', '10',
+    '--md_lifetime_max', '10',
     '--x_max', '600',
     '--x_min_uav', '0',
     '--x_max_uav', '600',
@@ -134,7 +130,7 @@ $trainArgs = @(
     '--w1', '20',
     '--w2', '1',
     '--p3', '500',
-    '--v_max', $UAVMaxSpeed,
+    '--v_max', '30',
     '--mean_velocity', '3',
     '--md_velocity_init_std', '0.6',
     '--md_velocity_init_min_factor', '0.4',
@@ -179,8 +175,6 @@ if ($EpisodeLayoutContext) {
 
 Write-Host "Experiment : $ExperimentName"
 Write-Host "Noise scale: $NoiseScale"
-Write-Host "MD lifetime: $MdLifetime"
-Write-Host "UAV v_max  : $UAVMaxSpeed"
 Write-Host "Layout     : $HotspotLayoutMode"
 Write-Host "Message    : $ActorMessageContract"
 Write-Host "Seed       : $Seed"
@@ -191,19 +185,8 @@ Write-Host "Press Ctrl+C to stop this run."
 
 Push-Location $repoRoot
 try {
-    # Python warnings are written to stderr.  With PowerShell's global
-    # ErrorActionPreference=Stop, redirecting stderr into this pipeline can
-    # turn an ordinary UserWarning into NativeCommandError and terminate a
-    # healthy training run.  Keep the stream visible in the log, but decide
-    # success/failure from Python's actual exit code below.
-    $previousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        & $python @trainArgs 2>&1 | Tee-Object -FilePath $logPath
-        $exitCode = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
+    & $python @trainArgs 2>&1 | Tee-Object -FilePath $logPath
+    $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         throw "Training exited with code $exitCode. See $logPath"
     }

@@ -842,8 +842,7 @@ class MEC(gym.Env):
             candidate_rng = (
                 self.candidate_birth_rng
                 if self.hotspot_layout_mode in {
-                    "episode_template4", "episode_template4_600_200",
-                    "episode_template12",
+                    "episode_template4", "episode_template12",
                     "episode_template12_600_200",
                     "episode_moving_template4"
                 }

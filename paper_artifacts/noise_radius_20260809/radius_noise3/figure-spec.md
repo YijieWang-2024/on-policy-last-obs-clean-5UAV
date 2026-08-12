@@ -1,0 +1,31 @@
+# Figure Spec
+
+- chart_type: three-panel line, common-budget performance bars with no-noise R0 reference, and effective-noise bars
+- data_sources: `../data/training_curves.csv`; `../data/radius_noise_magnitude_common_budget.csv`
+- rows_in_scope: fixed-legacy noise=3 R0, R260, R520, R780 runs only
+- data_columns: series_id, label, radius, step, value, status, use_in_figure; common_step, tail_points, noise_magnitude_mean
+- x_axis:
+- x_axis_details:
+  - field: environment step (top); communication radius (bottom panels)
+  - label: Environment steps (million); Communication radius (m)
+  - unit: million steps; metres
+  - scale: linear
+  - range: data extent
+- y_axis:
+- y_axis_details:
+  - field: system_performance_true_all_GUs
+  - label: True60 system performance
+  - unit: score
+  - scale: linear
+  - range: data extent
+- additional_axes: bottom-left reports True60 tail100 at the maximum step shared by all four radii; bottom-right reports TensorBoard `agent0/noise_magnitude_mean` tail100 at the same step on a log scale
+- series_or_categories: R0, R260, R520, R780
+- category_order: ascending radius
+- color_mapping: Okabe-Ito colorblind-safe categorical palette
+- size_mapping: none
+- legend: below top panel; includes status and last step
+- required_annotations: performance-bar values, no-noise R0 reference value, effective-noise values, and shared step
+- forbidden_elements: Random12 radius runs, no-noise baseline as a fifth training curve, invalid protocols, confidence intervals, extrapolation to 60M
+- layout_constraints: 300 dpi; no legend over curves; unequal final budgets must be explicit
+- source_note: TensorBoard `agent0/system_performance_true_all_GUs` and `agent0/noise_magnitude_mean`, refreshed 2026-08-09
+- assumptions: top panel uses a 20-point rolling mean; both bottom panels use the last 100 points at or before the shared step

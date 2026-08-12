@@ -1,0 +1,31 @@
+# Figure Spec
+
+- chart_type: two-panel line plus common-budget point summary
+- data_sources: `../data/training_curves.csv`
+- rows_in_scope: fixed-legacy R0 no-noise baseline and protocol-valid noise-scale runs only
+- data_columns: series_id, label, noise_scale, step, value, status, use_in_figure
+- x_axis:
+- x_axis_details:
+  - field: environment step (top); ordered noise-scale categories (bottom)
+  - label: Environment steps (million); Noise scale
+  - unit: million steps; dimensionless category labels
+  - scale: linear (top); categorical ordered by numeric scale (bottom)
+  - range: data extent
+- y_axis:
+- y_axis_details:
+  - field: system_performance_true_all_GUs
+  - label: True60 system performance
+  - unit: score
+  - scale: linear
+  - range: data extent
+- additional_axes: bottom panel reports rolling-tail mean at the largest step shared by all valid noise runs
+- series_or_categories: no-noise, 1.4, 2.0, 2.5, 2.66, 2.83, 3.0, 4.0, 8.0, 16, 30
+- category_order: ascending noise scale
+- color_mapping: black baseline plus viridis sequential colors for increasing noise; status additionally encoded by linestyle/marker
+- size_mapping: none
+- legend: below the top panel, two columns, includes status and last step
+- required_annotations: common-budget step in bottom title; stopped/partial runs identified in legend
+- forbidden_elements: invalid old non-A runs, D_min=200 runs, Random12 runs, regression line, confidence bands, endpoint ranking across unequal budgets
+- layout_constraints: colorblind-safe; all valid data represented; 300 dpi; no legend over curves
+- source_note: TensorBoard `agent0/system_performance_true_all_GUs`, refreshed 2026-08-09
+- assumptions: top panel uses a 20-point rolling mean; bottom panel uses the last 25 points at or before the shared step

@@ -1,0 +1,30 @@
+# Figure Spec
+
+- chart_type: line chart
+- data_sources: three refreshed remote TensorBoard event snapshots and one local TensorBoard event file
+- rows_in_scope: all scalar events for the selected metric
+- data_columns: TensorBoard step, wall time, `agent0/system_performance_true_all_GUs`
+- x_axis:
+  - field: TensorBoard step
+  - label: Training steps (millions)
+  - unit: million environment steps
+  - scale: linear
+  - range: from zero to the largest observed step
+- y_axis:
+  - field: `agent0/system_performance_true_all_GUs`
+  - label: `system_performance_true_all_GUs`
+  - unit: raw logged performance
+  - scale: linear
+  - range: data-driven across all curves in each figure
+- additional_axes: none
+- series_or_categories: remote no-actor R0/R260/R520; local actor-message R520; a separate R520-only two-curve output
+- category_order: R0, R260, R520, local R520 actor_message
+- color_mapping: Okabe-Ito blue/orange/green; the local actor-message R520 uses green with a dashed line in the four-curve figure and purple with a dashed line in the R520-only figure
+- size_mapping: none
+- legend: lower-right, outside the axes area, with each curve's final value and final step
+- required_annotations: final scalar value in every legend label; no smoothing
+- forbidden_elements: red-green-only encoding, unrequested smoothing, regression lines, point labels, hidden series
+- layout_constraints: legend must not cover trajectories; labels and axes must remain readable
+- source_note: remote files are refreshed snapshots; the local event file is the latest file in the named run directory
+- outputs: the original three-curve figure, the four-curve figure, and a separate R520-only figure
+- assumptions: speed and ETA use the last 25 scalar events; ETA is a monitoring estimate, not a completion guarantee

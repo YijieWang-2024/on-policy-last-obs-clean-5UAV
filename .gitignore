@@ -9,6 +9,7 @@ onpolicy/scripts/results/
 **/logs/
 **/models/
 events.out.tfevents.*
+*.tfevents
 *.pt
 *.pth
 *.pkl
@@ -19,5 +20,6 @@ onpolicy/*.eps
 onpolicy/scripts/train/*-timestep*.png
 _launch_logs/
 paper_artifacts/launch_logs/
+training_logs/
 eval_live_*/
 paper_artifacts/diagnostics/final_policy_audit_*/q*_seed*/

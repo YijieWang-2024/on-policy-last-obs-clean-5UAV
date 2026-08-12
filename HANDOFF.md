@@ -1,14 +1,14 @@
 # 5-UAV 动态 MEC 实验交接
 
-> 状态快照：2026-08-06（Asia/Shanghai；周总结依据最新已保存证据）
+> 主线归档更新：2026-08-13（Asia/Shanghai）
 >
 > 当前分支：`agent/dcppo-runtime-optimization`
 >
-> **阅读提示：第 1--11 节含历史快照；当前状态、最新结论和待办以文末 2026-08-06 authoritative state 以及周总结为准。**
+> **当前阅读顺序：** `ACTOR_MESSAGE_SPEED_ARCHIVE_20260813.md` → `FINAL_ENV_ALGORITHM_PARAMETER_AUDIT_20260812.md` → `速度实验.md` → 本文件的时间线。
 
-> **周级交接更新（2026-08-05，历史记录）：** 8 月 4–5 日的环境实验已统一整理；章节编号随后在 2026-08-06 周总结重排中改变。当前应阅读文末 2026-08-06 authoritative state 和 `RECENT_EXPERIMENT_SUMMARY_20260801_20260805.md`。
+> **历史边界：** 第 1--12 节以及 2026-08-06 authoritative state 都是当时快照；若与 2026-08-12/13 的归档段落冲突，以当前阅读顺序中的三份新文档和本文件的 2026-08-12/13 段落为准。
 
-## 1. 当前结论
+## 1. 历史结论（2026-07-31 至 2026-08-01 Q2 主干）
 
 主算法训练方式可以按 **Q2** 敲定，不再继续搜索资源动作训练方式。Q2 的主干是：
 
@@ -254,16 +254,16 @@ g_{ij}=\sigma(f_g(d_i,\phi(x_{ij}),\Delta p_{ij})).
 
 The new `episode_moving_template4` mode moves only the hidden MD birth-intensity rectangles; it does not expose hotspot coordinates to the policy and does not drag or delete active MDs. Local/remote tests passed (9 tests plus an 800-step PPO smoke). Four matched 30M, 64-worker, seed-2 runs are active on remote 9001 in `/data/home/tanglanProf_user02/wyj/Projects/on-policy-movinghotspot700-20260803`: R0 PGID 100806/GPU5, R200 PGID 22722/GPU5, R400 PGID 61580/GPU6, and R600 PGID 100439/GPU7. All use local advantage, task-summary receiver-gated Actor messages, ego-query attention critic, Spatial Flight Actor, completion-priority ordering, curriculum v2, and shared return normalization. Only `neighbor_distance` and `neighbor_R` change together. The abandoned 10M pilot logs were retained; do not mix them with the clean 30M curves.
 
-## 12. 2026-08-06：8 月 1–5 日周总结重排后的 authoritative state
+## 12. 2026-08-06：8 月 1–5 日周总结重排后的 authoritative state（历史状态）
 
-- 本周三条任务线、已保存训练事件、评估 CSV/JSON 和轨迹图已重新梳理，权威入口为 RECENT_EXPERIMENT_SUMMARY_20260801_20260805.md。
+- 本周三条任务线、已保存训练事件、评估 CSV/JSON 和轨迹图已重新梳理；当时的权威入口为 RECENT_EXPERIMENT_SUMMARY_20260801_20260805.md。
 - 当前稳定主基线是 Q2；10 个固定评估 episode 的 True60 为 617,738 ± 4,096。旧的 612,606 ± 3,039 是过期快照，不再使用。
 - 当前唯一值得继续做正式验证的通信候选是 RandomLayout700-v2 Full template12、无 UAV curriculum、receiver-gated task/geometry message 的两 seed 阶梯；它仍受 R1000 小区域覆盖捷径约束。
 - 优势混合、Critic-only 半径扩展、pure consensus、externality beta、K、MD 高速、mean-pool 大网格、FixedDiag 和未完成 MovingHotspot 均已保留证据但不再扩展。
 - 12-layout UAV curriculum 和 Subset29 已完成或保存到可复查状态，但不能与无 curriculum 主线直接合并排名；episode_layout_context 截止日无最终结果。
 - 8 月 6 日之后启动的 v_max=10/20/30/40 运行不属于本周完成结果。后续先做固定起点评估、small/large 分区指标和消息反事实，只有通过才补训练 seed。
 
-旧的主动运行描述是历史时间点记录；如果与上述状态或周总结冲突，以本节、周总结和对应原始 CSV/JSON 为准。
+本节及其之前的主动运行描述均为历史时间点记录；若与 2026-08-12/13 的 Fixed600-200 主线归档冲突，以文首当前阅读顺序所列新文档、后续归档段落及对应原始 JSON/CSV 为准。
 
 ## 2026-08-09: 600m Random12 input-v2 experiment preparation
 
@@ -273,3 +273,27 @@ The new `episode_moving_template4` mode moves only the hidden MD birth-intensity
 - Added a matched noise-3.0 R0/R260/R520/R780 launcher and backward-compatible evaluation masking.
 - Design and commands: `RANDOMLAYOUT600_NOISE3_INPUT_V2_20260809.md`.
 - No new long training run was launched during this implementation.
+
+## 2026-08-12：最终环境、算法、Actor/Critic 输入与速度参数审计
+
+- 新增权威审计入口：`FINAL_ENV_ALGORITHM_PARAMETER_AUDIT_20260812.md`。
+- 当前速度/参数选择环境是 Fixed600-200 index0、严格 1+4 动态 MD、lifetime=12、无 UAV curriculum；Random12-600 作为单独泛化协议，不与速度曲线合并排名。
+- 完整 60M 的 seed32/42 表明 v30 tail100 两 seed 均值 562.6k，明显高于 v20 的 496.7k 和 v10 的 485.0k；当前冻结 v30。2026-08-13 01:30 的 v40 冻结事件三 seed 共同只到 21.7856M，尚未进入最终选择。
+- 实际算法不是共享策略 MAPPO：`--share_policy` 是 store-false，使用 separated runner 和五套独立 actor/critic；`--use_valuenorm` 同样是 store-false，实际为 shared return RMS、ValueNorm off。
+- Actor 原始输入 251 维；资源头删除 40 维消息后读 211 维；Spatial flight head 使用空间/移动/布局/receiver-gated task-summary。Critic 输入为 R520 内最多 5 个 211 维 token，共 1055 维，ego token 查询 attention。
+- `neighbor_distance=520` 同时控制 Actor 消息、Critic mask 和 Metropolis 图；`neighbor_R=520` 因 `actor_neighbor_obs=false` 不进有效路径。noise=3 在 R520 下的有效 `m_i` 约 1e-6，训练优势实际上接近 local A_i。
+- 远端速度 run 的 12 份 args 和事件快照已冻结，但远端无 Git 元数据且本轮没有速度专用源码 SHA manifest；参数合同已确认，逐字节源码一致性仍是溯源边界。
+
+## 2026-08-12：no Actor message 对照复核
+
+- 8 月 10 日远端确实启动了 Fixed600-200/MD12/v30/noise3 的 R0/R260/R520 `no_actor_message` 三条训练；本地最后冻结快照为 38.07M/38.37M/40.88M，未保存到 60M 最终状态。
+- R520 no-message 与 actor-message seed2 的 `args.json` 除实验名和 `actor_message_mode=disabled/task_summary` 外完全一致。共同 40.8832M：tail25 为 547,509/547,601，message 仅 +0.017%；tail100 为 548,930/551,410，message +0.452%。这支持“当时看起来没明显差别”，但仍只是单 seed、未满预算的训练曲线诊断。
+- `disabled` 是结构删除消息 block：Actor obs 251→211，Spatial flight head 不创建 message encoder/gate；资源头本来就只读相同的 211 维本地输入。Critic 仍保留 R520 的 5×211=1055 维 attention state，共识/优势也仍使用 R520。
+- 详细说明已追加到 `FINAL_ENV_ALGORITHM_PARAMETER_AUDIT_20260812.md` 第 11 节。
+
+## 2026-08-13：Actor-message/速度主项目 Git 归档
+
+- 新增主线归档索引：`ACTOR_MESSAGE_SPEED_ARCHIVE_20260813.md`；后续接手优先读取该文件，再进入完整参数审计和速度记录。
+- 本次归档只纳入主线源码、正式启动器、参数/曲线轻量汇总、生成脚本和文档直接引用的最终图；明确排除模型、TensorBoard 原始事件、控制台训练日志和历史分析中间目录。
+- 本地 v10/v20/v30 seed2 在提交时仍在训练；本次操作只读刷新曲线，没有停止或修改训练进程。
+- `feature/unreliable-dataplane` 的 GRU/不可靠通信 worktree 不属于本次主项目提交，继续独立保留。

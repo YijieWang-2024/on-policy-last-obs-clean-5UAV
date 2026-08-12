@@ -480,6 +480,58 @@ class DynamicMDTest(unittest.TestCase):
             self.assertNotEqual(small_corner, large_corner)
         self.assertEqual(seen, set(range(12)))
 
+    def test_600m_fixed_template_uses_layout_zero_and_matches_random12_stream(self):
+        common = dict(
+            md_arrivals_min=5,
+            md_arrivals_max=5,
+            md_arrivals_per_region=[1, 4],
+            md_lifetime_min=10,
+            md_lifetime_max=10,
+            episode_length=2,
+            episode_layout_context=True,
+            episode_layout_context_units="meters_v2",
+            actor_message_mode="task_summary",
+            actor_message_contract="absolute_raw_v2",
+            spatial_flight_actor=True,
+            neighbor_distance=260,
+            neighbor_R=260,
+        )
+        fixed = MEC(self.make_args(
+            **common,
+            hotspot_layout_mode="episode_template4_600_200",
+        ))
+        random12 = MEC(self.make_args(
+            **common,
+            hotspot_layout_mode="episode_template12_600_200",
+            # Random12 enumerates the large corner first.  The target
+            # large-TR/small-BL geometry is therefore index 9.
+            hotspot_layout_indices=[9],
+        ))
+        expected_bounds = np.asarray(
+            [[0.0, 200.0, 0.0, 200.0],
+             [200.0, 600.0, 200.0, 600.0]],
+            dtype=np.float64,
+        )
+
+        fixed.seed(31)
+        fixed.reset()
+        random12.seed(31)
+        random12.reset()
+
+        self.assertEqual(fixed.hotspot_layout_index, 0)
+        self.assertEqual(random12.hotspot_layout_index, 9)
+        np.testing.assert_array_equal(fixed.episode_hotspot_bounds, expected_bounds)
+        np.testing.assert_array_equal(random12.episode_hotspot_bounds, expected_bounds)
+        np.testing.assert_array_equal(
+            fixed.episode_layout_context.reshape(2, 4), expected_bounds
+        )
+        np.testing.assert_allclose(
+            fixed.last_candidate_positions,
+            random12.last_candidate_positions,
+            rtol=0.0,
+            atol=0.0,
+        )
+
     def test_700m_template12_start_layouts_have_expected_topology(self):
         common = dict(
             x_max_uav=700,
