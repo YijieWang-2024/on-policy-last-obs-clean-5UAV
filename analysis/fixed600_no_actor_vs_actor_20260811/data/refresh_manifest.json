@@ -1,0 +1,40 @@
+{
+  "refreshed_at_local": "2026-08-11T10:21:44.753132+08:00",
+  "remote_host": "114.212.117.24",
+  "remote_project": "/home/test/wyj/Projects/on-policy-last-obs-clean-5UAV",
+  "experiments": {
+    "R0": {
+      "experiment_name": "dcppoR0_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_no_actor_message_seed2_60m_20260810",
+      "event_path": "/home/test/wyj/Projects/on-policy-last-obs-clean-5UAV/onpolicy/scripts/results/mec/mappo/dcppoR0_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_no_actor_message_seed2_60m_20260810/run1/logs/events.out.tfevents.1786372037.test-PowerEdge-R740",
+      "event_snapshot": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_no_actor_vs_actor_20260811\\data\\remote\\R0.tfevents",
+      "event_size_bytes": 3507485,
+      "event_mtime_epoch": 1786414887,
+      "event_stable_at_pull": true,
+      "event_sha256": "e654f088947baae865b9c2fec578d21692dfed30104d56e26cd4fae1745f8aba",
+      "args_snapshot": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_no_actor_vs_actor_20260811\\data\\remote\\R0_args.json"
+    },
+    "R260": {
+      "experiment_name": "dcppoR260_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_no_actor_message_seed2_60m_20260810",
+      "event_path": "/home/test/wyj/Projects/on-policy-last-obs-clean-5UAV/onpolicy/scripts/results/mec/mappo/dcppoR260_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_no_actor_message_seed2_60m_20260810/run1/logs/events.out.tfevents.1786372044.test-PowerEdge-R740",
+      "event_snapshot": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_no_actor_vs_actor_20260811\\data\\remote\\R260.tfevents",
+      "event_size_bytes": 3535793,
+      "event_mtime_epoch": 1786414894,
+      "event_stable_at_pull": true,
+      "event_sha256": "334d8606e1286af1b8cf6ba643218af59fdb3153b274e12092273359ad318ee8",
+      "args_snapshot": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_no_actor_vs_actor_20260811\\data\\remote\\R260_args.json"
+    },
+    "R520": {
+      "experiment_name": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_no_actor_message_seed2_60m_20260810",
+      "event_path": "/home/test/wyj/Projects/on-policy-last-obs-clean-5UAV/onpolicy/scripts/results/mec/mappo/dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_no_actor_message_seed2_60m_20260810/run1/logs/events.out.tfevents.1786371036.test-PowerEdge-R740",
+      "event_snapshot": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_no_actor_vs_actor_20260811\\data\\remote\\R520.tfevents",
+      "event_size_bytes": 3766331,
+      "event_mtime_epoch": 1786414880,
+      "event_stable_at_pull": true,
+      "event_sha256": "ad9dbb9777e28600181c41c15be1cba057f0d6475cb81a07b3513dcdc83a6e7b",
+      "args_snapshot": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_no_actor_vs_actor_20260811\\data\\remote\\R520_args.json"
+    }
+  },
+  "remote_status": "2026-08-11 10:21:46 CST\nNVIDIA GeForce RTX 3090, 18637 MiB, 24576 MiB, 65 %\n1777955    11:54:30 91.5 mappo-mec-dcppoR0_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_no_actor_message_seed2_60m_20260810@wyj2\n1778060    11:54:24 91.4 mappo-mec-dcppoR260_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_no_actor_message_seed2_60m_20260810@wyj2\n1773718    12:11:11 91.1 mappo-mec-dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_no_actor_message_seed2_60m_20260810@wyj2\n1773744    12:11:10  7.0 mappo-mec-dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_no_actor_message_seed2_60m_20260810@wyj2\n",
+  "remote_status_stderr": "",
+  "refreshed_at_local_end": "2026-08-11T10:21:45.947950+08:00"
+}

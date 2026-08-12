@@ -1,0 +1,29 @@
+# Figure Spec
+
+- chart_type: multi-series training line chart with uncertainty bands
+- data_sources: 12 TensorBoard event files from local and remote formal runs; remote snapshots are stored under `data/remote/`
+- rows_in_scope: `v_max=10/20/30/40`, seeds `2/32/42`
+- data_columns: `agent0/system_performance_true_all_GUs`
+- x_axis:
+  - field: training environment steps
+  - label: Environment steps
+  - unit: millions of environment steps
+  - scale: linear
+  - range: 0 to 60 million
+- y_axis:
+  - field: `system_performance_true_all_GUs`
+  - label: system_performance_true_all_GUs
+  - unit: environment performance score
+  - scale: linear
+  - range: automatic, including every available point and uncertainty band
+- additional_axes: none
+- series_or_categories: one aggregate line per UAV maximum speed
+- category_order: `v_max=10`, `v_max=20`, `v_max=30`, `v_max=40`
+- color_mapping: Okabe-Ito colorblind-friendly sky blue, blue, orange, and purple
+- size_mapping: none
+- legend: lower right; include the last aggregate value, step, and number of contributing seeds
+- required_annotations: mean plus/minus one population standard deviation wherever at least two seeds have reached a step; retain the available raw single-seed tail without an uncertainty band
+- forbidden_elements: smoothing, regression fits, reference lines, individual seed lines, and point labels
+- layout_constraints: one 300-DPI PNG; readable legend; visible axis ticks; no clipping
+- source_note: formal runs only; remote event snapshots were refreshed read-only from `114.212.117.24:22` at 2026-08-13 00:55 +08:00; stopped duplicate and failed/empty retry directories are excluded
+- assumptions: curves are aligned on the union of logged steps using linear interpolation only inside each seed's observed range, with no extrapolation; at every step the mean and population standard deviation use all seeds that have reached that step

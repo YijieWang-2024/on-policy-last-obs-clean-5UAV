@@ -1,0 +1,328 @@
+{
+  "generated_at": "2026-08-13T01:30:09+08:00",
+  "metric": "agent0/system_performance_true_all_GUs",
+  "target_steps": 60000000,
+  "aggregation": "At each union-grid step, interpolate only within each seed's observed range; plot the mean over available seeds and population std only when >=2 seeds are available. Never extrapolate and never smooth.",
+  "protocol_verified": true,
+  "expected_protocol": {
+    "num_env_steps": 60000000,
+    "episode_length": 400,
+    "n_rollout_threads": 64,
+    "n_GUs": 60,
+    "x_min_gu": 0,
+    "x_max_gu": 600,
+    "y_min_gu": 0,
+    "y_max_gu": 600,
+    "hotspot_layout_mode": "episode_template4_600_200",
+    "episode_layout_context": true,
+    "episode_layout_context_units": "meters_v2",
+    "md_arrivals_min": 5,
+    "md_arrivals_max": 5,
+    "md_arrivals_per_region": [
+      1,
+      4
+    ],
+    "md_lifetime_min": 12,
+    "md_lifetime_max": 12,
+    "mean_velocity": 3.0,
+    "neighbor_distance": 520.0,
+    "neighbor_R": 520,
+    "noise_scale": 3.0,
+    "advantage_mode": "per_agent_noise",
+    "actor_message_mode": "task_summary",
+    "actor_message_pool": "receiver_gated_sum",
+    "actor_message_contract": "absolute_raw_v2",
+    "ob_norm": true,
+    "spatial_flight_actor": true
+  },
+  "runs": [
+    {
+      "v_max": 10,
+      "seed": 2,
+      "host": "local",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed2_60m_20260812",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed2_60m_20260812\\run1\\logs\\events.out.tfevents.1786526995.DESKTOP-R8O9DBO",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed2_60m_20260812\\run1\\args.json",
+      "points": 426,
+      "last_step": 21785600,
+      "progress_percent": 36.309333333333335,
+      "last_value": 442757.34375,
+      "recent_steps_per_second": 712.9032793628181,
+      "last_event_time": "2026-08-13T01:27:56+08:00",
+      "curve_complete": false,
+      "eta_seconds_from_last_event": 53603.905475305764,
+      "predicted_finish_from_last_event": "2026-08-13T16:21:19+08:00"
+    },
+    {
+      "v_max": 10,
+      "seed": 32,
+      "host": "remote",
+      "source": "events.out.tfevents.vmax10_seed32",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax10_seed32",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax10_seed32.args.json",
+      "points": 1172,
+      "last_step": 59980800,
+      "progress_percent": 99.968,
+      "last_value": 478343.5625,
+      "recent_steps_per_second": 848.0653848636647,
+      "last_event_time": "2026-08-12T13:22:32+08:00",
+      "curve_complete": true,
+      "eta_seconds_from_last_event": 0.0,
+      "predicted_finish_from_last_event": null
+    },
+    {
+      "v_max": 10,
+      "seed": 42,
+      "host": "local",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed42_60m_20260811",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed42_60m_20260811\\run1\\logs\\events.out.tfevents.1786441754.DESKTOP-R8O9DBO",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed42_60m_20260811\\run1\\args.json",
+      "points": 1172,
+      "last_step": 59980800,
+      "progress_percent": 99.968,
+      "last_value": 504354.53125,
+      "recent_steps_per_second": 751.9062607254494,
+      "last_event_time": "2026-08-12T15:52:38+08:00",
+      "curve_complete": true,
+      "eta_seconds_from_last_event": 0.0,
+      "predicted_finish_from_last_event": null
+    },
+    {
+      "v_max": 20,
+      "seed": 2,
+      "host": "local",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed2_60m_20260812",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed2_60m_20260812\\run1\\logs\\events.out.tfevents.1786527051.DESKTOP-R8O9DBO",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed2_60m_20260812\\run1\\args.json",
+      "points": 425,
+      "last_step": 21734400,
+      "progress_percent": 36.224000000000004,
+      "last_value": 502867.125,
+      "recent_steps_per_second": 712.8814668403477,
+      "last_event_time": "2026-08-13T01:28:02+08:00",
+      "curve_complete": false,
+      "eta_seconds_from_last_event": 53677.36682733781,
+      "predicted_finish_from_last_event": "2026-08-13T16:22:40+08:00"
+    },
+    {
+      "v_max": 20,
+      "seed": 32,
+      "host": "remote",
+      "source": "events.out.tfevents.vmax20_seed32",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax20_seed32",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax20_seed32.args.json",
+      "points": 1172,
+      "last_step": 59980800,
+      "progress_percent": 99.968,
+      "last_value": 490199.34375,
+      "recent_steps_per_second": 889.5318427521212,
+      "last_event_time": "2026-08-12T14:04:56+08:00",
+      "curve_complete": true,
+      "eta_seconds_from_last_event": 0.0,
+      "predicted_finish_from_last_event": null
+    },
+    {
+      "v_max": 20,
+      "seed": 42,
+      "host": "local",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed42_60m_20260811",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed42_60m_20260811\\run1\\logs\\events.out.tfevents.1786441795.DESKTOP-R8O9DBO",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed42_60m_20260811\\run1\\args.json",
+      "points": 1172,
+      "last_step": 59980800,
+      "progress_percent": 99.968,
+      "last_value": 504062.46875,
+      "recent_steps_per_second": 751.614146117423,
+      "last_event_time": "2026-08-12T15:48:52+08:00",
+      "curve_complete": true,
+      "eta_seconds_from_last_event": 0.0,
+      "predicted_finish_from_last_event": null
+    },
+    {
+      "v_max": 30,
+      "seed": 2,
+      "host": "local",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed2_60m_20260812",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed2_60m_20260812\\run1\\logs\\events.out.tfevents.1786531502.DESKTOP-R8O9DBO",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed2_60m_20260812\\run1\\args.json",
+      "points": 347,
+      "last_step": 17740800,
+      "progress_percent": 29.568,
+      "last_value": 533795.0,
+      "recent_steps_per_second": 712.2547241262902,
+      "last_event_time": "2026-08-13T01:28:49+08:00",
+      "curve_complete": false,
+      "eta_seconds_from_last_event": 59331.58260457814,
+      "predicted_finish_from_last_event": "2026-08-13T17:57:40+08:00"
+    },
+    {
+      "v_max": 30,
+      "seed": 32,
+      "host": "remote",
+      "source": "events.out.tfevents.vmax30_seed32",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax30_seed32",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax30_seed32.args.json",
+      "points": 1172,
+      "last_step": 59980800,
+      "progress_percent": 99.968,
+      "last_value": 562453.9375,
+      "recent_steps_per_second": 1150.802792455787,
+      "last_event_time": "2026-08-12T16:22:36+08:00",
+      "curve_complete": true,
+      "eta_seconds_from_last_event": 0.0,
+      "predicted_finish_from_last_event": null
+    },
+    {
+      "v_max": 30,
+      "seed": 42,
+      "host": "local",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed42_60m_20260811",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed42_60m_20260811\\run1\\logs\\events.out.tfevents.1786447181.DESKTOP-R8O9DBO",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed42_60m_20260811\\run1\\args.json",
+      "points": 1172,
+      "last_step": 59980800,
+      "progress_percent": 99.968,
+      "last_value": 564614.25,
+      "recent_steps_per_second": 1116.3022165458572,
+      "last_event_time": "2026-08-12T17:00:19+08:00",
+      "curve_complete": true,
+      "eta_seconds_from_last_event": 0.0,
+      "predicted_finish_from_last_event": null
+    },
+    {
+      "v_max": 40,
+      "seed": 2,
+      "host": "remote",
+      "source": "events.out.tfevents.vmax40_seed2",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax40_seed2",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax40_seed2.args.json",
+      "points": 452,
+      "last_step": 23116800,
+      "progress_percent": 38.528,
+      "last_value": 539150.0,
+      "recent_steps_per_second": 839.7931541879121,
+      "last_event_time": "2026-08-13T00:55:31+08:00",
+      "curve_complete": false,
+      "eta_seconds_from_last_event": 43919.38635849729,
+      "predicted_finish_from_last_event": "2026-08-13T13:07:31+08:00"
+    },
+    {
+      "v_max": 40,
+      "seed": 32,
+      "host": "remote",
+      "source": "events.out.tfevents.vmax40_seed32",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax40_seed32",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax40_seed32.args.json",
+      "points": 441,
+      "last_step": 22553600,
+      "progress_percent": 37.589333333333336,
+      "last_value": 537266.75,
+      "recent_steps_per_second": 806.6109449632789,
+      "last_event_time": "2026-08-13T00:54:57+08:00",
+      "curve_complete": false,
+      "eta_seconds_from_last_event": 46424.36385698281,
+      "predicted_finish_from_last_event": "2026-08-13T13:48:41+08:00"
+    },
+    {
+      "v_max": 40,
+      "seed": 42,
+      "host": "remote",
+      "source": "events.out.tfevents.vmax40_seed42",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax40_seed42",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax40_seed42.args.json",
+      "points": 426,
+      "last_step": 21785600,
+      "progress_percent": 36.309333333333335,
+      "last_value": 531568.875,
+      "recent_steps_per_second": 808.3335306562808,
+      "last_event_time": "2026-08-13T00:55:41+08:00",
+      "curve_complete": false,
+      "eta_seconds_from_last_event": 47275.53485128097,
+      "predicted_finish_from_last_event": "2026-08-13T14:03:36+08:00"
+    }
+  ],
+  "aggregates": [
+    {
+      "v_max": 10,
+      "terminal_step": 59980800,
+      "terminal_seed_count": 2,
+      "terminal_mean": 491349.046875,
+      "terminal_std": 13005.484375,
+      "availability_segments": [
+        {
+          "start_step": 25600,
+          "end_step": 21785600,
+          "seed_count": 3
+        },
+        {
+          "start_step": 21836800,
+          "end_step": 59980800,
+          "seed_count": 2
+        }
+      ]
+    },
+    {
+      "v_max": 20,
+      "terminal_step": 59980800,
+      "terminal_seed_count": 2,
+      "terminal_mean": 497130.90625,
+      "terminal_std": 6931.5625,
+      "availability_segments": [
+        {
+          "start_step": 25600,
+          "end_step": 21734400,
+          "seed_count": 3
+        },
+        {
+          "start_step": 21785600,
+          "end_step": 59980800,
+          "seed_count": 2
+        }
+      ]
+    },
+    {
+      "v_max": 30,
+      "terminal_step": 59980800,
+      "terminal_seed_count": 2,
+      "terminal_mean": 563534.09375,
+      "terminal_std": 1080.15625,
+      "availability_segments": [
+        {
+          "start_step": 25600,
+          "end_step": 17740800,
+          "seed_count": 3
+        },
+        {
+          "start_step": 17792000,
+          "end_step": 59980800,
+          "seed_count": 2
+        }
+      ]
+    },
+    {
+      "v_max": 40,
+      "terminal_step": 23116800,
+      "terminal_seed_count": 1,
+      "terminal_mean": 539150.0,
+      "terminal_std": null,
+      "availability_segments": [
+        {
+          "start_step": 25600,
+          "end_step": 21785600,
+          "seed_count": 3
+        },
+        {
+          "start_step": 21836800,
+          "end_step": 22553600,
+          "seed_count": 2
+        },
+        {
+          "start_step": 22604800,
+          "end_step": 23116800,
+          "seed_count": 1
+        }
+      ]
+    }
+  ],
+  "output": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\plot.png"
+}

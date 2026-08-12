@@ -1,0 +1,20 @@
+{
+  "metric": "agent0/system_performance_true_all_GUs",
+  "smoothing": "21-event centered rolling mean with shortened edge windows",
+  "curve_contract": "every available run is drawn through its own last TensorBoard event; no common-step truncation",
+  "sources": {
+    "randomlayout700_full": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\paper_artifacts\\randomlayout700_v2_final_20260804\\events",
+    "movinghotspot700": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\paper_artifacts\\randomlayout_moving_20260804\\events",
+    "curriculum_and_subset29": "D:\\wyj\\Projects\\remote_randomlayout700_analysis_20260805\\true60_metrics_raw.json",
+    "diag4": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\remote9001_randomlayout700_uavcurriculum_vs_diag4_20260805\\all_scalars.csv",
+    "fixeddiag": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\remote9001_randomlayout700_live_20260804\\remote_scalars.csv"
+  },
+  "figures": [
+    "randomlayout700_full_final.png",
+    "movinghotspot700_full_final.png",
+    "uavcurriculum12v2_full_final.png",
+    "subset29_full_final.png",
+    "diag4_700m_full_final.png",
+    "fixeddiag_full_final.png"
+  ]
+}

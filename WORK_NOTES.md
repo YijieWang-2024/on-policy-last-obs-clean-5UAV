@@ -171,3 +171,28 @@
 - Updated frozen normalization, full-message masking, and distance counterfactuals for both v1 and v2.
 - Added the parameterized `run_random12_600_dcppo_noise3p0.ps1` launcher for R0/R260/R520/R780.
 - Targeted regression: 53 tests passed; one-step environment/normalizer smoke test and PowerShell parser checks passed.
+
+## 2026-08-12：近两周参数分歧收敛与速度实验代码审计
+
+- 全量对照当前工作树、速度启动器、12 份 local/remote `args.json`、TensorBoard 事件、训练日志 shape、近两周噪声/半径/环境总结。
+- 权威详细结果：`FINAL_ENV_ALGORITHM_PARAMETER_AUDIT_20260812.md`；速度图协议：`analysis/fixed600_speed_3seed_20260812/audit.md`。
+- 当前冻结合同：Fixed600-200 index0，1+4 arrivals，MD12，MD 3m/s，5 UAV 固定起点，无 curriculum，R520，noise3 residual，50 consensus iterations，Spatial Cartesian actor，absolute_raw_v2 task-summary receiver gate，ego-query attention critic，shared return normalization，v30。
+- 60M 完整双 seed tail100：v10=485,025.8，v20=496,693.0，v30=562,608.0；v30 比 v20 高约 13.27%。2026-08-13 01:30 刷新时 v40 三 seed 共同到 21.7856M，仍未满 60M，保持 pending。
+- 输入维度已沿代码路径复核：Actor obs 251；resource head 211；critic token 211；R520 k-hop critic state 1055；动作 62=2 flight+20 association+20 bandwidth+20 compute。
+- 解释边界：R520 是 Actor/Critic/共识的联合选择；noise3 在 R520 下有效噪声接近零；不能宣称 actor-only 半径最优或 noise3 本身最优。
+- 溯源缺口：远端无 Git 元数据；速度 args/事件已保存，但没有本轮 speed-specific 完整源码 SHA manifest。
+
+## 2026-08-12：Actor message 开关单变量审计
+
+- 找到 `analysis/fixed600_no_actor_vs_actor_20260811/` 的远端 R0/R260/R520 no-message 冻结事件和 args，以及 `run_fixed600_200_dcppo_R520_noise3p0_md12_no_actor_message.sh`。
+- R520 与本地 actor-message v30/seed2 在 args 层只有 `actor_message_mode` 和实验名不同；共同 40.8832M tail25 差 +0.017%，tail100 差 +0.452%。
+- 限制：no-message 快照未到 60M、只有 seed2、不是同 checkpoint 的测试时 mask。因此记录为“近等价的训练诊断”，不升级为 Actor message 无用的最终结论。
+- `disabled` 将 Actor message 维度从40删到0，Actor obs 251→211；Critic 和 R520 共识图保持不变。
+
+## 2026-08-13：Actor-message/速度主线归档
+
+- 用 GitHub 插件确认账号 `YijieWang-2024` 对目标仓库具有 push/admin 权限。
+- 以 `ACTOR_MESSAGE_SPEED_ARCHIVE_20260813.md` 建立当前主线索引；冻结环境/算法合同、速度选择、no-message 结论边界和后续最小 gate。
+- 重新运行 `analysis/fixed600_speed_3seed_20260812/plot.py`，只读刷新当前事件：本地 seed2 v10/v20/v30 到 21.7856M/21.7344M/17.7408M；远端冻结 v40 到 23.1168M/22.5536M/21.7856M。
+- `tests/test_dynamic_md.py` 通过 17 项；仅保留两个已有除零 RuntimeWarning。
+- Git 归档不包含模型、TensorBoard 原始事件、`training_logs/` 或大批历史中间产物。
