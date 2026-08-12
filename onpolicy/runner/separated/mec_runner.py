@@ -11,6 +11,11 @@ from onpolicy.utils.checkpoint_manifest import (
     write_checkpoint_manifest_atomic,
 )
 from onpolicy.utils.util import get_shape_from_obs_space
+from onpolicy.utils.md_state_reconstruction import MDStateReconstructor
+from onpolicy.utils.unreliable_communication import (
+    running_sum_ratio_consensus,
+    sample_configured_timely_receptions,
+)
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial.distance import cdist
 
@@ -20,6 +25,10 @@ def _t2n(x):
 class MECRunner(Runner):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
     def __init__(self, config):
+        config['all_args'].critic_md_metadata = bool(
+            getattr(config['all_args'], "critic_md_metadata", False)
+            or getattr(config['all_args'], "state_reconstruction", "zero") != "zero"
+        )
         super(MECRunner, self).__init__(config)
         self.run_args_path = Path(config["run_dir"]) / "args.json"
         self.normer = []
@@ -29,8 +38,6 @@ class MECRunner(Runner):
         # self.normer = Normer(args=self.all_args, obs_space=get_shape_from_obs_space(self.envs.observation_space[0]), states_space=get_shape_from_obs_space(self.envs.share_observation_space[0]))
         self.checkpoint_source_steps = 0
         self.checkpoint_step_provenance = "verified_chain"
-        if self.model_dir is not None:
-            self.restore()
         self.average_local_advantage = config['all_args'].average_local_advantage
         self.average_local_advantage_timely = config['all_args'].average_local_advantage_timely
         self.whether_local_add_ave_adadvantage = config['all_args'].whether_local_add_ave_adadvantage
@@ -43,6 +50,38 @@ class MECRunner(Runner):
         self.consensus_alpha = getattr(config['all_args'], "consensus_alpha", 0.5)
         self.externality_beta = getattr(config['all_args'], "externality_beta", 0.1)
         self.noise_scale = getattr(config['all_args'], "noise_scale", 0.12)
+        self.communication_mode = getattr(
+            config['all_args'], "communication_mode", "reliable"
+        )
+        self.communication_rng = np.random.default_rng(
+            config['all_args'].seed + 104729
+        )
+        self.advantage_rng = np.random.default_rng(
+            config['all_args'].seed + 130363
+        )
+        self.state_reconstruction = getattr(
+            config['all_args'], "state_reconstruction", "zero"
+        )
+        self.state_reconstructor = (
+            MDStateReconstructor(self.all_args, self.device)
+            if self.state_reconstruction != "zero" else None
+        )
+        self.md_prediction_infos = [
+            {"md_prediction_loss": 0.0, "md_prediction_samples": 0}
+            for _ in range(self.n_UAVs)
+        ]
+        self.current_type_s_data = None
+        if (
+            self.communication_mode == "unreliable"
+            and self.advantage_mode == "externality_consensus"
+        ):
+            raise ValueError(
+                "externality_consensus requires reliable finite-round graph "
+                "coefficients; use local, mixed_consensus, pure_consensus, "
+                "legacy_noise, or per_agent_noise with unreliable communication"
+            )
+        if self.model_dir is not None:
+            self.restore()
         if self.whether_average_network_parameters:
             self.average_network_parameters()
         # self.n_UAVs = config['all_args'].n_UAVs
@@ -77,6 +116,12 @@ class MECRunner(Runner):
 
                 # Obser reward and next obs
                 obs, share_obs, rewards, dones, infos, available_actions, Metropolis_weights, attention_active_mask = self.envs.step(actions)
+                if self.state_reconstructor is not None:
+                    self.current_type_s_data = self.envs.get_type_s_data()
+                    share_obs, attention_active_mask = self.state_reconstructor.reconstruct(
+                        self.current_type_s_data,
+                        reset_environments=np.all(dones, axis=1),
+                    )
                 normalize_batch(self.normer, obs, share_obs, rewards, dones)
                 # obs = self.normer._obfilt(obs)
                 # share_obs = self.normer._statefilt(share_obs)
@@ -110,6 +155,32 @@ class MECRunner(Runner):
 
             # compute return and update network
             self.compute()
+            if self.state_reconstruction == "md_gru":
+                if not np.all(np.all(dones, axis=1)):
+                    raise RuntimeError(
+                        "MD-GRU updates require rollout and episode boundaries to align"
+                    )
+                self.md_prediction_infos = self.state_reconstructor.train_predictors()
+                self.state_reconstructor.reset()
+                refreshed_share_obs, refreshed_attention = (
+                    self.state_reconstructor.reconstruct(
+                        self.current_type_s_data,
+                        reset_environments=np.ones(
+                            self.n_rollout_threads, dtype=bool
+                        ),
+                        collect_samples=False,
+                    )
+                )
+                refreshed_share_obs = self._normalize_reconstructed_states(
+                    refreshed_share_obs
+                )
+                for agent_id in range(self.num_agents):
+                    self.buffer[agent_id].share_obs[-1] = (
+                        refreshed_share_obs[:, agent_id]
+                    )
+                    self.buffer[agent_id].attention_active_mask[-1] = (
+                        refreshed_attention[:, agent_id]
+                    )
             train_infos = self.train()
 
             if self.whether_average_network_parameters and (episode % self.average_network_parameters_interval == 0):
@@ -231,6 +302,13 @@ class MECRunner(Runner):
     def warmup(self):
         # reset env
         obs, share_obs, available_actions, Metropolis_weights, attention_active_mask = self.envs.reset()
+        if getattr(self, "state_reconstructor", None) is not None:
+            self.current_type_s_data = self.envs.get_type_s_data()
+            share_obs, attention_active_mask = self.state_reconstructor.reconstruct(
+                self.current_type_s_data,
+                reset_environments=np.ones(self.n_rollout_threads, dtype=bool),
+                collect_samples=False,
+            )
         normalize_batch(self.normer, obs, share_obs)
         # obs = self.normer._obfilt(obs)
         # share_obs = self.normer._statefilt(share_obs)
@@ -245,6 +323,22 @@ class MECRunner(Runner):
             self.buffer[agent_id].available_actions[0] = available_actions[:, agent_id].copy()
             self.buffer[agent_id].Metropolis_weights[0] = Metropolis_weights[:, agent_id].copy()
             self.buffer[agent_id].attention_active_mask[0] = attention_active_mask[:, agent_id].copy()
+
+    def _normalize_reconstructed_states(self, states):
+        """Apply frozen state statistics after an MD-GRU parameter update."""
+        states = states.copy()
+        for agent_id, normer in enumerate(self.normer):
+            state_rms = getattr(normer, "state_rms", None)
+            if state_rms is None:
+                continue
+            start = normer.not_norm
+            states[:, agent_id, start:] = np.clip(
+                (states[:, agent_id, start:] - state_rms.mean[start:])
+                / np.sqrt(state_rms.var[start:] + normer.epsilon),
+                -normer.clipob,
+                normer.clipob,
+            )
+        return states
 
     @torch.no_grad()
     def collect(self, step):
@@ -350,8 +444,8 @@ class MECRunner(Runner):
                 training_advantage = local_advantage
             elif self.advantage_mode == "legacy_noise":
                 exact_mean = np.mean(local_advantage, axis=0, keepdims=True)
-                raw_consensus = self.run_consensus_algorithm(
-                    local_advantage, self.all_args.n_iterations
+                raw_consensus, reception_rate = self._communicate_advantages(
+                    local_advantage
                 )
                 consensus_residual = self.normalized_consensus_residual(
                     local_advantage, raw_consensus
@@ -362,18 +456,20 @@ class MECRunner(Runner):
                     consensus_residual
                     * 0.12
                     * std_advantage
-                    * np.random.randn(*local_advantage.shape)
+                    * self.advantage_rng.standard_normal(local_advantage.shape)
                 )
                 consensus_infos = {
                     'consensus_residual_mean': float(np.mean(consensus_residual)),
                     'consensus_residual_max': float(np.max(consensus_residual)),
                 }
+                if reception_rate is not None:
+                    consensus_infos['advantage_timely_reception_rate'] = reception_rate
             elif self.advantage_mode == "per_agent_noise":
                 # Deliberately retain only each UAV's local advantage plus an
                 # independently sampled Gaussian perturbation.  No exact or
                 # communicated mean is added in this ablation.
-                raw_consensus = self.run_consensus_algorithm(
-                    local_advantage, self.all_args.n_iterations
+                raw_consensus, reception_rate = self._communicate_advantages(
+                    local_advantage
                 )
                 noise_magnitude = self.per_agent_consensus_residual(
                     local_advantage, raw_consensus
@@ -383,7 +479,7 @@ class MECRunner(Runner):
                     noise_magnitude
                     * self.noise_scale
                     * local_std
-                    * np.random.randn(*local_advantage.shape).astype(
+                    * self.advantage_rng.standard_normal(local_advantage.shape).astype(
                         local_advantage.dtype, copy=False
                     )
                 ).astype(local_advantage.dtype, copy=False)
@@ -396,13 +492,22 @@ class MECRunner(Runner):
                         local_advantage, raw_consensus
                     ),
                 }
+                if reception_rate is not None:
+                    consensus_infos['advantage_timely_reception_rate'] = reception_rate
             else:
-                consensus_advantage, graph_stats = self.run_consensus_algorithm(
-                    local_advantage,
-                    self.all_args.n_iterations,
-                    scale_by_component=True,
-                    return_graph_stats=True,
-                )
+                if self.communication_mode == "unreliable":
+                    consensus_advantage, reception_rate = (
+                        self.run_unreliable_consensus(local_advantage)
+                    )
+                    graph_stats = None
+                else:
+                    consensus_advantage, graph_stats = self.run_consensus_algorithm(
+                        local_advantage,
+                        self.all_args.n_iterations,
+                        scale_by_component=True,
+                        return_graph_stats=True,
+                    )
+                    reception_rate = None
                 if self.advantage_mode == "pure_consensus":
                     training_advantage = consensus_advantage
                 elif self.advantage_mode == "mixed_consensus":
@@ -424,12 +529,27 @@ class MECRunner(Runner):
                     raise ValueError(
                         f"unsupported advantage_mode: {self.advantage_mode}"
                     )
-                consensus_infos = self.consensus_diagnostics(
-                    local_advantage,
-                    consensus_advantage,
-                    training_advantage,
-                    graph_stats,
-                )
+                if graph_stats is None:
+                    consensus_infos = {
+                        'advantage_timely_reception_rate': reception_rate,
+                        'consensus_local_corr': self._safe_correlation(
+                            local_advantage, consensus_advantage
+                        ),
+                        'training_local_corr': self._safe_correlation(
+                            local_advantage, training_advantage
+                        ),
+                        'consensus_to_local_std_ratio': float(
+                            np.std(consensus_advantage)
+                            / (np.std(local_advantage) + 1e-8)
+                        ),
+                    }
+                else:
+                    consensus_infos = self.consensus_diagnostics(
+                        local_advantage,
+                        consensus_advantage,
+                        training_advantage,
+                        graph_stats,
+                    )
                 if self.advantage_mode == "externality_consensus":
                     local_std = float(np.std(local_advantage))
                     consensus_infos.update({
@@ -599,6 +719,8 @@ class MECRunner(Runner):
             self.trainer[agent_id].prep_training()
             train_info = self.trainer[agent_id].train(self.buffer[agent_id])
             train_info.update(consensus_infos)
+            if self.state_reconstruction == "md_gru":
+                train_info.update(self.md_prediction_infos[agent_id])
             if getattr(self.all_args, "cartesian_flight", False):
                 actor_act = self.trainer[agent_id].policy.actor.act
                 flight_head = actor_act.action_out if actor_act.mujoco_box else actor_act.action_outs[0]
@@ -778,6 +900,12 @@ class MECRunner(Runner):
             normer_path = str(self.save_dir) + "/normer"+ str(agent_id) +".pkl"
             self.normer[agent_id].save(normer_path)
 
+        if getattr(self, "state_reconstructor", None) is not None:
+            torch.save(
+                self.state_reconstructor.checkpoint_state(),
+                str(self.save_dir / "md_gru_shared.pt"),
+            )
+
         # Publish the step binding only after all five actor/critic/normer sets
         # have been written. The atomic manifest is the commit marker for a
         # coherent checkpoint generation and does not alter training state.
@@ -793,6 +921,9 @@ class MECRunner(Runner):
             self.save_interval,
             self.checkpoint_step_provenance,
             args_path=self.run_args_path,
+            extra_checkpoint_names=("md_gru_shared.pt",)
+            if getattr(self, "state_reconstructor", None) is not None
+            else (),
         )
         write_checkpoint_manifest_atomic(self.save_dir, manifest)
         # if episode % 100 == 0:
@@ -813,10 +944,16 @@ class MECRunner(Runner):
         source_args_path = model_dir.parent / "args.json"
         if not source_args_path.is_file():
             source_args_path = model_dir / "args.json"
+        extra_checkpoint_names = (
+            ("md_gru_shared.pt",)
+            if getattr(self, "state_reconstructor", None) is not None
+            else ()
+        )
         manifest = read_checkpoint_manifest(
             model_dir,
             self.num_agents,
             args_path=source_args_path if source_args_path.is_file() else None,
+            extra_checkpoint_names=extra_checkpoint_names,
         )
         declared_base_steps = getattr(
             self.all_args, "checkpoint_base_steps", None
@@ -858,10 +995,20 @@ class MECRunner(Runner):
             # 恢复 normer 对象
             normer_path = str(model_dir / ("normer" + str(agent_id) + ".pkl"))
             self.normer[agent_id].load(normer_path)
+        if getattr(self, "state_reconstructor", None) is not None:
+            md_gru_path = model_dir / "md_gru_shared.pt"
+            if not md_gru_path.is_file():
+                raise FileNotFoundError(
+                    f"state reconstruction checkpoint is missing: {md_gru_path}"
+                )
+            self.state_reconstructor.load_checkpoint_state(
+                torch.load(md_gru_path, map_location=self.device)
+            )
         manifest_after = read_checkpoint_manifest(
             model_dir,
             self.num_agents,
             args_path=source_args_path if source_args_path.is_file() else None,
+            extra_checkpoint_names=extra_checkpoint_names,
         )
         if manifest_after != manifest:
             raise RuntimeError("checkpoint changed while restore was loading files")
@@ -1059,6 +1206,29 @@ class MECRunner(Runner):
             ),
         }
         return estimates, graph_stats
+
+    def run_unreliable_consensus(self, local_advantages):
+        """Run Type-A running-sum consensus over the configured physical channel."""
+        receptions = sample_configured_timely_receptions(
+            self.uav_positions,
+            self.all_args.running_sum_rounds,
+            self.communication_rng,
+            self.all_args,
+            payload_bits=self.all_args.advantage_payload_bits,
+            deadline_ms=self.all_args.advantage_deadline_ms,
+        )
+        estimate = running_sum_ratio_consensus(local_advantages, receptions)
+        off_diagonal = ~np.eye(self.num_agents, dtype=bool)
+        packets = receptions[:, :, off_diagonal]
+        rate = float(np.mean(packets)) if packets.size else 0.0
+        return estimate, rate
+
+    def _communicate_advantages(self, local_advantages):
+        if self.communication_mode == "unreliable":
+            return self.run_unreliable_consensus(local_advantages)
+        return self.run_consensus_algorithm(
+            local_advantages, self.all_args.n_iterations
+        ), None
 
     @staticmethod
     def _metropolis_weights_from_positions(uav_positions, neighbor_distance):

@@ -6,9 +6,10 @@ from pathlib import Path
 
 CHECKPOINT_MANIFEST_NAME = "checkpoint_manifest.json"
 CHECKPOINT_MANIFEST_FORMAT = 1
+OPTIONAL_CHECKPOINT_NAMES = ("md_gru_shared.pt",)
 
 
-def expected_checkpoint_names(num_agents):
+def expected_checkpoint_names(num_agents, extra_names=()):
     names = []
     for agent_id in range(int(num_agents)):
         names.extend(
@@ -18,6 +19,7 @@ def expected_checkpoint_names(num_agents):
                 f"normer{agent_id}.pkl",
             )
         )
+    names.extend(str(name) for name in extra_names)
     return tuple(names)
 
 
@@ -47,6 +49,7 @@ def build_checkpoint_manifest(
     save_interval_episodes,
     cumulative_step_provenance,
     args_path=None,
+    extra_checkpoint_names=(),
 ):
     model_dir = Path(model_dir)
     session_steps = int(session_total_num_steps)
@@ -62,7 +65,9 @@ def build_checkpoint_manifest(
         "num_agents": int(num_agents),
         "files": {
             name: file_fingerprint(model_dir / name)
-            for name in expected_checkpoint_names(num_agents)
+            for name in expected_checkpoint_names(
+                num_agents, extra_checkpoint_names
+            )
         },
     }
     if args_path is not None:
@@ -81,7 +86,9 @@ def write_checkpoint_manifest_atomic(model_dir, manifest):
     os.replace(temporary_path, manifest_path)
 
 
-def read_checkpoint_manifest(model_dir, num_agents, args_path=None):
+def read_checkpoint_manifest(
+    model_dir, num_agents, args_path=None, extra_checkpoint_names=None
+):
     model_dir = Path(model_dir)
     manifest_path = model_dir / CHECKPOINT_MANIFEST_NAME
     if not manifest_path.is_file():
@@ -95,8 +102,15 @@ def read_checkpoint_manifest(model_dir, num_agents, args_path=None):
         raise ValueError("checkpoint manifest num_agents mismatch")
 
     files = manifest.get("files")
-    expected_names = set(expected_checkpoint_names(num_agents))
     actual_names = set(files) if isinstance(files, dict) else set()
+    if extra_checkpoint_names is None:
+        extra_checkpoint_names = tuple(
+            name for name in OPTIONAL_CHECKPOINT_NAMES if name in actual_names
+        )
+    expected_file_names = expected_checkpoint_names(
+        num_agents, extra_checkpoint_names
+    )
+    expected_names = set(expected_file_names)
     if actual_names != expected_names:
         missing = sorted(expected_names - actual_names)
         extra = sorted(actual_names - expected_names)
@@ -104,7 +118,7 @@ def read_checkpoint_manifest(model_dir, num_agents, args_path=None):
             "checkpoint manifest file set mismatch: "
             f"missing={missing}, extra={extra}"
         )
-    for name in expected_checkpoint_names(num_agents):
+    for name in expected_file_names:
         path = model_dir / name
         if not path.is_file():
             raise FileNotFoundError(f"manifest checkpoint file is missing: {path}")

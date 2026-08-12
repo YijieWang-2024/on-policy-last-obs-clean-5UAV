@@ -11,6 +11,7 @@
 - [5-UAV 代码走读](CODE_WALKTHROUGH_5UAV.md)：环境、动作、critic、advantage 聚合及论文/代码一致性审计。
 - `tests/`：动态用户、Cartesian 飞行、Spatial Flight Actor 的最小回归测试。
 - `onpolicy/scripts/train/run_dynamic_5uav.ps1`：当前 Windows 训练入口。
+- [Type-S 不可靠数据面与 MD 状态重建契约](UNRELIABLE_DATAPLANE.md)：packet、receiver memory、zero/last_obs/MD-GRU 闭环及启动命令。
 
 ## Git 中包含与不包含的内容
 

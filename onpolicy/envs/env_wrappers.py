@@ -349,6 +349,8 @@ def shareworker(remote, parent_remote, env_fn_wrapper):
         elif cmd == 'get_spaces':
             remote.send(
                 (env.observation_space, env.share_observation_space, env.action_space, env.available_actions_space))
+        elif cmd == 'get_type_s_data':
+            remote.send(env.get_type_s_data())
         elif cmd == 'render_vulnerability':
             fr = env.render_vulnerability(data)
             remote.send((fr))
@@ -405,6 +407,12 @@ class ShareSubprocVecEnv(ShareVecEnv):
         results = [remote.recv() for remote in self.remotes]
         obs, share_obs, available_actions, Metropolis_weights, attention_active_mask = zip(*results)
         return np.stack(obs), np.stack(share_obs), np.stack(available_actions), np.stack(Metropolis_weights), np.stack(attention_active_mask)
+
+    def get_type_s_data(self):
+        for remote in self.remotes:
+            remote.send(('get_type_s_data', None))
+        results = [remote.recv() for remote in self.remotes]
+        return {key: np.stack([result[key] for result in results]) for key in results[0]}
 
     def reset_task(self):
         for remote in self.remotes:
@@ -768,6 +776,10 @@ class ShareDummyVecEnv(ShareVecEnv):
         results = [env.reset() for env in self.envs]
         obs, share_obs, available_actions, Metropolis_weights, attention_active_mask = map(np.array, zip(*results))
         return obs, share_obs, available_actions, Metropolis_weights, attention_active_mask
+
+    def get_type_s_data(self):
+        results = [env.get_type_s_data() for env in self.envs]
+        return {key: np.stack([result[key] for result in results]) for key in results[0]}
 
     def close(self):
         for env in self.envs:

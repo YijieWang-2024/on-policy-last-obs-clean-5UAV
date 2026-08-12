@@ -321,6 +321,32 @@ def test_manifest_tracks_cumulative_warm_start_steps(tmp_path):
     assert manifest["total_num_steps"] == 100_000_000
 
 
+def test_snapshot_checkpoint_keeps_optional_md_gru_state(tmp_path):
+    run_dir = tmp_path / "run"
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True)
+    args_path = run_dir / "args.json"
+    args_path.write_text("{}", encoding="utf-8")
+    _write_checkpoint_files(models_dir)
+    (models_dir / "md_gru_shared.pt").write_bytes(b"shared-gru")
+    manifest = build_checkpoint_manifest(
+        models_dir,
+        num_agents=5,
+        episode_index=10,
+        session_total_num_steps=123456,
+        source_total_num_steps=0,
+        save_interval_episodes=5,
+        cumulative_step_provenance="verified_chain",
+        args_path=args_path,
+        extra_checkpoint_names=("md_gru_shared.pt",),
+    )
+    write_checkpoint_manifest_atomic(models_dir, manifest)
+
+    checkpoint_dir, _ = snapshot_checkpoint(run_dir, tmp_path / "evaluation")
+
+    assert (checkpoint_dir / "md_gru_shared.pt").read_bytes() == b"shared-gru"
+
+
 class _LoadTarget:
     def load_state_dict(self, state):
         assert state == {}

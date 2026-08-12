@@ -380,6 +380,40 @@ def parse_args(args, parser):
             "A_consensus - c_self*A_local); PPO applies the final normalization"
         ),
     )
+    parser.add_argument("--communication_mode", choices=("reliable", "unreliable"), default="reliable",
+                        help="Reliable finite-round consensus or unreliable running-sum for the advantage-noise estimator")
+    parser.add_argument("--running_sum_rounds", type=int, default=30,
+                        help="Post-rollout running-sum rounds under unreliable communication")
+    parser.add_argument("--a2a_transmit_power_w", type=float, default=2.0)
+    parser.add_argument("--a2a_bandwidth_hz", type=float, default=2e6)
+    parser.add_argument("--a2a_reference_gain_db", type=float, default=-38.46)
+    parser.add_argument("--a2a_reference_distance_m", type=float, default=1.0)
+    parser.add_argument("--a2a_path_loss_exponent", type=float, default=2.2)
+    parser.add_argument("--a2a_rician_k_db", type=float, default=6.0)
+    parser.add_argument("--a2a_noise_psd_dbm_hz", type=float, default=-130.0)
+    parser.add_argument("--a2a_spectral_efficiency", type=float, default=0.5)
+    parser.add_argument("--a2a_decoding_threshold_db", type=float, default=-0.5)
+    parser.add_argument("--a2a_gamma_shape", type=float, default=2.5)
+    parser.add_argument("--a2a_gamma_scale_ms", type=float, default=1.0)
+    parser.add_argument("--state_payload_bits", type=float, default=8000.0)
+    parser.add_argument("--state_deadline_ms", type=float, default=13.54)
+    parser.add_argument(
+        "--state_reconstruction", choices=("zero", "last_obs", "md_gru"),
+        default="zero",
+        help="Missing Type-S state handling in the main training process",
+    )
+    parser.add_argument(
+        "--critic_md_metadata", action="store_true", default=False,
+        help="Append record-valid, task-valid, and information-age features to critic MD slots",
+    )
+    parser.add_argument("--md_gru_hidden_dim", type=int, default=64)
+    parser.add_argument("--md_gru_lr", type=float, default=1e-3)
+    parser.add_argument("--md_gru_epochs", type=int, default=4)
+    parser.add_argument("--md_gru_batch_size", type=int, default=512)
+    parser.add_argument("--md_gru_max_samples", type=int, default=32768)
+    parser.add_argument("--md_prediction_loss_coef", type=float, default=0.1)
+    parser.add_argument("--advantage_payload_bits", type=float, default=16000.0)
+    parser.add_argument("--advantage_deadline_ms", type=float, default=21.54)
     parser.add_argument("--whether_average_network_parameters", action='store_true', default=False, help="If true, Execute the average of all network's parameters in the mec_runner.py")
     # 测试使用tanh来处理下动作会不会有影响。
     parser.add_argument("--tanh_gaussian", action='store_true', default=False, help="If true, act.py use (tanh(u)+1)/2 to process action")
@@ -409,6 +443,14 @@ def main(args):
     import torch
     parser = get_config()
     all_args = parse_args(args, parser)
+    all_args.critic_md_metadata = bool(
+        all_args.critic_md_metadata or all_args.state_reconstruction != "zero"
+    )
+    if all_args.state_reconstruction != "zero" and all_args.share_policy:
+        raise ValueError(
+            "state reconstruction currently requires the separated runner; "
+            "pass --share_policy (this legacy flag selects separate policies)"
+        )
     assert all_args.use_valuenorm != all_args.ret_norm, 'torch中的valuenorm默认True和tf的retnorm默认False不能一起用'
 
     if all_args.algorithm_name == "rmappo":
