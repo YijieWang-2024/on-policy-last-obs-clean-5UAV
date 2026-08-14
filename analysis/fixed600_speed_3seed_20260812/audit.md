@@ -46,6 +46,16 @@ The frozen 2026-08-12 20:07 remote event files and `args.json` files remain unde
 - remaining_warnings: the supplied structural validator mis-parses nested Markdown axis fields, but direct spec/code/image inspection passes
 - final_status: PASSED
 
+## Refresh Audit (2026-08-13 11:14 +08:00)
+
+- remote_refresh: pass; all six remote event/args snapshots were fetched again from `114.212.117.24:22`
+- local_refresh: pass; all six local formal event files were read directly from their run folders
+- protocol_assertion: pass for all 12 runs
+- active_process_check: pass; local seed2 v_max=10/20/30 and remote v_max=40 seed2/32/42 are active
+- aggregation_contract_unchanged: pass
+- render_and_visual_check: pass; legend, lines, uncertainty bands, axes, and footnote are readable and unclipped
+- final_status: PASSED
+
 ## Refresh Audit (2026-08-13 00:57 +08:00)
 
 - six_active_processes_verified: pass
@@ -65,4 +75,16 @@ The frozen 2026-08-12 20:07 remote event files and `args.json` files remain unde
 - protocol_assertion: pass for all 12 runs
 - aggregation_contract_unchanged: pass
 - visual_inspection: pass; legend, uncertainty bands, axes, and footnote are readable and unclipped
+- final_status: PASSED
+
+## Refresh Audit (2026-08-13 15:24 +08:00)
+
+- formal_run_matrix: pass; exactly 12 runs, four speeds `{10,20,30,40}` × seeds `{2,32,42}`
+- remote_archive_sync: pass; six remote run trees were synchronized from `114.212.117.24:22` into the canonical local result root and verified by relative-path/file-size manifests
+- local_snapshots_read: pass; six local event/args sources were read from their formal run folders
+- protocol_assertion: pass for all 12 runs
+- aggregation_contract: pass; available seeds are used at each step, with population SD only when at least two seeds are available and no extrapolation
+- legend_clarity: pass; labels say `available=x/3`, making the three-run membership explicit
+- render_and_visual_inspection: pass; updated legend, uncertainty bands, axes, and footnote are readable and unclipped
+- remote_completion: pass; v40 seed2/32/42 all reach `59.9808M`; local v10/20/30 seed2 remain intentionally early-stopped
 - final_status: PASSED

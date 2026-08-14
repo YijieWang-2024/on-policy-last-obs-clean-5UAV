@@ -1,9 +1,16 @@
-"""Incrementally archive the six formal remote speed runs beside local runs."""
+"""Archive the six formal remote speed runs beside the local result tree.
+
+The remote run directories are copied to ``onpolicy/scripts/results/mec/mappo``
+with their original experiment names and ``run1`` layout, so local plotting
+continues to work after the remote machine is cleaned up.
+"""
 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import getpass
+import json
 import os
 import stat
 from pathlib import Path, PurePosixPath
@@ -20,6 +27,7 @@ REMOTE_ROOT = PurePosixPath(
 LOCAL_ROOT = Path(__file__).resolve().parent / "results" / "mec" / "mappo"
 REMOTE_LOG_ROOT = REMOTE_ROOT.parents[4] / "training_logs"
 LOCAL_LOG_ROOT = Path(__file__).resolve().parents[2] / "training_logs"
+SYNC_MANIFEST = Path(__file__).resolve().parent / "remote_speed_sync_manifest.json"
 EXPERIMENTS = (
     "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed32_60m_20260811_retry1",
     "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed32_60m_20260811_retry1",
@@ -112,6 +120,7 @@ def main() -> None:
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(args.host, username=args.user, password=password, timeout=15)
     try:
+        archive_rows = []
         with client.open_sftp() as sftp:
             for experiment in EXPERIMENTS:
                 files, size = sync_tree(
@@ -120,17 +129,43 @@ def main() -> None:
                 remote_files = remote_manifest(sftp, REMOTE_ROOT / experiment)
                 local_files = local_manifest(LOCAL_ROOT / experiment)
                 if remote_files != local_files:
-                    print(f"{experiment}: remote changed during verification; rerun sync")
-                    continue
+                    raise RuntimeError(
+                        f"{experiment}: remote/local file manifests differ; rerun sync"
+                    )
                 print(
                     f"{experiment}: downloaded {files} files, {size} bytes; "
                     f"verified {len(remote_files)} files"
+                )
+                archive_rows.append(
+                    {
+                        "experiment": experiment,
+                        "local_directory": str(LOCAL_ROOT / experiment),
+                        "file_count": len(remote_files),
+                        "total_bytes": sum(remote_files.values()),
+                    }
                 )
             for log_name in TRAINING_LOGS:
                 changed, size = sync_file(
                     sftp, REMOTE_LOG_ROOT / log_name, LOCAL_LOG_ROOT / log_name
                 )
                 print(f"training_logs/{log_name}: downloaded {int(changed)} file, {size} bytes")
+            SYNC_MANIFEST.write_text(
+                json.dumps(
+                    {
+                        "generated_at": dt.datetime.now().astimezone().isoformat(
+                            timespec="seconds"
+                        ),
+                        "remote_host": f"{args.host}:22",
+                        "remote_root": str(REMOTE_ROOT),
+                        "local_root": str(LOCAL_ROOT),
+                        "experiments": archive_rows,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            print(f"sync manifest: {SYNC_MANIFEST}")
     finally:
         client.close()
 

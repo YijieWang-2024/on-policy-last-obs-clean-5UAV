@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-13T01:30:09+08:00",
+  "generated_at": "2026-08-13T15:24:15+08:00",
   "metric": "agent0/system_performance_true_all_GUs",
   "target_steps": 60000000,
   "aggregation": "At each union-grid step, interpolate only within each seed's observed range; plot the mean over available seeds and population std only when >=2 seeds are available. Never extrapolate and never smooth.",
@@ -43,23 +43,23 @@
       "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed2_60m_20260812",
       "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed2_60m_20260812\\run1\\logs\\events.out.tfevents.1786526995.DESKTOP-R8O9DBO",
       "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed2_60m_20260812\\run1\\args.json",
-      "points": 426,
-      "last_step": 21785600,
-      "progress_percent": 36.309333333333335,
-      "last_value": 442757.34375,
-      "recent_steps_per_second": 712.9032793628181,
-      "last_event_time": "2026-08-13T01:27:56+08:00",
+      "points": 1127,
+      "last_step": 57676800,
+      "progress_percent": 96.128,
+      "last_value": 478959.4375,
+      "recent_steps_per_second": 748.6211908877877,
+      "last_event_time": "2026-08-13T14:57:34+08:00",
       "curve_complete": false,
-      "eta_seconds_from_last_event": 53603.905475305764,
-      "predicted_finish_from_last_event": "2026-08-13T16:21:19+08:00"
+      "eta_seconds_from_last_event": 3103.305153898895,
+      "predicted_finish_from_last_event": "2026-08-13T15:49:17+08:00"
     },
     {
       "v_max": 10,
       "seed": 32,
-      "host": "remote",
-      "source": "events.out.tfevents.vmax10_seed32",
-      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax10_seed32",
-      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax10_seed32.args.json",
+      "host": "remote3090-archived",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed32_60m_20260811_retry1",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed32_60m_20260811_retry1\\run1\\logs\\events.out.tfevents.1786440347.test-PowerEdge-R740",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed32_60m_20260811_retry1\\run1\\args.json",
       "points": 1172,
       "last_step": 59980800,
       "progress_percent": 99.968,
@@ -94,23 +94,23 @@
       "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed2_60m_20260812",
       "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed2_60m_20260812\\run1\\logs\\events.out.tfevents.1786527051.DESKTOP-R8O9DBO",
       "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed2_60m_20260812\\run1\\args.json",
-      "points": 425,
-      "last_step": 21734400,
-      "progress_percent": 36.224000000000004,
-      "last_value": 502867.125,
-      "recent_steps_per_second": 712.8814668403477,
-      "last_event_time": "2026-08-13T01:28:02+08:00",
+      "points": 1125,
+      "last_step": 57574400,
+      "progress_percent": 95.95733333333332,
+      "last_value": 524761.25,
+      "recent_steps_per_second": 750.1405218964561,
+      "last_event_time": "2026-08-13T14:56:44+08:00",
       "curve_complete": false,
-      "eta_seconds_from_last_event": 53677.36682733781,
-      "predicted_finish_from_last_event": "2026-08-13T16:22:40+08:00"
+      "eta_seconds_from_last_event": 3233.527491446212,
+      "predicted_finish_from_last_event": "2026-08-13T15:50:38+08:00"
     },
     {
       "v_max": 20,
       "seed": 32,
-      "host": "remote",
-      "source": "events.out.tfevents.vmax20_seed32",
-      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax20_seed32",
-      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax20_seed32.args.json",
+      "host": "remote3090-archived",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed32_60m_20260811_retry1",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed32_60m_20260811_retry1\\run1\\logs\\events.out.tfevents.1786440534.test-PowerEdge-R740",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed32_60m_20260811_retry1\\run1\\args.json",
       "points": 1172,
       "last_step": 59980800,
       "progress_percent": 99.968,
@@ -145,23 +145,23 @@
       "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed2_60m_20260812",
       "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed2_60m_20260812\\run1\\logs\\events.out.tfevents.1786531502.DESKTOP-R8O9DBO",
       "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed2_60m_20260812\\run1\\args.json",
-      "points": 347,
-      "last_step": 17740800,
-      "progress_percent": 29.568,
-      "last_value": 533795.0,
-      "recent_steps_per_second": 712.2547241262902,
-      "last_event_time": "2026-08-13T01:28:49+08:00",
+      "points": 1011,
+      "last_step": 51737600,
+      "progress_percent": 86.22933333333333,
+      "last_value": 552308.0,
+      "recent_steps_per_second": 748.9424719246306,
+      "last_event_time": "2026-08-13T14:57:07+08:00",
       "curve_complete": false,
-      "eta_seconds_from_last_event": 59331.58260457814,
-      "predicted_finish_from_last_event": "2026-08-13T17:57:40+08:00"
+      "eta_seconds_from_last_event": 11032.088991785049,
+      "predicted_finish_from_last_event": "2026-08-13T18:00:59+08:00"
     },
     {
       "v_max": 30,
       "seed": 32,
-      "host": "remote",
-      "source": "events.out.tfevents.vmax30_seed32",
-      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax30_seed32",
-      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax30_seed32.args.json",
+      "host": "remote3090-archived",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed32_60m_20260811_retry2",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed32_60m_20260811_retry2\\run1\\logs\\events.out.tfevents.1786452964.test-PowerEdge-R740",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed32_60m_20260811_retry2\\run1\\args.json",
       "points": 1172,
       "last_step": 59980800,
       "progress_percent": 99.968,
@@ -192,58 +192,64 @@
     {
       "v_max": 40,
       "seed": 2,
-      "host": "remote",
-      "source": "events.out.tfevents.vmax40_seed2",
-      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax40_seed2",
-      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax40_seed2.args.json",
-      "points": 452,
-      "last_step": 23116800,
-      "progress_percent": 38.528,
-      "last_value": 539150.0,
-      "recent_steps_per_second": 839.7931541879121,
-      "last_event_time": "2026-08-13T00:55:31+08:00",
-      "curve_complete": false,
-      "eta_seconds_from_last_event": 43919.38635849729,
-      "predicted_finish_from_last_event": "2026-08-13T13:07:31+08:00"
+      "host": "remote3090-archived",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed2_60m_20260812",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed2_60m_20260812\\run1\\logs\\events.out.tfevents.1786526080.test-PowerEdge-R740",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed2_60m_20260812\\run1\\args.json",
+      "points": 1172,
+      "last_step": 59980800,
+      "progress_percent": 99.968,
+      "last_value": 559926.9375,
+      "recent_steps_per_second": 840.7824173699028,
+      "last_event_time": "2026-08-13T13:06:10+08:00",
+      "curve_complete": true,
+      "eta_seconds_from_last_event": 0.0,
+      "predicted_finish_from_last_event": null
     },
     {
       "v_max": 40,
       "seed": 32,
-      "host": "remote",
-      "source": "events.out.tfevents.vmax40_seed32",
-      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax40_seed32",
-      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax40_seed32.args.json",
-      "points": 441,
-      "last_step": 22553600,
-      "progress_percent": 37.589333333333336,
-      "last_value": 537266.75,
-      "recent_steps_per_second": 806.6109449632789,
-      "last_event_time": "2026-08-13T00:54:57+08:00",
-      "curve_complete": false,
-      "eta_seconds_from_last_event": 46424.36385698281,
-      "predicted_finish_from_last_event": "2026-08-13T13:48:41+08:00"
+      "host": "remote3090-archived",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed32_60m_20260812",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed32_60m_20260812\\run1\\logs\\events.out.tfevents.1786526136.test-PowerEdge-R740",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed32_60m_20260812\\run1\\args.json",
+      "points": 1172,
+      "last_step": 59980800,
+      "progress_percent": 99.968,
+      "last_value": 561300.9375,
+      "recent_steps_per_second": 882.0907964589359,
+      "last_event_time": "2026-08-13T13:43:00+08:00",
+      "curve_complete": true,
+      "eta_seconds_from_last_event": 0.0,
+      "predicted_finish_from_last_event": null
     },
     {
       "v_max": 40,
       "seed": 42,
-      "host": "remote",
-      "source": "events.out.tfevents.vmax40_seed42",
-      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\events.out.tfevents.vmax40_seed42",
-      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\analysis\\fixed600_speed_3seed_20260812\\data\\remote\\vmax40_seed42.args.json",
-      "points": 426,
-      "last_step": 21785600,
-      "progress_percent": 36.309333333333335,
-      "last_value": 531568.875,
-      "recent_steps_per_second": 808.3335306562808,
-      "last_event_time": "2026-08-13T00:55:41+08:00",
-      "curve_complete": false,
-      "eta_seconds_from_last_event": 47275.53485128097,
-      "predicted_finish_from_last_event": "2026-08-13T14:03:36+08:00"
+      "host": "remote3090-archived",
+      "source": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed42_60m_20260812",
+      "event_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed42_60m_20260812\\run1\\logs\\events.out.tfevents.1786526974.test-PowerEdge-R740",
+      "args_path": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed42_60m_20260812\\run1\\args.json",
+      "points": 1172,
+      "last_step": 59980800,
+      "progress_percent": 99.968,
+      "last_value": 557903.0,
+      "recent_steps_per_second": 941.6950160888928,
+      "last_event_time": "2026-08-13T13:49:52+08:00",
+      "curve_complete": true,
+      "eta_seconds_from_last_event": 0.0,
+      "predicted_finish_from_last_event": null
     }
   ],
   "aggregates": [
     {
       "v_max": 10,
+      "seed_ids": [
+        2,
+        32,
+        42
+      ],
+      "total_seed_count": 3,
       "terminal_step": 59980800,
       "terminal_seed_count": 2,
       "terminal_mean": 491349.046875,
@@ -251,11 +257,11 @@
       "availability_segments": [
         {
           "start_step": 25600,
-          "end_step": 21785600,
+          "end_step": 57676800,
           "seed_count": 3
         },
         {
-          "start_step": 21836800,
+          "start_step": 57728000,
           "end_step": 59980800,
           "seed_count": 2
         }
@@ -263,6 +269,12 @@
     },
     {
       "v_max": 20,
+      "seed_ids": [
+        2,
+        32,
+        42
+      ],
+      "total_seed_count": 3,
       "terminal_step": 59980800,
       "terminal_seed_count": 2,
       "terminal_mean": 497130.90625,
@@ -270,11 +282,11 @@
       "availability_segments": [
         {
           "start_step": 25600,
-          "end_step": 21734400,
+          "end_step": 57574400,
           "seed_count": 3
         },
         {
-          "start_step": 21785600,
+          "start_step": 57625600,
           "end_step": 59980800,
           "seed_count": 2
         }
@@ -282,6 +294,12 @@
     },
     {
       "v_max": 30,
+      "seed_ids": [
+        2,
+        32,
+        42
+      ],
+      "total_seed_count": 3,
       "terminal_step": 59980800,
       "terminal_seed_count": 2,
       "terminal_mean": 563534.09375,
@@ -289,11 +307,11 @@
       "availability_segments": [
         {
           "start_step": 25600,
-          "end_step": 17740800,
+          "end_step": 51737600,
           "seed_count": 3
         },
         {
-          "start_step": 17792000,
+          "start_step": 51788800,
           "end_step": 59980800,
           "seed_count": 2
         }
@@ -301,25 +319,21 @@
     },
     {
       "v_max": 40,
-      "terminal_step": 23116800,
-      "terminal_seed_count": 1,
-      "terminal_mean": 539150.0,
-      "terminal_std": null,
+      "seed_ids": [
+        2,
+        32,
+        42
+      ],
+      "total_seed_count": 3,
+      "terminal_step": 59980800,
+      "terminal_seed_count": 3,
+      "terminal_mean": 559710.2916666666,
+      "terminal_std": 1395.635190227514,
       "availability_segments": [
         {
           "start_step": 25600,
-          "end_step": 21785600,
+          "end_step": 59980800,
           "seed_count": 3
-        },
-        {
-          "start_step": 21836800,
-          "end_step": 22553600,
-          "seed_count": 2
-        },
-        {
-          "start_step": 22604800,
-          "end_step": 23116800,
-          "seed_count": 1
         }
       ]
     }

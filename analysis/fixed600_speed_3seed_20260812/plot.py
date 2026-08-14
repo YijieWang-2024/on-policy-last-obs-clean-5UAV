@@ -20,7 +20,6 @@ COMPLETE_THRESHOLD = 59_900_000
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 RESULTS = REPO / "onpolicy" / "scripts" / "results" / "mec" / "mappo"
-REMOTE = HERE / "data" / "remote"
 LOCAL_EXPERIMENTS = {
     (10, 2): "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed2_60m_20260812",
     (20, 2): "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed2_60m_20260812",
@@ -37,13 +36,6 @@ REMOTE_EXPERIMENTS = {
     (40, 2): "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed2_60m_20260812",
     (40, 32): "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed32_60m_20260812",
     (40, 42): "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed42_60m_20260812",
-}
-
-REMOTE_RUNS = {
-    key: (REMOTE / f"events.out.tfevents.vmax{speed}_seed{seed}",
-          REMOTE / f"vmax{speed}_seed{seed}.args.json")
-    for key in REMOTE_EXPERIMENTS
-    for speed, seed in [key]
 }
 
 EXPECTED_PROTOCOL = {
@@ -161,8 +153,14 @@ def main() -> None:
     source_paths = {}
     for key, experiment in LOCAL_EXPERIMENTS.items():
         source_paths[key] = (*local_paths(experiment), "local", experiment)
-    for key, (event_path, args_path) in REMOTE_RUNS.items():
-        source_paths[key] = (event_path, args_path, "remote", event_path.name)
+    for key, experiment in REMOTE_EXPERIMENTS.items():
+        event_path, args_path = local_paths(experiment)
+        source_paths[key] = (
+            event_path,
+            args_path,
+            "remote3090-archived",
+            experiment,
+        )
 
     expected_keys = {(speed, seed) for speed in (10, 20, 30, 40) for seed in (2, 32, 42)}
     if set(source_paths) != expected_keys:
@@ -249,12 +247,13 @@ def main() -> None:
         mean = np.nanmean(aligned, axis=0)
         std = np.nanstd(aligned, axis=0, ddof=0)
         multi_seed = counts >= 2
+        total_seed_count = len(speed_curves)
         terminal_count = int(counts[-1])
         terminal_mean = float(mean[-1])
 
         label = (
             f"v_max={speed} m/s: {terminal_mean:,.0f} at "
-            f"{fmt_step(grid[-1])} (n={terminal_count})"
+            f"{fmt_step(grid[-1])} (available={terminal_count}/{total_seed_count})"
         )
         color = COLORS[speed]
         ax.plot(grid, mean, color=color, linewidth=1.45, label=label, zorder=3)
@@ -272,6 +271,8 @@ def main() -> None:
         aggregate_summaries.append(
             {
                 "v_max": speed,
+                "seed_ids": [2, 32, 42],
+                "total_seed_count": total_seed_count,
                 "terminal_step": int(grid[-1]),
                 "terminal_seed_count": terminal_count,
                 "terminal_mean": terminal_mean,
