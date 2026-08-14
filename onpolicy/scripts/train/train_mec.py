@@ -279,6 +279,24 @@ def parse_args(args, parser):
                         help="If true, calculate different reward in calculate_reward() of mec.py")
     parser.add_argument("--discrete_associate", action='store_true', default=False, help="If true, offloading_actions is Binary, and Network's output_layer is MultiBornrlia")
     parser.add_argument("--continuous_associate", action='store_true', default=False, help="If true, offloading_actions is continuous, and Network's output_layer is Gaussian")
+    parser.add_argument(
+        "--association_threshold", type=float, default=0.5,
+        help=(
+            "Threshold psi for converting each continuous association score into "
+            "a candidate UAV-GU link. Scores greater than or equal to psi are kept."
+        ),
+    )
+    parser.add_argument(
+        "--disable_offload_deadline_filter",
+        action="store_false",
+        dest="offload_deadline_filter",
+        default=True,
+        help=(
+            "Disable the pre-execution filter that cancels offloads whose predicted "
+            "transmission plus execution delay misses the task deadline. Deadline "
+            "success/failure and penalties in the reward remain enabled."
+        ),
+    )
     parser.add_argument("--nearest_associate", action='store_true', default=False, help="If true, without offloading_actions and Network's output_layer")
     parser.add_argument("--nearest_avail_actions", action='store_true', default=False, help="If true, get avail_actions for max_GUs_in_range and nearest itself")
     parser.add_argument("--not_process_action", action='store_true', default=False, help="If true, without process_action in env_maker.py and act.py")
@@ -396,6 +414,8 @@ def parse_args(args, parser):
         parser.error("--externality_beta must be in [0, 1]")
     if all_args.noise_scale < 0.0:
         parser.error("--noise_scale must be non-negative")
+    if not 0.0 <= all_args.association_threshold <= 1.0:
+        parser.error("--association_threshold must be in [0, 1]")
     if all_args.ego_query_critic and not all_args.use_atten_critic:
         parser.error("--ego_query_critic requires --use_atten_critic")
     if all_args.shared_ret_norm and not all_args.ret_norm:

@@ -528,6 +528,12 @@ class MEC(gym.Env):
         self.nearest_associate = args.nearest_associate
         self.nearest_avail_actions = args.nearest_avail_actions
         assert self.discrete_associate + self.continuous_associate + self.nearest_associate == 1
+        self.association_threshold = float(
+            getattr(args, "association_threshold", 0.5)
+        )
+        self.offload_deadline_filter = bool(
+            getattr(args, "offload_deadline_filter", True)
+        )
         self.not_process_action = args.not_process_action
         self.fix_uav_pos = args.fix_uav_pos
         self.ave_resource = args.ave_resource
@@ -1914,7 +1920,9 @@ class MEC(gym.Env):
                 mask_2 = actions[2] == 0
                 combined_mask = mask_1 | mask_2
                 actions[0][combined_mask] = 0
-                actions[0] = np.where(actions[0] >= 0.5, actions[0], 0)
+                actions[0] = np.where(
+                    actions[0] >= self.association_threshold, actions[0], 0
+                )
                 col_max = np.max(actions[0], axis=0)
                 # 为了防止最大值为0的存在，导致取到多个不存在的无人机。
                 col_max = np.where(col_max, col_max, 99.0)
@@ -1964,27 +1972,25 @@ class MEC(gym.Env):
                 bandwidth_actions = actions[1] * self.B
                 computation_actions = actions[2] * self.F_m
 
-                # 验证每个用户任务
-                for n in range(self.n_GUs):
-                    if np.any(actions[0][:, n]):
-                        m = np.argmax(actions[0][:, n])
-                        task = self.gu_tasks[n]
-
-                        # 计算传输速率
-                        h_nm = self.channel_gains[m, n]
-                        bw = bandwidth_actions[m, n]
-                        R_nm = bw * np.log2(1 + p_t * h_nm / (N_0 * (bw + 1e-10)))
-
-                        # 计算时延
-                        tau_trans = task[0] / (R_nm + 1e-10)
-                        tau_exe = task[1] / (computation_actions[m, n] + 1e-10)
-                        total_delay = tau_trans + tau_exe
-
-                        # 如果无法满足延迟要求，取消分配
-                        if total_delay > task[2]:
-                            actions[0][m, n] = 0
-                            actions[1][m, n] = 0
-                            actions[2][m, n] = 0
+                if self.offload_deadline_filter:
+                    # Cancel predicted-late offloads before reward evaluation.
+                    for n in range(self.n_GUs):
+                        if np.any(actions[0][:, n]):
+                            m = np.argmax(actions[0][:, n])
+                            task = self.gu_tasks[n]
+                            h_nm = self.channel_gains[m, n]
+                            bw = bandwidth_actions[m, n]
+                            R_nm = bw * np.log2(
+                                1 + p_t * h_nm / (N_0 * (bw + 1e-10))
+                            )
+                            tau_trans = task[0] / (R_nm + 1e-10)
+                            tau_exe = task[1] / (
+                                computation_actions[m, n] + 1e-10
+                            )
+                            if tau_trans + tau_exe > task[2]:
+                                actions[0][m, n] = 0
+                                actions[1][m, n] = 0
+                                actions[2][m, n] = 0
 
                 # 重新标准化资源
                 for m in range(self.n_UAVs):
@@ -1999,7 +2005,9 @@ class MEC(gym.Env):
 
             else:
                 if self.ave_resource:
-                    actions[1] = np.where(actions[1]>=0.5, actions[1], 0)   # 添加了卸载的阈值为0.5。
+                    actions[1] = np.where(
+                        actions[1] >= self.association_threshold, actions[1], 0
+                    )
                     col_max = np.max(actions[1], axis=0)
                     # 为了防止最大值为0的存在，导致取到多个不存在的无人机。
                     col_max = np.where(col_max, col_max, 99.0)
@@ -2025,7 +2033,9 @@ class MEC(gym.Env):
                 elif self.ave_bandwidth:
                     mask_2 = actions[2] == 0
                     actions[1][mask_2] = 0
-                    actions[1] = np.where(actions[1] >= 0.5, actions[1], 0)  # 添加了卸载的阈值为0.5。
+                    actions[1] = np.where(
+                        actions[1] >= self.association_threshold, actions[1], 0
+                    )
                     col_max = np.max(actions[1], axis=0)
                     # 为了防止最大值为0的存在，导致取到多个不存在的无人机。把0变为不可能出现的99
                     col_max = np.where(col_max, col_max, 99.0)
@@ -2062,26 +2072,23 @@ class MEC(gym.Env):
                     ones_count = np.sum(actions[1], axis=1, keepdims=True)  # 避免除零，使用np.divide处理
                     bandwidth_actions = np.divide(actions[1] * self.B, ones_count, where=ones_count != 0)
                     computation_actions = actions[2] * self.F_m
-                    for n in range(self.n_GUs):
-                        if np.sum(actions[1][:, n]) != 0:
-                            m = np.argmax(actions[1][:, n])
-                            gu_n_task = self.gu_tasks[n]
-
-                            # 计算传输速率
-                            h_nm = self.channel_gains[m, n]
-                            bw = bandwidth_actions[m, n]
-                            R_nm = bw * np.log2(1 + p_t * h_nm / (N_0 * (bw + 1e-10)))
-
-                            epsilon = 0
-                            tau_trans = gu_n_task[0] / (R_nm + epsilon)
-                            tau_exe = gu_n_task[1] / (computation_actions[m, n] + epsilon)
-                            total_delay = tau_trans + tau_exe
-                            if total_delay > self.gu_tasks[n, 2]:
-
-                            # if gu_n_task[1] / computation_actions[m, n] > self.gu_tasks[n, 2]:
-
-                                actions[1][m, n] = 0
-                                actions[2][m, n] = 0
+                    if self.offload_deadline_filter:
+                        for n in range(self.n_GUs):
+                            if np.sum(actions[1][:, n]) != 0:
+                                m = np.argmax(actions[1][:, n])
+                                gu_n_task = self.gu_tasks[n]
+                                h_nm = self.channel_gains[m, n]
+                                bw = bandwidth_actions[m, n]
+                                R_nm = bw * np.log2(
+                                    1 + p_t * h_nm / (N_0 * (bw + 1e-10))
+                                )
+                                tau_trans = gu_n_task[0] / R_nm
+                                tau_exe = (
+                                    gu_n_task[1] / computation_actions[m, n]
+                                )
+                                if tau_trans + tau_exe > gu_n_task[2]:
+                                    actions[1][m, n] = 0
+                                    actions[2][m, n] = 0
                     for m in range(self.n_UAVs):
                         total = np.sum(actions[2][m])
                         if total > 0:
@@ -2091,7 +2098,9 @@ class MEC(gym.Env):
                     mask_3 = actions[3] == 0
                     combined_mask = mask_2 | mask_3
                     actions[1][combined_mask] = 0
-                    actions[1] = np.where(actions[1] >= 0.5, actions[1], 0)  # 添加了卸载的阈值为0.5。
+                    actions[1] = np.where(
+                        actions[1] >= self.association_threshold, actions[1], 0
+                    )
                     col_max = np.max(actions[1], axis=0)
                     # 为了防止最大值为0的存在，导致取到多个不存在的无人机。把0变为不可能出现的99
                     col_max = np.where(col_max, col_max, 99.0)
@@ -2124,23 +2133,31 @@ class MEC(gym.Env):
                     # 判断卸载分配的资源能不能完成任务..
                     bandwidth_actions = actions[2] * self.B
                     computation_actions = actions[3] * self.F_m
-                    selected_gu_ids = np.flatnonzero(np.any(actions[1], axis=0))
-                    if selected_gu_ids.size:
-                        selected_uav_ids = np.argmax(actions[1][:, selected_gu_ids], axis=0)
-                        tau_trans, tau_exe = _offload_delay(
-                            self.gu_tasks,
-                            selected_uav_ids,
-                            selected_gu_ids,
-                            bandwidth_actions,
-                            computation_actions,
-                            self.channel_gains,
+                    if self.offload_deadline_filter:
+                        selected_gu_ids = np.flatnonzero(
+                            np.any(actions[1], axis=0)
                         )
-                        overdue = tau_trans + tau_exe > self.gu_tasks[selected_gu_ids, 2]
-                        overdue_gu_ids = selected_gu_ids[overdue]
-                        overdue_uav_ids = selected_uav_ids[overdue]
-                        actions[1][overdue_uav_ids, overdue_gu_ids] = 0
-                        actions[2][overdue_uav_ids, overdue_gu_ids] = 0
-                        actions[3][overdue_uav_ids, overdue_gu_ids] = 0
+                        if selected_gu_ids.size:
+                            selected_uav_ids = np.argmax(
+                                actions[1][:, selected_gu_ids], axis=0
+                            )
+                            tau_trans, tau_exe = _offload_delay(
+                                self.gu_tasks,
+                                selected_uav_ids,
+                                selected_gu_ids,
+                                bandwidth_actions,
+                                computation_actions,
+                                self.channel_gains,
+                            )
+                            overdue = (
+                                tau_trans + tau_exe
+                                > self.gu_tasks[selected_gu_ids, 2]
+                            )
+                            overdue_gu_ids = selected_gu_ids[overdue]
+                            overdue_uav_ids = selected_uav_ids[overdue]
+                            actions[1][overdue_uav_ids, overdue_gu_ids] = 0
+                            actions[2][overdue_uav_ids, overdue_gu_ids] = 0
+                            actions[3][overdue_uav_ids, overdue_gu_ids] = 0
                     # 重新标准化资源
                     for m in range(self.n_UAVs):
                         total_bw = np.sum(actions[2][m])
