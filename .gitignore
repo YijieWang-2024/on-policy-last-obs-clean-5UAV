@@ -23,3 +23,19 @@ paper_artifacts/launch_logs/
 training_logs/
 eval_live_*/
 paper_artifacts/diagnostics/final_policy_audit_*/q*_seed*/
+
+# Experiment/evaluation outputs are intentionally kept on disk, not versioned.
+analysis/**/*.csv
+analysis/**/*.json
+analysis/**/*.npz
+analysis/**/*.png
+analysis/**/*.pdf
+analysis/**/*.gif
+analysis/**/*.events
+analysis/**/*.log
+analysis/**/*.md
+analysis/**/__pycache__/
+paper_artifacts/
+experiments/
+_remote_curr/
+/*.png

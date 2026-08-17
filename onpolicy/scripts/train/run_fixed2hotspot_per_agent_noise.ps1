@@ -20,6 +20,9 @@ param(
     [string]$ActorMessageContract = 'relative_scaled_v1',
     [ValidateSet('disabled', 'zero', 'geometry', 'task_summary')]
     [string]$ActorMessageMode = 'task_summary',
+    [ValidateSet('homogeneous', 'heterogeneous')]
+    [string]$UAVResourceMode = 'homogeneous',
+    [double[]]$UAVResourceScaleFactors = @(),
     [switch]$UAVResetCurriculum,
     [ValidateSet('legacy', 'p0p7_10m_25m')]
     [string]$UAVResetCurriculumSchedule = 'legacy',
@@ -189,6 +192,7 @@ $trainArgs = @(
     '--not_served_rew_to_nearest',
     '--cartesian_flight',
     '--actor_message_mode', $ActorMessageMode,
+    '--uav_resource_mode', $UAVResourceMode,
     '--actor_message_pool', 'receiver_gated_sum',
     '--actor_message_contract', $ActorMessageContract,
     '--spatial_flight_actor',
@@ -198,6 +202,17 @@ $trainArgs = @(
     '--experiment_name', $ExperimentName,
     '--noise_scale', $NoiseScale
 )
+
+if ($UAVResourceMode -eq 'heterogeneous') {
+    if ($UAVResourceScaleFactors.Count -ne 5) {
+        throw "Five-UAV heterogeneous mode requires exactly 5 resource scale factors. Got $($UAVResourceScaleFactors.Count)."
+    }
+    $resourceScaleArgs = @($UAVResourceScaleFactors | ForEach-Object {
+        $_.ToString('0.################', [System.Globalization.CultureInfo]::InvariantCulture)
+    })
+    $trainArgs += '--uav_resource_scale_factors'
+    $trainArgs += $resourceScaleArgs
+}
 
 if ($EpisodeLayoutContext) {
     $trainArgs += '--episode_layout_context'
@@ -223,6 +238,7 @@ Write-Host "MD lifetime: $MdLifetime"
 Write-Host "UAV v_max  : $UAVMaxSpeed"
 Write-Host "Layout     : $HotspotLayoutMode"
 Write-Host "Actor msg  : $ActorMessageMode ($ActorMessageContract)"
+Write-Host "Resources  : $UAVResourceMode $(if ($UAVResourceMode -eq 'heterogeneous') { '[' + ($resourceScaleArgs -join ', ') + ']' } else { '[1, 1, 1, 1, 1]' })"
 Write-Host "UAV reset  : $(if ($UAVResetCurriculum) { 'curriculum ' + $UAVResetCurriculumSchedule } else { 'fixed' })"
 Write-Host "PPO config : clip=$ClipParam gamma=$Gamma epochs=$PpoEpoch"
 Write-Host "Association: psi=$AssociationThreshold"

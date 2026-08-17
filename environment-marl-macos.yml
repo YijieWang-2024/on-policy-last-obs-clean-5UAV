@@ -1,0 +1,36 @@
+name: marl-macos
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # The Windows source environment uses Python 3.10.20. Keep the same
+  # interpreter family on macOS; Conda will select the platform build.
+  - python=3.10
+  - pip
+  - pip:
+      # macOS has no CUDA wheel. Native Apple Silicon uses the arm64 wheel;
+      # Intel Macs use the last available x86_64 macOS wheel.
+      - "torch==2.11.0; sys_platform == 'darwin' and platform_machine == 'arm64'"
+      - "torch==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'"
+
+      # Packages used by the MEC training/evaluation code. The Intel wheel is
+      # based on an older PyTorch/NumPy ABI, so keep NumPy below 2 there.
+      - "numpy==2.2.6; sys_platform == 'darwin' and platform_machine == 'arm64'"
+      - "numpy==1.26.4; sys_platform == 'darwin' and platform_machine == 'x86_64'"
+      - scipy==1.15.3
+      - matplotlib==3.10.9
+      - gymnasium==1.3.0
+      - absl-py==2.4.0
+      - cloudpickle==3.1.2
+      - setproctitle==1.3.7
+      - tensorboardX==2.6.5
+      - tensorboard==2.20.0
+      - wandb==0.27.2
+
+      # Analysis, rendering, and regression-test packages used in this repo.
+      - pandas==2.3.3
+      - seaborn==0.13.2
+      - imageio==2.37.3
+      - pyglet==1.5.31
+      - PyYAML==6.0.3
+      - pytest==9.1.0

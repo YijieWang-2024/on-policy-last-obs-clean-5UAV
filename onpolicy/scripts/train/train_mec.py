@@ -85,7 +85,7 @@ def parse_args(args, parser):
                         help="Maximum candidate MD arrivals per slot in dynamic_md mode.")
     parser.add_argument("--md_arrivals_per_region", type=int, nargs=2, default=None,
                         metavar=("LOWER_LEFT", "UPPER_RIGHT"),
-                        help="Fixed candidate arrivals in the two 5-UAV hotspot rectangles.")
+                        help="Fixed candidate arrivals in the two regional hotspot rectangles.")
     parser.add_argument(
         "--hotspot_layout_mode",
         choices=(
@@ -158,7 +158,7 @@ def parse_args(args, parser):
         help=(
             "Optional explicit UAV reset coordinates as 2*n_UAVs values "
             "(x0 y0 x1 y1 ...). When supplied, this overrides the built-in "
-            "five-UAV reset geometry without changing the hotspot layout."
+            "reset geometry without changing the hotspot layout."
         ),
     )
     parser.add_argument("--md_lifetime_min", type=int, default=15,
@@ -175,6 +175,22 @@ def parse_args(args, parser):
     parser.add_argument("--y_min_gu", type=int, default=0, help="A maximum map range of 1 km × 1 km.")
     parser.add_argument("--y_max_gu", type=int, default=300, help="A maximum map range of 1 km × 1 km.")
     parser.add_argument("--B", type=int, default=20 * 10 ** 6, help="Channel bandwidth in Hz, default is 20MHz")
+    parser.add_argument(
+        "--uav_resource_mode",
+        choices=["homogeneous", "heterogeneous"],
+        default="homogeneous",
+        help="Use one common UAV resource limit or per-UAV scale factors.",
+    )
+    parser.add_argument(
+        "--uav_resource_scale_factors",
+        type=float,
+        nargs="+",
+        default=None,
+        help=(
+            "Per-UAV positive scale factors applied to both B and F_m; "
+            "required when uav_resource_mode=heterogeneous."
+        ),
+    )
     parser.add_argument("--H_UAV", type=int, default=120, help="UAV server fixed flight height in meters")
     parser.add_argument("--H_GU", type=int, default=1, help="Ground user height in meters")
     parser.add_argument("--fix_hotspot", action='store_true', default=False, help=" if true, has a fixed hotpot at upper_right corner")
