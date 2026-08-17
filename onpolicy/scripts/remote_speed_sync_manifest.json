@@ -1,0 +1,44 @@
+{
+  "generated_at": "2026-08-13T15:16:12+08:00",
+  "remote_host": "114.212.117.24:22",
+  "remote_root": "/home/test/wyj/Projects/on-policy-last-obs-clean-5UAV/onpolicy/scripts/results/mec/mappo",
+  "local_root": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo",
+  "experiments": [
+    {
+      "experiment": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed32_60m_20260811_retry1",
+      "local_directory": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax10_seed32_60m_20260811_retry1",
+      "file_count": 37,
+      "total_bytes": 65445201
+    },
+    {
+      "experiment": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed32_60m_20260811_retry1",
+      "local_directory": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax20_seed32_60m_20260811_retry1",
+      "file_count": 19,
+      "total_bytes": 35088259
+    },
+    {
+      "experiment": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed32_60m_20260811_retry2",
+      "local_directory": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax30_seed32_60m_20260811_retry2",
+      "file_count": 19,
+      "total_bytes": 35088259
+    },
+    {
+      "experiment": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed2_60m_20260812",
+      "local_directory": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed2_60m_20260812",
+      "file_count": 19,
+      "total_bytes": 35088250
+    },
+    {
+      "experiment": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed32_60m_20260812",
+      "local_directory": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed32_60m_20260812",
+      "file_count": 19,
+      "total_bytes": 35088252
+    },
+    {
+      "experiment": "dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed42_60m_20260812",
+      "local_directory": "D:\\wyj\\Projects\\on-policy-last-obs-clean-5UAV\\onpolicy\\scripts\\results\\mec\\mappo\\dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_vmax40_seed42_60m_20260812",
+      "file_count": 19,
+      "total_bytes": 35088252
+    }
+  ]
+}
