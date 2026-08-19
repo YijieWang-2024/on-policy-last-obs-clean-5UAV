@@ -21,6 +21,7 @@ sys.path.insert(0, project_root)
 
 from onpolicy.config import get_config
 from onpolicy.envs.env_wrappers import ShareSubprocVecEnv, ShareDummyVecEnv
+from onpolicy.utils.unreliable_communication import resolve_communication_parameters
 
 
 """Train script for MEC."""
@@ -72,7 +73,14 @@ def make_eval_env(all_args):
 def parse_args(args, parser):
     parser.add_argument('--n_UAVs', type=int, default=3, help="total number of uav-servers")
     parser.add_argument('--max_UAVs_in_neighbor', type=int, default=3, help="max number of UAVs in neighbor, in own obs' info")
-    parser.add_argument('--neighbor_distance', type=float, default=260, help="(240+20)*k=260,520,780,1040(m), the neighbor distance of UAVs in meters")
+    parser.add_argument(
+        '--neighbor_distance', '--d_com', dest='neighbor_distance', type=float,
+        default=None,
+        help=(
+            "A2A communication radius d_com in metres. If omitted, it is "
+            "derived from --a2a_transmit_power_w; if both are omitted, d_com=520 m."
+        ),
+    )
     parser.add_argument("--neighbor_R", type=int, default=260, help="1-hop distance, Use to one-hop range drone position sharing")
     parser.add_argument('--d_optimal', type=float, default=210, help="(m), Distance between desired drones based on area size and number of drones")
     parser.add_argument('--n_GUs', type=int, default=20, help="total number of groud users")
@@ -85,7 +93,7 @@ def parse_args(args, parser):
                         help="Maximum candidate MD arrivals per slot in dynamic_md mode.")
     parser.add_argument("--md_arrivals_per_region", type=int, nargs=2, default=None,
                         metavar=("LOWER_LEFT", "UPPER_RIGHT"),
-                        help="Fixed candidate arrivals in the two 5-UAV hotspot rectangles.")
+                        help="Fixed candidate arrivals in the two regional hotspot rectangles.")
     parser.add_argument(
         "--hotspot_layout_mode",
         choices=(
@@ -158,7 +166,7 @@ def parse_args(args, parser):
         help=(
             "Optional explicit UAV reset coordinates as 2*n_UAVs values "
             "(x0 y0 x1 y1 ...). When supplied, this overrides the built-in "
-            "five-UAV reset geometry without changing the hotspot layout."
+            "reset geometry without changing the hotspot layout."
         ),
     )
     parser.add_argument("--md_lifetime_min", type=int, default=15,
@@ -175,6 +183,22 @@ def parse_args(args, parser):
     parser.add_argument("--y_min_gu", type=int, default=0, help="A maximum map range of 1 km × 1 km.")
     parser.add_argument("--y_max_gu", type=int, default=300, help="A maximum map range of 1 km × 1 km.")
     parser.add_argument("--B", type=int, default=20 * 10 ** 6, help="Channel bandwidth in Hz, default is 20MHz")
+    parser.add_argument(
+        "--uav_resource_mode",
+        choices=["homogeneous", "heterogeneous"],
+        default="homogeneous",
+        help="Use one common UAV resource limit or per-UAV scale factors.",
+    )
+    parser.add_argument(
+        "--uav_resource_scale_factors",
+        type=float,
+        nargs="+",
+        default=None,
+        help=(
+            "Per-UAV positive scale factors applied to both B and F_m; "
+            "required when uav_resource_mode=heterogeneous."
+        ),
+    )
     parser.add_argument("--H_UAV", type=int, default=120, help="UAV server fixed flight height in meters")
     parser.add_argument("--H_GU", type=int, default=1, help="Ground user height in meters")
     parser.add_argument("--fix_hotspot", action='store_true', default=False, help=" if true, has a fixed hotpot at upper_right corner")
@@ -279,6 +303,24 @@ def parse_args(args, parser):
                         help="If true, calculate different reward in calculate_reward() of mec.py")
     parser.add_argument("--discrete_associate", action='store_true', default=False, help="If true, offloading_actions is Binary, and Network's output_layer is MultiBornrlia")
     parser.add_argument("--continuous_associate", action='store_true', default=False, help="If true, offloading_actions is continuous, and Network's output_layer is Gaussian")
+    parser.add_argument(
+        "--association_threshold", type=float, default=0.5,
+        help=(
+            "Threshold psi for converting each continuous association score into "
+            "a candidate UAV-GU link. Scores greater than or equal to psi are kept."
+        ),
+    )
+    parser.add_argument(
+        "--disable_offload_deadline_filter",
+        action="store_false",
+        dest="offload_deadline_filter",
+        default=True,
+        help=(
+            "Disable the pre-execution filter that cancels offloads whose predicted "
+            "transmission plus execution delay misses the task deadline. Deadline "
+            "success/failure and penalties in the reward remain enabled."
+        ),
+    )
     parser.add_argument("--nearest_associate", action='store_true', default=False, help="If true, without offloading_actions and Network's output_layer")
     parser.add_argument("--nearest_avail_actions", action='store_true', default=False, help="If true, get avail_actions for max_GUs_in_range and nearest itself")
     parser.add_argument("--not_process_action", action='store_true', default=False, help="If true, without process_action in env_maker.py and act.py")
@@ -382,14 +424,24 @@ def parse_args(args, parser):
     )
     parser.add_argument("--communication_mode", choices=("reliable", "unreliable"), default="reliable",
                         help="Reliable finite-round consensus or unreliable running-sum for the advantage-noise estimator")
-    parser.add_argument("--running_sum_rounds", type=int, default=30,
+    parser.add_argument("--running_sum_rounds", type=int, default=50,
                         help="Post-rollout running-sum rounds under unreliable communication")
-    parser.add_argument("--a2a_transmit_power_w", type=float, default=2.0)
+    parser.add_argument(
+        "--a2a_transmit_power_w", type=float, default=None,
+        help=(
+            "A2A transmit power P_c in watts. If omitted, it is derived from "
+            "d_com; if supplied alone, d_com is derived from it."
+        ),
+    )
+    parser.add_argument(
+        "--a2a_distance_tolerance_m", type=float, default=5.0,
+        help="Maximum permitted d_com mismatch when both distance and power are supplied.",
+    )
     parser.add_argument("--a2a_bandwidth_hz", type=float, default=2e6)
     parser.add_argument("--a2a_reference_gain_db", type=float, default=-38.46)
     parser.add_argument("--a2a_reference_distance_m", type=float, default=1.0)
     parser.add_argument("--a2a_path_loss_exponent", type=float, default=2.2)
-    parser.add_argument("--a2a_rician_k_db", type=float, default=6.0)
+    parser.add_argument("--a2a_rician_k_db", type=float, default=10.0)
     parser.add_argument("--a2a_noise_psd_dbm_hz", type=float, default=-130.0)
     parser.add_argument("--a2a_spectral_efficiency", type=float, default=0.5)
     parser.add_argument("--a2a_decoding_threshold_db", type=float, default=-0.5)
@@ -411,7 +463,21 @@ def parse_args(args, parser):
     parser.add_argument("--md_gru_epochs", type=int, default=4)
     parser.add_argument("--md_gru_batch_size", type=int, default=512)
     parser.add_argument("--md_gru_max_samples", type=int, default=32768)
-    parser.add_argument("--md_prediction_loss_coef", type=float, default=0.1)
+    parser.add_argument(
+        "--md_gru_train_samples", type=int, default=512,
+        help="Maximum replay sequences trained per receiver and PPO update.",
+    )
+    parser.add_argument(
+        "--md_gru_min_ready_samples", type=int, default=512,
+        help="Receiver-local replay size required before GRU predictions replace last-observation fallback.",
+    )
+    parser.add_argument(
+        "--md_prediction_loss_coef", type=float, default=1.0,
+        help=(
+            "Deprecated compatibility option. The MD estimator has a separate "
+            "optimizer and its supervised loss is not mixed with PPO gradients."
+        ),
+    )
     parser.add_argument("--advantage_payload_bits", type=float, default=16000.0)
     parser.add_argument("--advantage_deadline_ms", type=float, default=21.54)
     parser.add_argument("--whether_average_network_parameters", action='store_true', default=False, help="If true, Execute the average of all network's parameters in the mec_runner.py")
@@ -424,12 +490,30 @@ def parse_args(args, parser):
     assert default_parser.alpha_r==0 and default_parser.epsilon_r==0, "这两个参数要默认为0。哪个输入了新的值，不为零，就是考虑了对应的惩罚。"
     assert default_parser.local_add_T_ave_adv == 0, "这个参数要默认为0，不为0的话，就是使用了这样一个平均方式。"
     all_args = parser.parse_known_args(args)[0]
+    try:
+        resolve_communication_parameters(all_args)
+    except ValueError as error:
+        parser.error(str(error))
     if not 0.0 <= all_args.consensus_alpha <= 1.0:
         parser.error("--consensus_alpha must be in [0, 1]")
     if not 0.0 <= all_args.externality_beta <= 1.0:
         parser.error("--externality_beta must be in [0, 1]")
     if all_args.noise_scale < 0.0:
         parser.error("--noise_scale must be non-negative")
+    if not 0.0 <= all_args.association_threshold <= 1.0:
+        parser.error("--association_threshold must be in [0, 1]")
+    if all_args.md_prediction_loss_coef <= 0.0:
+        parser.error("--md_prediction_loss_coef must be positive")
+    if all_args.md_gru_hidden_dim <= 0 or all_args.md_gru_lr <= 0:
+        parser.error("--md_gru_hidden_dim and --md_gru_lr must be positive")
+    if all_args.md_gru_epochs <= 0 or all_args.md_gru_batch_size <= 0:
+        parser.error("--md_gru_epochs and --md_gru_batch_size must be positive")
+    if all_args.md_gru_max_samples <= 0 or all_args.md_gru_train_samples <= 0:
+        parser.error("--md_gru_max_samples and --md_gru_train_samples must be positive")
+    if not 0 < all_args.md_gru_min_ready_samples <= all_args.md_gru_max_samples:
+        parser.error(
+            "--md_gru_min_ready_samples must be in [1, --md_gru_max_samples]"
+        )
     if all_args.ego_query_critic and not all_args.use_atten_critic:
         parser.error("--ego_query_critic requires --use_atten_critic")
     if all_args.shared_ret_norm and not all_args.ret_norm:

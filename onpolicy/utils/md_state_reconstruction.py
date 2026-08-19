@@ -1,3 +1,6 @@
+from collections import deque
+from copy import deepcopy
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -9,7 +12,7 @@ from onpolicy.utils.md_roster import (
 
 
 class MDGRUPredictor(nn.Module):
-    """A single mobility predictor shared by all UAVs and MD identities."""
+    """One receiver-local mobility model whose parameters are shared by MD IDs."""
 
     def __init__(self, feature_dim, hidden_dim):
         super().__init__()
@@ -27,80 +30,45 @@ class MDGRUPredictor(nn.Module):
         return self.head(torch.cat((hidden, age), dim=-1))
 
 
-class _Reservoir:
+class _SequenceReplay:
+    """Bounded receiver-local replay of raw observation histories."""
+
     def __init__(self, capacity, seed):
-        self.capacity = capacity
+        self.items = deque(maxlen=int(capacity))
         self.rng = np.random.default_rng(seed)
-        self.items = []
-        self.seen = 0
-        self.copied = 0
-        self.last_seen = 0
-        self.last_copied = 0
+        self.new_since_train = 0
 
-    def plan_batch(self, count):
-        """Choose retained stream items before copying their GPU contexts."""
-        count = int(count)
+    def add(self, history_inputs, prediction_age, target):
+        history_inputs = np.asarray(history_inputs, dtype=np.float32)
+        if history_inputs.ndim != 2 or not len(history_inputs):
+            raise ValueError("MD-GRU replay requires a non-empty observation history")
+        self.items.append((
+            history_inputs.copy(),
+            np.asarray(prediction_age, dtype=np.float32).copy(),
+            np.asarray(target, dtype=np.float32).copy(),
+        ))
+        self.new_since_train += 1
+
+    def sample(self, count):
+        count = min(int(count), len(self.items))
         if count <= 0:
-            empty = np.empty(0, dtype=np.int64)
-            return empty, empty
+            return []
+        indices = self.rng.choice(len(self.items), size=count, replace=False)
+        items = list(self.items)
+        return [items[int(index)] for index in indices]
 
-        start_seen = self.seen
-        free = max(self.capacity - len(self.items), 0)
-        appended = min(free, count)
-        sources = np.arange(appended, dtype=np.int64)
-        destinations = np.arange(
-            len(self.items), len(self.items) + appended, dtype=np.int64
-        )
-        self.items.extend([None] * appended)
+    def age_counts(self, lifetime_scale):
+        """Return natural supervision counts for ages 1, 2, 3, and 4+."""
+        counts = np.zeros(4, dtype=np.int64)
+        for _, normalized_age, _ in self.items:
+            age = int(round(float(normalized_age[0]) * max(lifetime_scale, 1)))
+            counts[min(max(age, 1), 4) - 1] += 1
+        return counts
 
-        remaining = count - appended
-        if remaining:
-            stream_positions = np.arange(
-                start_seen + appended + 1,
-                start_seen + count + 1,
-                dtype=np.int64,
-            )
-            draws = self.rng.integers(0, stream_positions)
-            accepted = draws < self.capacity
-            sources = np.concatenate((
-                sources,
-                np.arange(appended, count, dtype=np.int64)[accepted],
-            ))
-            destinations = np.concatenate((destinations, draws[accepted]))
-        self.seen += count
-
-        if not len(destinations):
-            empty = np.empty(0, dtype=np.int64)
-            return empty, empty
-        # A destination may be replaced repeatedly within one incoming batch.
-        # Only its final occupant must cross the device boundary.
-        _, reverse_indices = np.unique(
-            destinations[::-1], return_index=True
-        )
-        keep = len(destinations) - 1 - reverse_indices
-        return sources[keep], destinations[keep]
-
-    def commit_batch(
-        self, destinations, receiver, context_hidden, context_input,
-        prediction_age, targets,
-    ):
-        self.copied += len(destinations)
-        for index, destination in enumerate(destinations):
-            self.items[int(destination)] = (
-                receiver,
-                context_hidden[index].copy(),
-                context_input[index].copy(),
-                prediction_age[index].copy(),
-                targets[index].copy(),
-            )
-
-    def take(self):
-        items, self.items = self.items, []
-        self.last_seen = self.seen
-        self.last_copied = self.copied
-        self.seen = 0
-        self.copied = 0
-        return items
+    def mark_trained(self):
+        count = self.new_since_train
+        self.new_since_train = 0
+        return count
 
 
 class _MemoryBank:
@@ -120,10 +88,13 @@ class _MemoryBank:
         self.hidden = torch.zeros(
             environments, capacity, hidden_dim, device=device, dtype=torch.float32
         )
-        self.context_hidden = torch.zeros_like(self.hidden)
-        self.context_input = torch.zeros(
-            environments, capacity, feature_dim + 1, device=device, dtype=torch.float32
-        )
+        # Raw received inputs are retained only for the current episode/session.
+        # Replay copies these short histories, so training can recompute hidden
+        # states with current parameters instead of backpropagating through stale
+        # hidden tensors generated by an older predictor.
+        self.histories = [
+            [[] for _ in range(capacity)] for _ in range(environments)
+        ]
 
     def reset(self, environment_mask=None):
         if environment_mask is None:
@@ -137,8 +108,9 @@ class _MemoryBank:
         self.task_valid[environment_mask] = False
         mask = torch.as_tensor(environment_mask, device=self.device)
         self.hidden[mask] = 0
-        self.context_hidden[mask] = 0
-        self.context_input[mask] = 0
+        for environment in np.flatnonzero(environment_mask):
+            for history in self.histories[int(environment)]:
+                history.clear()
 
     def find(self, environment, session_id):
         matches = np.flatnonzero(self.ids[environment] == session_id)
@@ -153,8 +125,7 @@ class _MemoryBank:
         self.age[environment, slot] = 0
         self.lifetime[environment, slot] = 0
         self.hidden[environment, slot] = 0
-        self.context_hidden[environment, slot] = 0
-        self.context_input[environment, slot] = 0
+        self.histories[environment][slot].clear()
         return slot
 
     def remove_expired(self, environment, protected_ids=()):
@@ -172,8 +143,8 @@ class _MemoryBank:
         self.task_valid[environment, expired] = False
         mask = torch.as_tensor(expired, device=self.device)
         self.hidden[environment, mask] = 0
-        self.context_hidden[environment, mask] = 0
-        self.context_input[environment, mask] = 0
+        for slot in np.flatnonzero(expired):
+            self.histories[environment][int(slot)].clear()
 
 
 class MDStateReconstructor:
@@ -189,55 +160,99 @@ class MDStateReconstructor:
         self.capacity = args.n_GUs
         self.packet_capacity = args.max_GUs_in_range
         self.hidden_dim = args.md_gru_hidden_dim
+        self.train_samples = int(getattr(args, "md_gru_train_samples", 512))
+        self.min_ready_samples = int(
+            getattr(args, "md_gru_min_ready_samples", 512)
+        )
+        if self.mode == "md_gru":
+            if self.hidden_dim <= 0 or args.md_gru_max_samples <= 0:
+                raise ValueError("md_gru_hidden_dim and md_gru_max_samples must be positive")
+            if args.md_gru_lr <= 0 or args.md_gru_epochs <= 0 or args.md_gru_batch_size <= 0:
+                raise ValueError(
+                    "md_gru_lr, md_gru_epochs, and md_gru_batch_size must be positive"
+                )
+            if self.train_samples <= 0:
+                raise ValueError("md_gru_train_samples must be positive")
+            if not 0 < self.min_ready_samples <= args.md_gru_max_samples:
+                raise ValueError(
+                    "md_gru_min_ready_samples must be in [1, md_gru_max_samples]"
+                )
         self.distance_only_user_sort = resolve_distance_only_user_sort(args)
         self.metadata = bool(getattr(args, "critic_md_metadata", False) or self.mode != "zero")
-        self.predictor = (
+        predictor_template = (
             MDGRUPredictor(self.feature_dim, self.hidden_dim).to(device)
             if self.mode == "md_gru" else None
         )
-        # Public one-element container retained for simple checkpoint/test
-        # introspection; there is exactly one shared parameter set.
+        # Identical initialization is a fair shared prior; optimizers and all
+        # subsequent receiver data/updates remain strictly local.
         self.predictors = (
-            nn.ModuleList([self.predictor]) if self.predictor is not None else None
+            nn.ModuleList([deepcopy(predictor_template) for _ in range(self.n_uavs)])
+            if predictor_template is not None else None
         )
-        self.optimizer = (
-            torch.optim.Adam(self.predictor.parameters(), lr=args.md_gru_lr)
-            if self.predictor is not None else None
+        self.optimizers = (
+            [
+                torch.optim.Adam(predictor.parameters(), lr=args.md_gru_lr)
+                for predictor in self.predictors
+            ]
+            if self.predictors is not None else None
         )
-        self.reservoir = _Reservoir(args.md_gru_max_samples, args.seed + 7919)
+        self.replays = (
+            [
+                _SequenceReplay(args.md_gru_max_samples, args.seed + 7919 + receiver)
+                for receiver in range(self.n_uavs)
+            ]
+            if self.predictors is not None else None
+        )
         self.training_rng = np.random.default_rng(args.seed + 15485863)
         # Do not expose a randomly initialized mobility head to the critic.
-        # The last observed persistent record is used until one supervised
-        # predictor update has completed.
-        self.predictor_ready = self.predictor is None
+        # The last observed persistent record is used until receiver-local
+        # replay reaches the configured warm-up and one update completes.
+        self.predictor_ready = (
+            [False for _ in range(self.n_uavs)]
+            if self.predictors is not None else [True for _ in range(self.n_uavs)]
+        )
         self.banks = None
         self.environments = None
         self.last_data = None
+        self.query_age_counts = np.zeros((self.n_uavs, 4), dtype=np.int64)
+        self.prequential_prediction_sse = np.zeros(self.n_uavs, dtype=np.float64)
+        self.prequential_last_obs_sse = np.zeros(self.n_uavs, dtype=np.float64)
+        self.prequential_sample_count = np.zeros(self.n_uavs, dtype=np.int64)
+        self._collect_metrics = False
 
     def checkpoint_state(self):
-        """Return the complete trainable shared-predictor state."""
-        if self.predictor is None:
+        """Return receiver-local trainable state (the replay cache is transient)."""
+        if self.predictors is None:
             raise RuntimeError("only md_gru reconstruction has predictor state")
         return {
-            "model": self.predictor.state_dict(),
-            "optimizer": self.optimizer.state_dict(),
-            "predictor_ready": self.predictor_ready,
+            "models": self.predictors.state_dict(),
+            "optimizers": [optimizer.state_dict() for optimizer in self.optimizers],
+            "predictor_ready": list(self.predictor_ready),
         }
 
     def load_checkpoint_state(self, checkpoint):
         """Load current checkpoints and the legacy model-only representation."""
-        if self.predictor is None:
+        if self.predictors is None:
             raise RuntimeError("only md_gru reconstruction has predictor state")
-        if isinstance(checkpoint, dict) and "model" in checkpoint:
-            self.predictor.load_state_dict(checkpoint["model"])
-            optimizer_state = checkpoint.get("optimizer")
-            if optimizer_state is not None:
-                self.optimizer.load_state_dict(optimizer_state)
-            self.predictor_ready = checkpoint.get("predictor_ready", True)
+        if isinstance(checkpoint, dict) and "models" in checkpoint:
+            self.predictors.load_state_dict(checkpoint["models"])
+            for optimizer, optimizer_state in zip(
+                self.optimizers, checkpoint.get("optimizers", ())
+            ):
+                optimizer.load_state_dict(optimizer_state)
+            ready = checkpoint.get("predictor_ready", [True] * self.n_uavs)
+            self.predictor_ready = [bool(value) for value in ready]
         else:
-            self.predictor.load_state_dict(checkpoint)
-            self.predictor_ready = True
-        self.predictor.eval()
+            # Legacy checkpoints contained one model shared across all UAVs.
+            legacy_model = checkpoint.get("model", checkpoint)
+            for predictor in self.predictors:
+                predictor.load_state_dict(legacy_model)
+            self.predictor_ready = [
+                bool(checkpoint.get("predictor_ready", True))
+                if isinstance(checkpoint, dict) else True
+                for _ in range(self.n_uavs)
+            ]
+        self.predictors.eval()
 
     def _ensure_banks(self, environments):
         if self.banks is not None and self.environments == environments:
@@ -257,10 +272,22 @@ class MDStateReconstructor:
         for bank in self.banks:
             bank.reset(environment_mask)
 
+    def _speed_bound(self):
+        """Return the largest MD speed admitted by the configured environment."""
+        candidates = [
+            1.3 * float(self.args.mean_velocity),
+            float(getattr(self.args, "md_velocity_init_max_factor", 1.3))
+            * float(self.args.mean_velocity),
+        ]
+        update_clip_max = getattr(self.args, "md_velocity_update_clip_max", None)
+        if update_clip_max is not None:
+            candidates.append(float(update_clip_max))
+        return max(*candidates, 1e-6)
+
     def _encode_feature(self, record):
         x_span = max(self.args.x_max_gu - self.args.x_min_gu, 1e-6)
         y_span = max(self.args.y_max_gu - self.args.y_min_gu, 1e-6)
-        speed_bound = max(1.3 * self.args.mean_velocity, 1e-6)
+        speed_bound = self._speed_bound()
         return np.asarray([
             2 * (record[0] - self.args.x_min_gu) / x_span - 1,
             2 * (record[1] - self.args.y_min_gu) / y_span - 1,
@@ -273,7 +300,7 @@ class MDStateReconstructor:
         feature = np.asarray(feature, dtype=np.float64)
         x_span = max(self.args.x_max_gu - self.args.x_min_gu, 1e-6)
         y_span = max(self.args.y_max_gu - self.args.y_min_gu, 1e-6)
-        speed_bound = max(1.3 * self.args.mean_velocity, 1e-6)
+        speed_bound = self._speed_bound()
         x = self.args.x_min_gu + 0.5 * (np.clip(feature[0], -1, 1) + 1) * x_span
         y = self.args.y_min_gu + 0.5 * (np.clip(feature[1], -1, 1) + 1) * y_span
         speed = 0.5 * (np.clip(feature[2], -1, 1) + 1) * speed_bound
@@ -308,38 +335,10 @@ class MDStateReconstructor:
                 observed[session_id] = record
         return observed
 
-    def _add_samples(self, receiver, bank, environments, slots, ages, targets):
-        if not slots:
-            return
-        selected, destinations = self.reservoir.plan_batch(len(slots))
-        if not len(selected):
-            return
-        environments = np.asarray(environments, dtype=np.int64)[selected]
-        slots = np.asarray(slots, dtype=np.int64)[selected]
-        environment_index = torch.as_tensor(
-            environments, device=self.device, dtype=torch.long
-        )
-        slot_index = torch.as_tensor(slots, device=self.device, dtype=torch.long)
-        context = torch.cat((
-            bank.context_hidden[environment_index, slot_index],
-            bank.context_input[environment_index, slot_index],
-        ), dim=-1).detach().cpu().numpy()
-        self.reservoir.commit_batch(
-            destinations,
-            receiver,
-            context[:, :self.hidden_dim],
-            context[:, self.hidden_dim:],
-            np.asarray(
-                [self._age_feature(ages[index]) for index in selected],
-                dtype=np.float32,
-            ),
-            np.asarray([targets[index] for index in selected], dtype=np.float32),
-        )
-
     @torch.no_grad()
     def _update_bank(self, receiver, data, collect_samples):
         bank = self.banks[receiver]
-        predictor = self.predictor
+        predictor = self.predictors[receiver] if self.predictors is not None else None
         observed_by_environment = [
             self._observed_records(data, environment, receiver)
             for environment in range(self.environments)
@@ -359,7 +358,7 @@ class MDStateReconstructor:
         active = bank.ids != -1
         active_environments, active_slots = np.nonzero(active)
         if len(active_slots):
-            if predictor is None or not self.predictor_ready:
+            if predictor is None or not self.predictor_ready[receiver]:
                 bank.estimate[active_environments, active_slots] = bank.last_feature[
                     active_environments, active_slots
                 ]
@@ -386,10 +385,6 @@ class MDStateReconstructor:
         update_slots = []
         update_features = []
         update_ages = []
-        sample_environments = []
-        sample_slots = []
-        sample_ages = []
-        sample_targets = []
         for environment in range(self.environments):
             observed = observed_by_environment[environment]
             for session_id, record in observed.items():
@@ -402,10 +397,31 @@ class MDStateReconstructor:
                 else:
                     update_age = int(bank.age[environment, slot])
                     if predictor is not None and collect_samples:
-                        sample_environments.append(environment)
-                        sample_slots.append(slot)
-                        sample_ages.append(update_age)
-                        sample_targets.append(feature)
+                        if self.predictor_ready[receiver]:
+                            x_scale = 0.5 * max(
+                                self.args.x_max_gu - self.args.x_min_gu, 1e-6
+                            )
+                            y_scale = 0.5 * max(
+                                self.args.y_max_gu - self.args.y_min_gu, 1e-6
+                            )
+                            prediction_error = (
+                                bank.estimate[environment, slot, :2] - feature[:2]
+                            ) * np.asarray((x_scale, y_scale))
+                            last_obs_error = (
+                                bank.last_feature[environment, slot, :2] - feature[:2]
+                            ) * np.asarray((x_scale, y_scale))
+                            self.prequential_prediction_sse[receiver] += float(
+                                np.dot(prediction_error, prediction_error)
+                            )
+                            self.prequential_last_obs_sse[receiver] += float(
+                                np.dot(last_obs_error, last_obs_error)
+                            )
+                            self.prequential_sample_count[receiver] += 1
+                        self.replays[receiver].add(
+                            bank.histories[environment][slot],
+                            self._age_feature(update_age),
+                            feature,
+                        )
                 update_environments.append(environment)
                 update_slots.append(slot)
                 update_features.append(feature)
@@ -416,14 +432,6 @@ class MDStateReconstructor:
                 bank.lifetime[environment, slot] = int(round(record[5]))
                 bank.tasks[environment, slot] = record[7:10]
                 bank.task_valid[environment, slot] = True
-
-        # Gather all re-observation contexts before this slot overwrites them.
-        # This reduces GPU-to-CPU synchronization from once per MD to once per
-        # receiver and environment slot.
-        self._add_samples(
-            receiver, bank, sample_environments, sample_slots,
-            sample_ages, sample_targets,
-        )
 
         if update_slots:
             update_environments = np.asarray(update_environments, dtype=np.int64)
@@ -448,16 +456,14 @@ class MDStateReconstructor:
             old_hidden = bank.hidden[
                 update_environment_index, update_slot_index
             ].clone()
-            bank.context_hidden[
-                update_environment_index, update_slot_index
-            ] = old_hidden
-            bank.context_input[
-                update_environment_index, update_slot_index
-            ] = update_input
             if predictor is not None:
                 bank.hidden[
                     update_environment_index, update_slot_index
                 ] = predictor.gru(update_input, old_hidden)
+            for environment, slot, raw_input in zip(
+                update_environments, update_slots, update_input.cpu().numpy()
+            ):
+                bank.histories[int(environment)][int(slot)].append(raw_input.copy())
 
     def _channel_gain(self, sender_position, md_position):
         horizontal = np.linalg.norm(sender_position - md_position)
@@ -548,6 +554,9 @@ class MDStateReconstructor:
         for record_slot, (_, _, memory_slot, decoded, _, _) in enumerate(
             candidates[:self.packet_capacity]
         ):
+            if self._collect_metrics:
+                age = int(bank.age[environment, memory_slot])
+                self.query_age_counts[receiver, min(max(age, 1), 4) - 1] += 1
             records[record_slot, :5] = decoded
             records[record_slot, 5] = bank.lifetime[environment, memory_slot]
             records[record_slot, 6] = self._channel_gain(sender_position, decoded[:2])
@@ -576,6 +585,7 @@ class MDStateReconstructor:
         if reset_environments is not None:
             self.reset(np.asarray(reset_environments, dtype=bool))
         self.last_data = data
+        self._collect_metrics = bool(collect_samples)
         for receiver in range(self.n_uavs):
             self._update_bank(receiver, data, collect_samples)
 
@@ -612,108 +622,146 @@ class MDStateReconstructor:
                     attention[environment, receiver, block_slot] = 1
         return states, attention
 
+    @staticmethod
+    def _age_fraction_metrics(prefix, counts):
+        total = int(np.sum(counts))
+        denominator = max(total, 1)
+        return {
+            f"{prefix}_count": total,
+            f"{prefix}_age1_fraction": float(counts[0] / denominator),
+            f"{prefix}_age2_fraction": float(counts[1] / denominator),
+            f"{prefix}_age3_fraction": float(counts[2] / denominator),
+            f"{prefix}_age4plus_fraction": float(counts[3] / denominator),
+        }
+
+    def _prediction_diagnostics(self, receiver, replay):
+        label_counts = replay.age_counts(self.args.md_lifetime_max)
+        query_counts = self.query_age_counts[receiver].copy()
+        prequential_count = int(self.prequential_sample_count[receiver])
+        diagnostics = {
+            **self._age_fraction_metrics("md_prediction_replay_label", label_counts),
+            **self._age_fraction_metrics("md_prediction_rollout_query", query_counts),
+            "md_prediction_prequential_samples": prequential_count,
+            "md_prediction_prequential_rmse_m": float(np.sqrt(
+                self.prequential_prediction_sse[receiver]
+                / max(prequential_count, 1)
+            )),
+            "md_last_obs_prequential_rmse_m": float(np.sqrt(
+                self.prequential_last_obs_sse[receiver]
+                / max(prequential_count, 1)
+            )),
+        }
+        self.query_age_counts[receiver] = 0
+        self.prequential_prediction_sse[receiver] = 0.0
+        self.prequential_last_obs_sse[receiver] = 0.0
+        self.prequential_sample_count[receiver] = 0
+        return diagnostics
+
     def train_predictors(self):
-        if self.predictor is None:
-            return [
-                {
-                    "md_prediction_loss": 0.0,
-                    "md_prediction_samples": 0,
-                    "md_prediction_position_rmse_m": 0.0,
-                    "md_prediction_candidates_global": self.reservoir.last_seen,
-                    "md_prediction_context_rows_copied": self.reservoir.last_copied,
-                    "md_prediction_reservoir_fraction": 0.0,
-                    "md_prediction_age_mean": 0.0,
-                    "md_prediction_age_ge2_fraction": 0.0,
-                }
-                for _ in range(self.n_uavs)
-            ]
-        samples = self.reservoir.take()
-        if not samples:
-            return [
-                {
-                    "md_prediction_loss": 0.0,
-                    "md_prediction_samples": 0,
-                    "md_prediction_position_rmse_m": 0.0,
-                    "md_prediction_candidates_global": self.reservoir.last_seen,
-                    "md_prediction_context_rows_copied": self.reservoir.last_copied,
-                    "md_prediction_reservoir_fraction": 0.0,
-                    "md_prediction_age_mean": 0.0,
-                    "md_prediction_age_ge2_fraction": 0.0,
-                }
-                for _ in range(self.n_uavs)
-            ]
-        receivers, context_hidden, context_input, prediction_age, targets = map(
-            np.asarray, zip(*samples)
-        )
-        sample_counts = np.bincount(
-            receivers.astype(np.int64), minlength=self.n_uavs
-        )
-        ages = prediction_age[:, 0] * max(self.args.md_lifetime_max, 1)
-        count = len(samples)
-        epoch_losses = []
-        position_squared_error = 0.0
-        position_sample_count = 0
         x_scale = 0.5 * max(self.args.x_max_gu - self.args.x_min_gu, 1e-6)
         y_scale = 0.5 * max(self.args.y_max_gu - self.args.y_min_gu, 1e-6)
-        self.predictor.train()
-        for epoch in range(self.args.md_gru_epochs):
-            order = self.training_rng.permutation(count)
-            for start in range(0, count, self.args.md_gru_batch_size):
-                indices = order[start:start + self.args.md_gru_batch_size]
-                hidden = torch.as_tensor(
-                    context_hidden[indices], device=self.device, dtype=torch.float32
-                )
-                update_input = torch.as_tensor(
-                    context_input[indices], device=self.device, dtype=torch.float32
-                )
-                age = torch.as_tensor(
-                    prediction_age[indices], device=self.device, dtype=torch.float32
-                )
-                target = torch.as_tensor(
-                    targets[indices], device=self.device, dtype=torch.float32
-                )
-                updated_hidden = self.predictor.gru(update_input, hidden)
-                prediction = self.predictor.predict(updated_hidden, age)
-                loss = torch.mean((prediction - target) ** 2)
-                if epoch == self.args.md_gru_epochs - 1:
-                    position_error = (
-                        ((prediction[:, 0] - target[:, 0]) * x_scale) ** 2
-                        + ((prediction[:, 1] - target[:, 1]) * y_scale) ** 2
-                    )
-                    position_squared_error += float(
-                        torch.sum(position_error).detach().cpu()
-                    )
-                    position_sample_count += len(indices)
-                self.optimizer.zero_grad()
-                (self.args.md_prediction_loss_coef * loss).backward()
-                nn.utils.clip_grad_norm_(self.predictor.parameters(), 1.0)
-                self.optimizer.step()
-                epoch_losses.append(float(loss.detach().cpu()))
-        self.predictor.eval()
-        self.predictor_ready = True
-        common_loss = float(np.mean(epoch_losses))
-        position_rmse = float(np.sqrt(
-            position_squared_error / max(position_sample_count, 1)
-        ))
         metrics = []
         for receiver in range(self.n_uavs):
-            receiver_ages = ages[receivers.astype(np.int64) == receiver]
+            replay = self.replays[receiver]
+            new_samples = replay.mark_trained()
+            replay_size = len(replay.items)
+            diagnostics = self._prediction_diagnostics(receiver, replay)
+            if replay_size < self.min_ready_samples or new_samples == 0:
+                metrics.append({
+                    "md_prediction_loss": 0.0,
+                    "md_prediction_samples": new_samples,
+                    "md_prediction_replay_size": replay_size,
+                    "md_prediction_train_samples": 0,
+                    "md_prediction_position_rmse_m": 0.0,
+                    "md_prediction_age_mean": 0.0,
+                    "md_prediction_age_ge2_fraction": 0.0,
+                    **diagnostics,
+                })
+                continue
+            samples = replay.sample(self.train_samples)
+
+            predictor = self.predictors[receiver]
+            optimizer = self.optimizers[receiver]
+            predictor.train()
+            epoch_losses = []
+            position_squared_error = 0.0
+            position_sample_count = 0
+            ages = np.asarray([
+                sample[1][0] * max(self.args.md_lifetime_max, 1)
+                for sample in samples
+            ])
+            for epoch in range(self.args.md_gru_epochs):
+                order = self.training_rng.permutation(len(samples))
+                for start in range(0, len(samples), self.args.md_gru_batch_size):
+                    batch = [samples[index] for index in order[
+                        start:start + self.args.md_gru_batch_size
+                    ]]
+                    histories, prediction_ages, targets = zip(*batch)
+                    lengths = np.asarray(
+                        [len(history) for history in histories], dtype=np.int64
+                    )
+                    padded = np.zeros(
+                        (
+                            len(batch),
+                            int(np.max(lengths)),
+                            self.feature_dim + 1,
+                        ),
+                        dtype=np.float32,
+                    )
+                    for row, history in enumerate(histories):
+                        padded[row, :len(history)] = history
+                    history = torch.as_tensor(
+                        padded, device=self.device, dtype=torch.float32
+                    )
+                    sequence_lengths = torch.as_tensor(
+                        lengths, device=self.device, dtype=torch.long
+                    )
+                    hidden = torch.zeros(
+                        len(batch), self.hidden_dim,
+                        device=self.device, dtype=torch.float32,
+                    )
+                    for timestep in range(history.shape[1]):
+                        updated = predictor.gru(history[:, timestep], hidden)
+                        active = (sequence_lengths > timestep)[:, None]
+                        hidden = torch.where(active, updated, hidden)
+                    age = torch.as_tensor(
+                        np.asarray(prediction_ages),
+                        device=self.device,
+                        dtype=torch.float32,
+                    )
+                    prediction = predictor.predict(hidden, age)
+                    target = torch.as_tensor(
+                        np.asarray(targets), device=self.device, dtype=torch.float32
+                    )
+                    # Smooth-L1 is less sensitive than MSE to boundary bounces
+                    # and rare long-gap mobility outliers.
+                    loss = nn.functional.smooth_l1_loss(prediction, target)
+                    if epoch == self.args.md_gru_epochs - 1:
+                        position_error = (
+                            ((prediction[:, 0] - target[:, 0]) * x_scale) ** 2
+                            + ((prediction[:, 1] - target[:, 1]) * y_scale) ** 2
+                        )
+                        position_squared_error += float(
+                            torch.sum(position_error).detach().cpu()
+                        )
+                        position_sample_count += len(batch)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    nn.utils.clip_grad_norm_(predictor.parameters(), 1.0)
+                    optimizer.step()
+                    epoch_losses.append(float(loss.detach().cpu()))
+            predictor.eval()
+            self.predictor_ready[receiver] = True
             metrics.append({
-                "md_prediction_loss": common_loss,
-                "md_prediction_samples": sample_counts[receiver],
-                "md_prediction_samples_global": count,
-                "md_prediction_candidates_global": self.reservoir.last_seen,
-                "md_prediction_context_rows_copied": self.reservoir.last_copied,
-                "md_prediction_reservoir_fraction": (
-                    count / max(self.reservoir.last_seen, 1)
-                ),
-                "md_prediction_position_rmse_m": position_rmse,
-                "md_prediction_age_mean": (
-                    float(np.mean(receiver_ages)) if len(receiver_ages) else 0.0
-                ),
-                "md_prediction_age_ge2_fraction": (
-                    float(np.mean(receiver_ages >= 2.0))
-                    if len(receiver_ages) else 0.0
-                ),
+                "md_prediction_loss": float(np.mean(epoch_losses)),
+                "md_prediction_samples": new_samples,
+                "md_prediction_replay_size": replay_size,
+                "md_prediction_train_samples": len(samples),
+                "md_prediction_position_rmse_m": float(np.sqrt(
+                    position_squared_error / max(position_sample_count, 1)
+                )),
+                "md_prediction_age_mean": float(np.mean(ages)),
+                "md_prediction_age_ge2_fraction": float(np.mean(ages >= 2.0)),
+                **diagnostics,
             })
         return metrics

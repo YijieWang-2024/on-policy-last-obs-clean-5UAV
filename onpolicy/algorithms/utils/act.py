@@ -17,7 +17,13 @@ class ACTLayer(nn.Module):
         self.ave_bandwidth = args.ave_bandwidth
         self.fix_uav_pos = args.fix_uav_pos
         self.cartesian_flight = getattr(args, "cartesian_flight", False)
-        print("在act.py中使用到了连续连接动作的0.5阈值。")
+        self.association_threshold = float(
+            getattr(args, "association_threshold", 0.5)
+        )
+        print(
+            "Continuous association threshold psi="
+            f"{self.association_threshold:g}."
+        )
         # self.nearest_associate = args.nearest_associate
         self.not_process_action = args.not_process_action
         if action_space.__class__.__name__ == "Box":
@@ -94,13 +100,17 @@ class ACTLayer(nn.Module):
                 # 这个是用来修改分配B和F_m的avail_actions的。所以分配B和F_m的动作一定要在allocation link之后。
                 if action_out.__class__.__name__ == "Bernoulli" and available_actions is not None:
                     available_actions = available_actions * action
-                if self.continuous_associate and available_actions is not None:    # 连接动作的0.5阈值。
+                if self.continuous_associate and available_actions is not None:
                     if self.fix_uav_pos:
                         if i == 0:
-                            available_actions = available_actions * (action>=0.5)
+                            available_actions = available_actions * (
+                                action >= self.association_threshold
+                            )
                     else:
                         if i == 1:
-                            available_actions = available_actions * (action>=0.5)
+                            available_actions = available_actions * (
+                                action >= self.association_threshold
+                            )
             if available_actions is not None:
                 flags_later = torch.sum(available_actions, dim=1)
             actions = torch.cat(actions, -1)
@@ -161,13 +171,17 @@ class ACTLayer(nn.Module):
                 # 这个是用来修改分配B和F_m的avail_actions的。所以分配B和F_m的动作一定要在allocation link之后。
                 if action_out.__class__.__name__=="Bernoulli" and available_actions is not None:
                     available_actions = available_actions * action[i]
-                if self.continuous_associate and available_actions is not None:    # 连接动作的0.5阈值。
+                if self.continuous_associate and available_actions is not None:
                     if self.fix_uav_pos:
                         if i == 0:
-                            available_actions = available_actions * (action[i]>=0.5)
+                            available_actions = available_actions * (
+                                action[i] >= self.association_threshold
+                            )
                     else:
                         if i == 1:
-                            available_actions = available_actions * (action[i]>=0.5)
+                            available_actions = available_actions * (
+                                action[i] >= self.association_threshold
+                            )
             if available_actions is not None:
                 flags_later = torch.sum(available_actions, dim=1)
             action_log_probs = torch.cat(action_log_probs, -1)

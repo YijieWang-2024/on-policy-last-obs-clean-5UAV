@@ -1,6 +1,142 @@
 import numpy as np
 
 
+def communication_distance_from_power(
+    transmit_power_w,
+    *,
+    bandwidth_hz,
+    reference_gain_db,
+    reference_distance_m,
+    path_loss_exponent,
+    noise_psd_dbm_hz,
+    decoding_threshold_db,
+):
+    """Return the nominal A2A decoding radius implied by transmit power."""
+    values = (
+        transmit_power_w, bandwidth_hz, reference_gain_db, reference_distance_m,
+        path_loss_exponent, noise_psd_dbm_hz, decoding_threshold_db,
+    )
+    if not np.all(np.isfinite(values)):
+        raise ValueError("A2A link-budget parameters must be finite")
+    if transmit_power_w <= 0:
+        raise ValueError("transmit_power_w must be positive")
+    if bandwidth_hz <= 0 or reference_distance_m <= 0 or path_loss_exponent <= 0:
+        raise ValueError(
+            "bandwidth_hz, reference_distance_m, and path_loss_exponent must be positive"
+        )
+    reference_gain = 10.0 ** (reference_gain_db / 10.0)
+    noise_psd_w_hz = 10.0 ** ((noise_psd_dbm_hz - 30.0) / 10.0)
+    decoding_threshold = 10.0 ** (decoding_threshold_db / 10.0)
+    link_budget = (
+        transmit_power_w * reference_gain
+        / (noise_psd_w_hz * bandwidth_hz * decoding_threshold)
+    )
+    return float(reference_distance_m * link_budget ** (1.0 / path_loss_exponent))
+
+
+def transmit_power_from_communication_distance(
+    distance_m,
+    *,
+    bandwidth_hz,
+    reference_gain_db,
+    reference_distance_m,
+    path_loss_exponent,
+    noise_psd_dbm_hz,
+    decoding_threshold_db,
+):
+    """Return the power whose nominal decoding radius is ``distance_m``."""
+    values = (
+        distance_m, bandwidth_hz, reference_gain_db, reference_distance_m,
+        path_loss_exponent, noise_psd_dbm_hz, decoding_threshold_db,
+    )
+    if not np.all(np.isfinite(values)):
+        raise ValueError("A2A link-budget parameters must be finite")
+    if distance_m <= 0:
+        raise ValueError("distance_m must be positive")
+    if bandwidth_hz <= 0 or reference_distance_m <= 0 or path_loss_exponent <= 0:
+        raise ValueError(
+            "bandwidth_hz, reference_distance_m, and path_loss_exponent must be positive"
+        )
+    reference_gain = 10.0 ** (reference_gain_db / 10.0)
+    noise_psd_w_hz = 10.0 ** ((noise_psd_dbm_hz - 30.0) / 10.0)
+    decoding_threshold = 10.0 ** (decoding_threshold_db / 10.0)
+    path_loss = (distance_m / reference_distance_m) ** path_loss_exponent
+    return float(
+        decoding_threshold * noise_psd_w_hz * bandwidth_hz * path_loss
+        / reference_gain
+    )
+
+
+def resolve_communication_parameters(args, *, default_distance_m=520.0):
+    """Resolve ``P_c`` and ``d_com`` from either value and validate both."""
+    distance = getattr(args, "neighbor_distance", None)
+    power = getattr(args, "a2a_transmit_power_w", None)
+    tolerance = float(getattr(args, "a2a_distance_tolerance_m", 5.0))
+    if not np.isfinite(tolerance) or tolerance < 0:
+        raise ValueError("a2a_distance_tolerance_m must be finite and non-negative")
+    if distance is not None and not np.isfinite(float(distance)):
+        raise ValueError("neighbor_distance/d_com must be finite")
+    if power is not None and not np.isfinite(float(power)):
+        raise ValueError("a2a_transmit_power_w must be finite")
+    if distance is not None and float(distance) < 0:
+        raise ValueError("neighbor_distance/d_com must be non-negative")
+
+    channel = {
+        "bandwidth_hz": args.a2a_bandwidth_hz,
+        "reference_gain_db": args.a2a_reference_gain_db,
+        "reference_distance_m": args.a2a_reference_distance_m,
+        "path_loss_exponent": args.a2a_path_loss_exponent,
+        "noise_psd_dbm_hz": args.a2a_noise_psd_dbm_hz,
+        "decoding_threshold_db": args.a2a_decoding_threshold_db,
+    }
+    if distance is not None and float(distance) == 0.0:
+        if power is not None and float(power) != 0.0:
+            raise ValueError("d_com=0 is only consistent with P_c=0")
+        # Preserve the established R=0/no-communication ablation. Physical
+        # packet sampling with P_c=0 then deterministically receives nothing.
+        args.neighbor_distance = 0.0
+        args.a2a_transmit_power_w = 0.0
+        return args
+    if distance is None and power is None:
+        distance = float(default_distance_m)
+        power = transmit_power_from_communication_distance(distance, **channel)
+    elif distance is None:
+        distance = communication_distance_from_power(float(power), **channel)
+    elif power is None:
+        distance = float(distance)
+        power = transmit_power_from_communication_distance(distance, **channel)
+    else:
+        distance = float(distance)
+        derived_distance = communication_distance_from_power(float(power), **channel)
+        if abs(derived_distance - distance) > tolerance:
+            raise ValueError(
+                "inconsistent A2A parameters: --a2a_transmit_power_w implies "
+                f"d_com={derived_distance:.3f} m, but --neighbor_distance/--d_com "
+                f"is {distance:.3f} m (tolerance {tolerance:.3f} m)"
+            )
+
+    args.neighbor_distance = float(distance)
+    args.a2a_transmit_power_w = float(power)
+    return args
+
+
+def communication_range_mask(positions, distance_m):
+    """Return directed off-diagonal links inside the tunable ``d_com`` graph."""
+    positions = np.asarray(positions)
+    if positions.ndim != 3 or positions.shape[-1] < 2:
+        raise ValueError("positions must have shape (environments, UAVs, >=2)")
+    if not np.isfinite(distance_m) or distance_m < 0:
+        raise ValueError("distance_m must be finite and non-negative")
+    if distance_m == 0:
+        return np.zeros(positions.shape[:2] + (positions.shape[1],), dtype=bool)
+    xy = positions[..., :2]
+    distances = np.linalg.norm(xy[:, :, None, :] - xy[:, None, :, :], axis=-1)
+    mask = distances <= float(distance_m)
+    diagonal = np.arange(positions.shape[1])
+    mask[:, diagonal, diagonal] = False
+    return mask
+
+
 def sample_configured_timely_receptions(
     positions, rounds, rng, args, *, payload_bits, deadline_ms
 ):
@@ -22,6 +158,7 @@ def sample_configured_timely_receptions(
         gamma_scale_ms=args.a2a_gamma_scale_ms,
         payload_bits=payload_bits,
         deadline_ms=deadline_ms,
+        max_distance_m=args.neighbor_distance,
     )
 
 
@@ -43,6 +180,7 @@ def sample_timely_receptions(
     gamma_scale_ms,
     payload_bits,
     deadline_ms,
+    max_distance_m=None,
 ):
     """Sample directed timely packet receptions for fixed UAV positions.
 
@@ -91,16 +229,21 @@ def sample_timely_receptions(
     )
     timely = transmission_ms + additional_latency_ms <= deadline_ms
     receptions = decoded & timely
+    if max_distance_m is not None:
+        receptions &= communication_range_mask(positions, max_distance_m)[None, ...]
 
     receptions[:, :, diagonal, diagonal] = False
     return receptions
 
 
-def running_sum_ratio_consensus(local_advantages, receptions):
+def running_sum_ratio_consensus(local_advantages, receptions, adjacency=None):
     """Apply finite-round running-sum ratio consensus.
 
     ``local_advantages`` has axes ``(UAV, time, environment, 1)`` and
     ``receptions`` has axes ``(round, environment, sender, receiver)``.
+    ``adjacency`` is the range graph's off-diagonal directed mask with axes
+    ``(environment, sender, receiver)``. Omitting it preserves the legacy
+    complete-graph contract.
     The returned array has the same shape and dtype as ``local_advantages``.
     """
     local_advantages = np.asarray(local_advantages)
@@ -116,6 +259,22 @@ def running_sum_ratio_consensus(local_advantages, receptions):
         raise ValueError(
             "receptions must have shape (rounds, environments, sender, receiver)"
         )
+    if adjacency is None:
+        adjacency = np.ones((num_envs, num_uavs, num_uavs), dtype=bool)
+        diagonal = np.arange(num_uavs)
+        adjacency[:, diagonal, diagonal] = False
+    else:
+        adjacency = np.asarray(adjacency, dtype=bool)
+        if adjacency.shape != (num_envs, num_uavs, num_uavs):
+            raise ValueError(
+                "adjacency must have shape (environments, sender, receiver)"
+            )
+        adjacency = adjacency.copy()
+        diagonal = np.arange(num_uavs)
+        adjacency[:, diagonal, diagonal] = False
+    receptions = receptions & adjacency[None, ...]
+    out_degrees = np.sum(adjacency, axis=-1)
+    share_count = out_degrees.astype(np.float64)[..., None] + 1.0
 
     advantages = np.transpose(local_advantages[..., 0], (2, 0, 1))
     zeta = np.concatenate(
@@ -126,9 +285,9 @@ def running_sum_ratio_consensus(local_advantages, receptions):
     rho = np.zeros((num_envs, num_uavs, num_uavs, zeta.shape[-1]), dtype=np.float64)
 
     for received in receptions:
-        sigma += zeta / num_uavs
+        sigma += zeta / share_count
         updated_rho = np.where(received[..., None], sigma[:, :, None, :], rho)
-        zeta = zeta / num_uavs + np.sum(updated_rho - rho, axis=1)
+        zeta = zeta / share_count + np.sum(updated_rho - rho, axis=1)
         rho = updated_rho
 
     estimate = zeta[..., :-1] / zeta[..., -1:]

@@ -95,7 +95,7 @@ def test_terminal_consensus_uses_positions_and_neighbor_distance_not_buffer_grap
         local_advantages, connected_result
     )
     np.testing.assert_allclose(
-        connected_noise[:, 0, 0, 0], [0.0, 1.0, 0.0], atol=1e-6
+        connected_noise[:, 0, 0, 0], [0.0, 0.0, 0.0], atol=1e-6
     )
 
     runner.neighbor_distance = 0.0
@@ -106,6 +106,23 @@ def test_terminal_consensus_uses_positions_and_neighbor_distance_not_buffer_grap
         self_only_result, local_advantages, atol=1e-6
     )
 
+
+def test_exact_mean_local_advantage_has_zero_normalized_residual():
+    local = np.asarray([1.0, 5.0, 9.0], dtype=np.float32)[:, None, None, None]
+    consensus = np.asarray([3.0, 5.0, 7.0], dtype=np.float32)[:, None, None, None]
+
+    residual = MECRunner.per_agent_consensus_residual(local, consensus)
+
+    assert residual[1, 0, 0, 0] == 0.0
+
+
+def test_exact_mean_local_advantage_detects_consensus_displacement():
+    local = np.asarray([0.0, 5.0, 10.0], dtype=np.float32)[:, None, None, None]
+    consensus = np.asarray([2.5, 7.5, 7.5], dtype=np.float32)[:, None, None, None]
+
+    residual = MECRunner.per_agent_consensus_residual(local, consensus)
+
+    assert residual[1, 0, 0, 0] == 1.0
 
 def test_zero_radius_is_strict_self_only_even_for_overlapping_uavs():
     env = SimpleNamespace(

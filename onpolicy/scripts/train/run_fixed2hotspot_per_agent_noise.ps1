@@ -18,6 +18,24 @@ param(
     [string]$EpisodeLayoutContextUnits = 'normalized_v1',
     [ValidateSet('relative_scaled_v1', 'absolute_raw_v2')]
     [string]$ActorMessageContract = 'relative_scaled_v1',
+    [ValidateSet('disabled', 'zero', 'geometry', 'task_summary')]
+    [string]$ActorMessageMode = 'task_summary',
+    [ValidateSet('homogeneous', 'heterogeneous')]
+    [string]$UAVResourceMode = 'homogeneous',
+    [double[]]$UAVResourceScaleFactors = @(),
+    [switch]$UAVResetCurriculum,
+    [ValidateSet('legacy', 'p0p7_10m_25m')]
+    [string]$UAVResetCurriculumSchedule = 'legacy',
+    [ValidateRange(0.0, 1.0)]
+    [double]$ClipParam = 0.15,
+    [ValidateRange(0.0, 1.0)]
+    [double]$Gamma = 0.99,
+    [ValidateRange(1, 100)]
+    [int]$PpoEpoch = 4,
+    [ValidateRange(0.0, 1.0)]
+    [double]$AssociationThreshold = 0.5,
+    [switch]$DisableOffloadDeadlineFilter,
+    [string]$ModelDir = '',
     [string]$UserName = $env:USERNAME,
     [string]$ExperimentName = ''
 )
@@ -28,6 +46,16 @@ $trainScript = Join-Path $repoRoot 'onpolicy\scripts\train\train_mec.py'
 
 if (-not (Test-Path -LiteralPath $trainScript)) {
     throw "Training entry point not found: $trainScript"
+}
+
+if ($ModelDir) {
+    if (-not (Test-Path -LiteralPath $ModelDir -PathType Container)) {
+        throw "Warm-start model directory not found: $ModelDir"
+    }
+    $manifestPath = Join-Path $ModelDir 'checkpoint_manifest.json'
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Warm-start model directory has no checkpoint_manifest.json: $ModelDir"
+    }
 }
 
 $python = $env:MARL_PYTHON
@@ -147,8 +175,9 @@ $trainArgs = @(
     '--layer_N', '2',
     '--lr', '0.0001',
     '--critic_lr', '0.0005',
-    '--clip_param', '0.15',
-    '--ppo_epoch', '4',
+    '--clip_param', $ClipParam,
+    '--gamma', $Gamma,
+    '--ppo_epoch', $PpoEpoch,
     '--num_mini_batch', '1',
     '--entropy_coef', '0',
     '--use_valuenorm',
@@ -159,9 +188,11 @@ $trainArgs = @(
     '--ego_query_critic',
     '--local_reward',
     '--continuous_associate',
+    '--association_threshold', $AssociationThreshold,
     '--not_served_rew_to_nearest',
     '--cartesian_flight',
-    '--actor_message_mode', 'task_summary',
+    '--actor_message_mode', $ActorMessageMode,
+    '--uav_resource_mode', $UAVResourceMode,
     '--actor_message_pool', 'receiver_gated_sum',
     '--actor_message_contract', $ActorMessageContract,
     '--spatial_flight_actor',
@@ -172,9 +203,33 @@ $trainArgs = @(
     '--noise_scale', $NoiseScale
 )
 
+if ($UAVResourceMode -eq 'heterogeneous') {
+    if ($UAVResourceScaleFactors.Count -ne 5) {
+        throw "Five-UAV heterogeneous mode requires exactly 5 resource scale factors. Got $($UAVResourceScaleFactors.Count)."
+    }
+    $resourceScaleArgs = @($UAVResourceScaleFactors | ForEach-Object {
+        $_.ToString('0.################', [System.Globalization.CultureInfo]::InvariantCulture)
+    })
+    $trainArgs += '--uav_resource_scale_factors'
+    $trainArgs += $resourceScaleArgs
+}
+
 if ($EpisodeLayoutContext) {
     $trainArgs += '--episode_layout_context'
     $trainArgs += @('--episode_layout_context_units', $EpisodeLayoutContextUnits)
+}
+
+if ($UAVResetCurriculum) {
+    $trainArgs += '--uav_reset_curriculum'
+    $trainArgs += @('--uav_reset_curriculum_schedule', $UAVResetCurriculumSchedule)
+}
+
+if ($DisableOffloadDeadlineFilter) {
+    $trainArgs += '--disable_offload_deadline_filter'
+}
+
+if ($ModelDir) {
+    $trainArgs += @('--model_dir', $ModelDir)
 }
 
 Write-Host "Experiment : $ExperimentName"
@@ -182,7 +237,12 @@ Write-Host "Noise scale: $NoiseScale"
 Write-Host "MD lifetime: $MdLifetime"
 Write-Host "UAV v_max  : $UAVMaxSpeed"
 Write-Host "Layout     : $HotspotLayoutMode"
-Write-Host "Message    : $ActorMessageContract"
+Write-Host "Actor msg  : $ActorMessageMode ($ActorMessageContract)"
+Write-Host "Resources  : $UAVResourceMode $(if ($UAVResourceMode -eq 'heterogeneous') { '[' + ($resourceScaleArgs -join ', ') + ']' } else { '[1, 1, 1, 1, 1]' })"
+Write-Host "UAV reset  : $(if ($UAVResetCurriculum) { 'curriculum ' + $UAVResetCurriculumSchedule } else { 'fixed' })"
+Write-Host "PPO config : clip=$ClipParam gamma=$Gamma epochs=$PpoEpoch"
+Write-Host "Association: psi=$AssociationThreshold"
+Write-Host "Delay filter: $(if ($DisableOffloadDeadlineFilter) { 'disabled' } else { 'enabled' })"
 Write-Host "Seed       : $Seed"
 Write-Host "Rollouts   : $RolloutThreads"
 Write-Host "Log        : $logPath"

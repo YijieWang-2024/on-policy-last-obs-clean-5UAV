@@ -204,3 +204,43 @@
 - Added `EpisodeLength`/`MDLifetime` to the generic launcher and a Fixed600-v30-R520-MD12 unreliable wrapper.
 - Fixed smoke-only integration bugs: string `save_dir` path joining and avoiding GRU checkpoint publication in `last_obs` mode.
 - Verification: `95 passed`; four 2-step runner smokes passed. Test artifacts under `onpolicy/scripts/results/` remain ignored.
+## 2026-08-13 MD-GRU estimator audit
+
+- Read paper IV-D lines 920--1164 and pseudocode 1272--1295 against `md_state_reconstruction.py` and separated MEC runner.
+- Confirmed critic-only path: Type-S loss selects direct/surrogate sender token; actor observation is unchanged; reconstructed NumPy state severs PPO gradient into estimator.
+- Replaced cross-UAV shared predictor with receiver-local models and optimizers while retaining per-session online hidden.
+- Replaced per-rollout stale-hidden reservoir with bounded cross-episode raw-sequence replay; reset online beliefs at episode boundaries only.
+- Predictor update is Smooth-L1 supervised, recomputes hidden with current parameters, gradient-clips, and remains separate from PPO.
+- Runner order is now `compute returns -> PPO actor/critic -> predictor supervised update -> next rollout`, so the estimator remains frozen for each on-policy batch.
+- After PPO `after_update()`, refreshed predictor state is written to buffer slot 0 (the next-rollout initial state), not stale terminal slot -1.
+- Added `-CPUOnly` launcher plumbing. Resource audit before testing: 32.56 GB free RAM, 30--45% CPU, three active train_mec jobs, GPU 23863/24576 MiB. No active job was stopped or modified.
+- CPU test evidence: all 15 reconstruction test functions passed their Python assertions in the isolated CPU environment; an `os._exit(0)` harness after all assertions produced explicit `EXIT=0` and avoided the known interpreter native cleanup crash. A standalone 8x8 GRU script outside the repo reproduces `0xC0000005` under `CUDA_VISIBLE_DEVICES=-1`; `torch.autograd.grad` reported finite gradients before native-process failure. Treat this as logic-level validation, not an accepted end-to-end PPO training pass.
+
+## 2026-08-13 speed-baseline compatibility re-audit
+
+- Added `UNRELIABLE_SPEED_COMPATIBILITY_AUDIT_20260813.md`, grounded in the executed speed/no-message args, Git ancestry, and current call paths.
+- Confirmed both reliable Metropolis and unreliable running-sum use reset-before terminal UAV positions copied from `info`, not auto-reset positions.
+- Clarified that speed-compatible `per_agent_noise` uses running-sum only for a residual-scaled perturbation of local advantage; paper-IV-D direct running-sum is `pure_consensus`.
+- Exposed `AdvantageMode`, `NoiseScale`, `CommunicationDistance`, and `RunningSumRounds` in the fixed launcher; disabled Actor-message runs now still persist pool/contract args explicitly.
+- Fixed the zero-denominator per-agent residual endpoint, the GRU speed codec for the formal `[0,5] m/s` range, and the separated eval 5/8-field interface with frozen normalization statistics.
+- CPU-only isolated assertions: 17 MD reconstruction/GRU, 11 reliable consensus, 7 unreliable communication, and 2 eval/normalization tests passed; launcher argv probes passed for both speed-compatible per-agent-noise and paper-style pure-consensus modes. No GPU or full PPO run was started.
+- Split GRU replay capacity/train budget/readiness into `32768/512/512` and batched the variable-length sequence unfold; this prevents full-replay training after every PPO update and prevents a one-sample predictor from replacing last-observation.
+- Corrected Type-S reception-rate accounting to count only geometry-defined receiver/sender attempts and to reset counters per episode. This was superseded on 2026-08-19 by hard `d_com` gating inside the shared sampler, so neither Type-S nor Type-A now retains an internal all-pairs draw.
+
+## 2026-08-19 reliable-mainline semantic sync
+
+- Audited `agent/dcppo-runtime-optimization` commits from 2026-08-14 through 2026-08-19. Runtime-relevant deltas are threshold/deadline filtering (`73845de`) and generic UAV/resource support (`898bdb6`/`0bcb887`); the remaining commits are launchers, plots, blob normalization, docs, or history reconciliation.
+- Ported one configurable association threshold through ACTLayer and MEC execution, the optional offload deadline prefilter, generic UAV counts/explicit starts, heterogeneous per-UAV bandwidth and CPU capacities, and agent-count-aware evaluation snapshots.
+- Preserved all pre-existing unreliable Type-S/Type-A, receiver-local GRU replay/training, terminal-position consensus, and advantage processing changes in the dirty worktree.
+- Added a generic six-UAV unreliable launcher and exposed threshold/resource/PPO controls in the formal five-UAV launcher.
+- Verification used `CUDA_VISIBLE_DEVICES=-1`: Python compile passed, four PowerShell scripts parsed, 5/6-UAV argv probes passed, targeted tests were 74/74, and the complete suite was 107/107 with two existing empty-statistic warnings. No training process or GPU workload was started.
+
+## 2026-08-19 physical-range running-sum and GRU data audit
+
+- Three independent reviews converged on the same communication fix: nominal range adjacency must be explicit, out-degree cannot be inferred from successful receptions, and running-sum must divide by `out_degree+1` rather than UAV count.
+- Added one-source `P_c <-> d_com` link-budget resolution with a 5 m consistency guard, defaults 520 m / 1.1809658836 W / 10 dB / 50 rounds, strict R0 no-edge support, and finite-value validation.
+- Type-A packet rate now uses only nominal directed range edges. Non-edge forged receptions are filtered inside the consensus primitive without mutating the caller's array.
+- Retained natural reobservation replay for MD-GRU. Added distinct replay-label and rollout-query age distributions plus matched prequential GRU/last-observation RMSE; synthetic missingness remains out of the default method.
+- Corrected the per-agent-noise zero-denominator endpoint. A consensus estimate displaced from the global mean now yields residual 1 even if that agent's local advantage initially equalled the mean.
+- Resource check before tests: 39.57/63.91 GB RAM free, reported CPU load 0%, no Python process. With CUDA hidden, 48 targeted tests passed and the full suite passed 117 tests with two pre-existing warnings; no long training was launched.
+- After a second resource check (39.56 GB free, no Python process), ran one 2-slot/1-worker CPU-only formal-launcher smoke. PPO completed one update and published actor/critic/normer files, checkpoint manifest, and receiver-local `md_gru_shared.pt`; resolved args were d_com=520, Pc=1.1809658836179866, K=10, H=50, per_agent_noise, md_gru, cuda=false.

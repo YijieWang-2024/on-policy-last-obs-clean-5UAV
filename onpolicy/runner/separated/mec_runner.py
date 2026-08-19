@@ -13,6 +13,7 @@ from onpolicy.utils.checkpoint_manifest import (
 from onpolicy.utils.util import get_shape_from_obs_space
 from onpolicy.utils.md_state_reconstruction import MDStateReconstructor
 from onpolicy.utils.unreliable_communication import (
+    communication_range_mask,
     running_sum_ratio_consensus,
     sample_configured_timely_receptions,
 )
@@ -163,6 +164,7 @@ class MECRunner(Runner):
 
             # compute return and update network
             self.compute()
+            train_infos = self.train()
             if self.state_reconstruction == "md_gru":
                 if not np.all(np.all(dones, axis=1)):
                     raise RuntimeError(
@@ -188,6 +190,8 @@ class MECRunner(Runner):
                             prediction_training_seconds
                         ),
                     })
+                for agent_id, prediction_info in enumerate(self.md_prediction_infos):
+                    train_infos[agent_id].update(prediction_info)
                 self.state_reconstructor.reset()
                 refreshed_share_obs, refreshed_attention = (
                     self.state_reconstructor.reconstruct(
@@ -202,10 +206,13 @@ class MECRunner(Runner):
                     refreshed_share_obs
                 )
                 for agent_id in range(self.num_agents):
-                    self.buffer[agent_id].share_obs[-1] = (
+                    # PPO train() already called buffer.after_update(), so the
+                    # next rollout starts from slot 0 rather than the old
+                    # terminal slot -1.
+                    self.buffer[agent_id].share_obs[0] = (
                         refreshed_share_obs[:, agent_id]
                     )
-                    self.buffer[agent_id].attention_active_mask[-1] = (
+                    self.buffer[agent_id].attention_active_mask[0] = (
                         refreshed_attention[:, agent_id]
                     )
             elif self.state_reconstructor is not None:
@@ -224,7 +231,8 @@ class MECRunner(Runner):
                     }
                     for _ in range(self.n_UAVs)
                 ]
-            train_infos = self.train()
+                for agent_id, prediction_info in enumerate(self.md_prediction_infos):
+                    train_infos[agent_id].update(prediction_info)
 
             if self.whether_average_network_parameters and (episode % self.average_network_parameters_interval == 0):
                 self.average_network_parameters()
@@ -762,8 +770,6 @@ class MECRunner(Runner):
             self.trainer[agent_id].prep_training()
             train_info = self.trainer[agent_id].train(self.buffer[agent_id])
             train_info.update(consensus_infos)
-            if self.state_reconstructor is not None:
-                train_info.update(self.md_prediction_infos[agent_id])
             if getattr(self.all_args, "cartesian_flight", False):
                 actor_act = self.trainer[agent_id].policy.actor.act
                 flight_head = actor_act.action_out if actor_act.mujoco_box else actor_act.action_outs[0]
@@ -859,38 +865,47 @@ class MECRunner(Runner):
         # eval_episode_rewards = []
         # one_episode_rewards = []
 
-        eval_obs, eval_share_obs, eval_available_actions = self.eval_envs.reset()
-        eval_obs = self.normer._obfilt(eval_obs)
-        eval_share_obs = self.normer._statefilt(eval_share_obs)
+        eval_obs, eval_share_obs, eval_available_actions, _, eval_attention = (
+            self.eval_envs.reset()
+        )
+        eval_obs, eval_share_obs, _ = normalize_batch(
+            self.normer, eval_obs, eval_share_obs, update=False
+        )
 
         eval_rnn_states = np.zeros((self.n_eval_rollout_threads, self.num_agents, self.recurrent_N, self.hidden_size), dtype=np.float32)
         eval_masks = np.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
 
         while True:
-            self.trainer.prep_rollout()
-            if self.algorithm_name == "mat" or self.algorithm_name == "mat_dec":
-                eval_actions, eval_rnn_states = \
-                    self.trainer.policy.act(np.concatenate(eval_share_obs),
-                                            np.concatenate(eval_obs),
-                                            np.concatenate(eval_rnn_states),
-                                            np.concatenate(eval_masks),
-                                            np.concatenate(eval_available_actions),
-                                            deterministic=True)
-            else:
-                eval_actions, eval_rnn_states = \
-                    self.trainer.policy.act(np.concatenate(eval_obs),
-                                            np.concatenate(eval_rnn_states),
-                                            np.concatenate(eval_masks),
-                                            np.concatenate(eval_available_actions),
-                                            deterministic=True)
-            eval_actions = np.array(np.split(_t2n(eval_actions), self.n_eval_rollout_threads))
-            eval_rnn_states = np.array(np.split(_t2n(eval_rnn_states), self.n_eval_rollout_threads))
+            action_collector = []
+            rnn_state_collector = []
+            for agent_id in range(self.num_agents):
+                self.trainer[agent_id].prep_rollout()
+                action, rnn_state = self.trainer[agent_id].policy.act(
+                    eval_obs[:, agent_id],
+                    eval_rnn_states[:, agent_id],
+                    eval_masks[:, agent_id],
+                    eval_available_actions[:, agent_id],
+                    deterministic=True,
+                    attention_active_mask=eval_attention[:, agent_id],
+                )
+                action_collector.append(_t2n(action))
+                rnn_state_collector.append(_t2n(rnn_state))
+            eval_actions = np.stack(action_collector, axis=1)
+            eval_rnn_states = np.stack(rnn_state_collector, axis=1)
             
             # Obser reward and next obs
-            eval_obs, eval_share_obs, eval_rewards, eval_dones, eval_infos, eval_available_actions = self.eval_envs.step(eval_actions)
-            eval_obs = self.normer._obfilt(eval_obs)
-            eval_share_obs = self.normer._statefilt(eval_share_obs)
-            eval_rewards = self.normer._rewsfilt(eval_rewards, eval_dones)
+            eval_obs, eval_share_obs, eval_rewards, eval_dones, eval_infos, \
+                eval_available_actions, _, eval_attention = self.eval_envs.step(
+                    eval_actions
+                )
+            eval_obs, eval_share_obs, eval_rewards = normalize_batch(
+                self.normer,
+                eval_obs,
+                eval_share_obs,
+                eval_rewards,
+                eval_dones,
+                update=False,
+            )
 
             # one_episode_rewards.append(eval_rewards)
 
@@ -898,7 +913,7 @@ class MECRunner(Runner):
 
             eval_rnn_states[eval_dones_env == True] = np.zeros(((eval_dones_env == True).sum(), self.num_agents, *eval_rnn_states.shape[2:]), dtype=np.float32)
 
-            eval_masks = np.ones((self.all_args.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
+            eval_masks = np.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
             eval_masks[eval_dones_env == True] = np.zeros(((eval_dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
 
             for eval_i in range(self.n_eval_rollout_threads):
@@ -1252,6 +1267,9 @@ class MECRunner(Runner):
 
     def run_unreliable_consensus(self, local_advantages):
         """Run Type-A running-sum consensus over the configured physical channel."""
+        range_graph = communication_range_mask(
+            self.uav_positions, self.neighbor_distance
+        )
         receptions = sample_configured_timely_receptions(
             self.uav_positions,
             self.all_args.running_sum_rounds,
@@ -1260,10 +1278,14 @@ class MECRunner(Runner):
             payload_bits=self.all_args.advantage_payload_bits,
             deadline_ms=self.all_args.advantage_deadline_ms,
         )
-        estimate = running_sum_ratio_consensus(local_advantages, receptions)
-        off_diagonal = ~np.eye(self.num_agents, dtype=bool)
-        packets = receptions[:, :, off_diagonal]
-        rate = float(np.mean(packets)) if packets.size else 0.0
+        estimate = running_sum_ratio_consensus(
+            local_advantages,
+            receptions,
+            adjacency=range_graph,
+        )
+        attempted = receptions.shape[0] * int(np.sum(range_graph))
+        received = int(np.sum(receptions & range_graph[None, ...]))
+        rate = received / attempted if attempted else 0.0
         return estimate, rate
 
     def _communicate_advantages(self, local_advantages):
@@ -1343,9 +1365,9 @@ class MECRunner(Runner):
         """Return one bounded consensus-error magnitude per UAV/sample.
 
         Unlike ``normalized_consensus_residual``, this keeps the UAV axis:
-        ``|A_consensus_i - mean(A)| / |A_local_i - mean(A)|``.  The fallback
-        is one for a zero-over-zero entry so an R=0/self-only graph retains
-        the intended unit noise magnitude for every UAV.
+        ``|A_consensus_i - mean(A)| / |A_local_i - mean(A)|``.  If a local
+        value already equals the exact mean, a still-exact estimate has zero
+        residual while an estimate pushed away from the mean has unit residual.
         """
         local_advantages = np.asarray(local_advantages)
         consensus_advantages = np.asarray(consensus_advantages)
@@ -1359,7 +1381,7 @@ class MECRunner(Runner):
         residual = np.divide(
             numerator,
             denominator,
-            out=np.ones_like(numerator),
+            out=np.where(numerator <= epsilon, 0.0, 1.0),
             where=denominator > epsilon,
         )
         return np.clip(residual, 0.0, 1.0)

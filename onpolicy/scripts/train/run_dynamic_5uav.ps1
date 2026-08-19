@@ -4,9 +4,15 @@ param(
     [int]$Seed = 2,
     [long]$NumEnvSteps = 100000000,
     [int]$RolloutThreads = 64,
+    [int]$TrainingThreads = 1,
+    [ValidateRange(2, 25)]
+    [int]$NumUAVs = 5,
+    [ValidateRange(1, 1000)]
+    [int]$NumGUs = 60,
+    [int[]]$MDArrivalsPerRegion = @(),
     [int]$EpisodeLength = 400,
     [int]$MDLifetime = 10,
-    [int]$CommunicationDistance = 0,
+    [Nullable[double]]$CommunicationDistance = $null,
     [int]$ActorNeighborDistance = 260,
     [int]$ConsensusRounds = 50,
     [ValidateSet('local', 'mixed_consensus', 'pure_consensus', 'externality_consensus', 'legacy_noise', 'per_agent_noise')]
@@ -14,6 +20,9 @@ param(
     [double]$NoiseScale = 0.12,
     [double]$ConsensusAlpha = 0.5,
     [double]$ExternalityBeta = 0.1,
+    [ValidateRange(0.0, 1.0)]
+    [double]$AssociationThreshold = 0.5,
+    [switch]$DisableOffloadDeadlineFilter,
     [ValidateSet('disabled', 'zero', 'geometry', 'task_summary')]
     [string]$ActorMessageMode = 'disabled',
     [ValidateSet('mean', 'receiver_gated_sum')]
@@ -23,6 +32,10 @@ param(
     [int[]]$HotspotLayoutIndices = @(),
     [ValidateSet('line', 'staggered')]
     [string]$FiveUAVStartLayout = 'line',
+    [double[]]$UAVStartPositions = @(),
+    [ValidateSet('homogeneous', 'heterogeneous')]
+    [string]$UAVResourceMode = 'homogeneous',
+    [double[]]$UAVResourceScaleFactors = @(),
     [ValidateSet(600, 700)]
     [int]$MapSize = 600,
     [int]$UAVMaxSpeed = 30,
@@ -37,7 +50,10 @@ param(
     [ValidateSet('zero', 'last_obs', 'md_gru')]
     [string]$StateReconstruction = 'zero',
     [switch]$CriticMDMetadata,
-    [int]$RunningSumRounds = 30,
+    [int]$RunningSumRounds = 50,
+    [Nullable[double]]$A2ATransmitPowerW = $null,
+    [double]$A2ARicianKDb = 10.0,
+    [double]$A2ADistanceToleranceM = 5.0,
     [double]$StatePayloadBits = 8000,
     [double]$StateDeadlineMs = 13.54,
     [double]$AdvantagePayloadBits = 16000,
@@ -47,9 +63,19 @@ param(
     [int]$MDGRUEpochs = 4,
     [int]$MDGRUBatchSize = 512,
     [int]$MDGRUMaxSamples = 32768,
-    [double]$MDPredictionLossCoef = 0.1,
+    [int]$MDGRUTrainSamples = 512,
+    [int]$MDGRUMinReadySamples = 512,
+    [double]$MDPredictionLossCoef = 1.0,
+    [ValidateRange(0.0, 1.0)]
+    [double]$ClipParam = 0.15,
+    [ValidateRange(0.0, 1.0)]
+    [double]$Gamma = 0.99,
+    [ValidateRange(1, 100)]
+    [int]$PpoEpoch = 4,
+    [string]$ModelDir = '',
     [string]$Python = 'python',
     [string]$ExperimentName = '',
+    [switch]$CPUOnly,
     [switch]$CartesianFlight,
     [switch]$ActorNeighborObs,
     [switch]$SpatialFlightActor,
@@ -78,16 +104,39 @@ if ($HotspotLayoutMode -eq 'episode_template12_600_200' -and $MapSize -ne 600) {
 if ($MapSize -eq 600 -and $HotspotLayoutMode -in @('episode_template12', 'episode_moving_template4')) {
     throw "$HotspotLayoutMode requires MapSize=700. Use episode_template12_600_200 for the 600m Random12 protocol."
 }
+$env:PYTHONIOENCODING = 'utf-8'
 $env:PYTHONUTF8 = '1'
+$env:PYTHONUNBUFFERED = '1'
 $env:OMP_NUM_THREADS = '1'
 $env:MKL_NUM_THREADS = '1'
 $env:OPENBLAS_NUM_THREADS = '1'
 $env:NUMEXPR_NUM_THREADS = '1'
-if ($CommunicationDistance -eq 0) {
-    $CommunicationDistance = if ($CommunicationMode -eq 'unreliable') { 520 } else { 260 }
+if ($null -eq $CommunicationDistance -and $null -eq $A2ATransmitPowerW) {
+    $CommunicationDistance = 520
 }
 if ($EpisodeLength -le 0 -or $MDLifetime -le 0) {
     throw 'EpisodeLength and MDLifetime must be positive.'
+}
+$expectedStartValues = 2 * $NumUAVs
+if ($UAVStartPositions.Count -notin @(0, $expectedStartValues)) {
+    throw "UAVStartPositions must be empty or contain exactly $expectedStartValues values for $NumUAVs UAVs."
+}
+if ($MDArrivalsPerRegion.Count -notin @(0, 2)) {
+    throw 'MDArrivalsPerRegion must be empty or contain exactly two values.'
+}
+if ($MDArrivalsPerRegion.Count -eq 2 -and ($MDArrivalsPerRegion[0] -lt 0 -or $MDArrivalsPerRegion[1] -lt 0)) {
+    throw 'MDArrivalsPerRegion values must be non-negative.'
+}
+if ($UAVResourceMode -eq 'heterogeneous' -and $UAVResourceScaleFactors.Count -ne $NumUAVs) {
+    throw "Heterogeneous resource mode requires exactly $NumUAVs scale factors."
+}
+if ($ModelDir) {
+    if (-not (Test-Path -LiteralPath $ModelDir -PathType Container)) {
+        throw "Warm-start model directory not found: $ModelDir"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $ModelDir 'checkpoint_manifest.json') -PathType Leaf)) {
+        throw "Warm-start model directory has no checkpoint_manifest.json: $ModelDir"
+    }
 }
 if ($StateReconstruction -ne 'zero' -and (
     $Method -ne 'dcppo' -or $CommunicationMode -ne 'unreliable'
@@ -100,12 +149,17 @@ if (-not $ExperimentName) {
 $is600mOnePlusFour = $HotspotLayoutMode -in @(
     'episode_template4_600_200', 'episode_template12_600_200'
 )
-$regionArrivals = if ($is600mOnePlusFour) {
+$regionArrivals = if ($MDArrivalsPerRegion.Count -eq 2) {
+    @($MDArrivalsPerRegion[0].ToString(), $MDArrivalsPerRegion[1].ToString())
+} elseif ($is600mOnePlusFour) {
     @('1', '4')
 } else {
     @('1', '5')
 }
 $regionalArrivalTotal = [int]$regionArrivals[0] + [int]$regionArrivals[1]
+if ($NumGUs -lt $regionalArrivalTotal * $MDLifetime) {
+    throw "NumGUs must be at least arrivals-per-slot * MDLifetime ($($regionalArrivalTotal * $MDLifetime))."
+}
 
 $arguments = @(
     $trainScript,
@@ -115,8 +169,8 @@ $arguments = @(
     '--user_name', $env:USERNAME,
     '--seed', $Seed,
     '--share_policy',
-    '--n_UAVs', '5',
-    '--n_GUs', '60',
+    '--n_UAVs', $NumUAVs,
+    '--n_GUs', $NumGUs,
     '--max_GUs_in_range', '20',
     '--dynamic_md',
     '--md_arrivals_min', $regionalArrivalTotal,
@@ -132,23 +186,27 @@ $arguments = @(
     '--x_min_gu', '0', '--x_max_gu', $MapSize,
     '--y_min_gu', '0', '--y_max_gu', $MapSize,
     '--fix_hotspot',
-    '--max_UAVs_in_neighbor', '5',
-    '--max_UAVs_obs_concat', '5',
+    '--max_UAVs_in_neighbor', $NumUAVs,
+    '--max_UAVs_obs_concat', $NumUAVs,
     '--neighbor_R', $ActorNeighborDistance,
     '--state_is_k_hops',
     '--all_uav_k_hops',
     '--local_reward',
     '--continuous_associate',
+    '--association_threshold', $AssociationThreshold,
+    '--uav_resource_mode', $UAVResourceMode,
     '--not_served_rew_to_nearest',
     '--n_rollout_threads', $RolloutThreads,
+    '--n_training_threads', $TrainingThreads,
     '--episode_length', $EpisodeLength,
     '--num_env_steps', $NumEnvSteps,
     '--hidden_size', '256',
     '--layer_N', '2',
     '--lr', '0.0001',
     '--critic_lr', '0.0005',
-    '--clip_param', '0.15',
-    '--ppo_epoch', '4',
+    '--clip_param', $ClipParam,
+    '--gamma', $Gamma,
+    '--ppo_epoch', $PpoEpoch,
     '--num_mini_batch', '1',
     '--entropy_coef', '0',
     '--B', '30000000',
@@ -165,6 +223,18 @@ $arguments = @(
     '--mu_r', '64',
     '--use_valuenorm'
 )
+
+if ($UAVStartPositions.Count -gt 0) {
+    $arguments += @('--uav_start_positions') + $UAVStartPositions
+}
+
+if ($UAVResourceMode -eq 'heterogeneous') {
+    $resourceScaleArgs = @($UAVResourceScaleFactors | ForEach-Object {
+        $_.ToString('0.################', [System.Globalization.CultureInfo]::InvariantCulture)
+    })
+    $arguments += '--uav_resource_scale_factors'
+    $arguments += $resourceScaleArgs
+}
 
 if ($HotspotLayoutIndices.Count -gt 0) {
     $arguments += @('--hotspot_layout_indices') + $HotspotLayoutIndices
@@ -184,11 +254,9 @@ if ($CartesianFlight) {
 if ($ActorNeighborObs) {
     $arguments += '--actor_neighbor_obs'
 }
-if ($ActorMessageMode -ne 'disabled') {
-    $arguments += @('--actor_message_mode', $ActorMessageMode)
-    $arguments += @('--actor_message_pool', $ActorMessagePool)
-    $arguments += @('--actor_message_contract', $ActorMessageContract)
-}
+$arguments += @('--actor_message_mode', $ActorMessageMode)
+$arguments += @('--actor_message_pool', $ActorMessagePool)
+$arguments += @('--actor_message_contract', $ActorMessageContract)
 if ($SpatialFlightActor) {
     $arguments += '--spatial_flight_actor'
 }
@@ -211,15 +279,33 @@ if ($null -ne $MDVelocityUpdateClipMax) {
 if ($CriticMDMetadata) {
     $arguments += '--critic_md_metadata'
 }
+if ($DisableOffloadDeadlineFilter) {
+    $arguments += '--disable_offload_deadline_filter'
+}
+if ($ModelDir) {
+    $arguments += @('--model_dir', $ModelDir)
+}
+if ($CPUOnly) {
+    # The Python CLI uses the legacy store_false spelling: passing --cuda
+    # explicitly selects torch.device('cpu').
+    $arguments += '--cuda'
+}
 
 if ($Method -eq 'dcppo') {
     $arguments += @(
-        '--neighbor_distance', $CommunicationDistance,
         '--advantage_mode', $AdvantageMode,
         '--consensus_alpha', $ConsensusAlpha,
         '--externality_beta', $ExternalityBeta,
-        '--communication_mode', $CommunicationMode
+        '--communication_mode', $CommunicationMode,
+        '--a2a_rician_k_db', $A2ARicianKDb,
+        '--a2a_distance_tolerance_m', $A2ADistanceToleranceM
     )
+    if ($null -ne $CommunicationDistance) {
+        $arguments += @('--neighbor_distance', $CommunicationDistance)
+    }
+    if ($null -ne $A2ATransmitPowerW) {
+        $arguments += @('--a2a_transmit_power_w', $A2ATransmitPowerW)
+    }
     if ($CommunicationMode -eq 'reliable') {
         $arguments += @('--n_iterations', $ConsensusRounds)
     } else {
@@ -238,6 +324,8 @@ if ($Method -eq 'dcppo') {
                 '--md_gru_epochs', $MDGRUEpochs,
                 '--md_gru_batch_size', $MDGRUBatchSize,
                 '--md_gru_max_samples', $MDGRUMaxSamples,
+                '--md_gru_train_samples', $MDGRUTrainSamples,
+                '--md_gru_min_ready_samples', $MDGRUMinReadySamples,
                 '--md_prediction_loss_coef', $MDPredictionLossCoef
             )
         }
@@ -254,7 +342,9 @@ if ($Method -eq 'dcppo') {
 } elseif ($Method -eq 'mappo') {
     $arguments += @('--neighbor_distance', '1000')
 } else {
-    $arguments += @('--neighbor_distance', $CommunicationDistance)
+    if ($null -ne $CommunicationDistance) {
+        $arguments += @('--neighbor_distance', $CommunicationDistance)
+    }
 }
 
 Push-Location $repoRoot

@@ -7,7 +7,7 @@ from onpolicy.config import get_config
 from onpolicy.envs.mec.mec import MEC
 from onpolicy.scripts.train.train_mec import parse_args
 from onpolicy.utils.md_roster import order_md_candidates
-from onpolicy.utils.md_state_reconstruction import MDStateReconstructor, _Reservoir
+from onpolicy.utils.md_state_reconstruction import MDStateReconstructor, _SequenceReplay
 
 
 def _args(mode="last_obs", **overrides):
@@ -47,6 +47,8 @@ def _args(mode="last_obs", **overrides):
         "md_gru_epochs": 2,
         "md_gru_batch_size": 8,
         "md_gru_max_samples": 128,
+        "md_gru_train_samples": 128,
+        "md_gru_min_ready_samples": 1,
     }
     settings.update(overrides)
     for name, value in settings.items():
@@ -195,20 +197,115 @@ def test_reliable_and_unreliable_modes_keep_actor_input_identical():
     np.testing.assert_allclose(reliable_obs, unreliable_obs)
 
 
-def test_shared_md_gru_checkpoint_round_trip_preserves_readiness():
+def test_six_uav_unreliable_gru_uses_generic_state_and_predictor_shapes():
+    args = _args(
+        mode="md_gru",
+        n_UAVs=6,
+        n_GUs=72,
+        max_UAVs_obs_concat=6,
+        max_UAVs_in_neighbor=6,
+        md_arrivals_min=6,
+        md_arrivals_max=6,
+        md_arrivals_per_region=[1, 5],
+        md_lifetime_min=12,
+        md_lifetime_max=12,
+        hotspot_layout_mode="episode_template4_600_200",
+        uav_start_positions=[
+            110, 180, 220, 180, 330, 180,
+            440, 180, 550, 180, 400, 400,
+        ],
+        neighbor_distance=520,
+        episode_layout_context=True,
+        episode_layout_context_units="meters_v2",
+    )
+    env = MEC(args)
+    env.seed(47)
+    obs, state, _, _, attention = env.reset()
+
+    assert obs.shape[0] == 6
+    assert state.shape == (6, env.state_dim)
+    assert attention.shape == (6, 6)
+    np.testing.assert_allclose(env.uav_positions[:, :2], np.asarray(
+        [[110, 180], [220, 180], [330, 180],
+         [440, 180], [550, 180], [400, 400]],
+        dtype=np.float32,
+    ))
+
+    reconstructor = MDStateReconstructor(args, torch.device("cpu"))
+    reconstructed, reconstructed_attention = reconstructor.reconstruct(
+        _batched(env.get_type_s_data())
+    )
+    assert len(reconstructor.predictors) == 6
+    assert len(reconstructor.banks) == 6
+    assert reconstructed.shape == (1, 6, env.state_dim)
+    assert reconstructed_attention.shape == (1, 6, 6)
+    assert np.all(np.isfinite(reconstructed))
+
+    action_dim = sum(int(np.prod(space.shape)) for space in env.action_space.spaces)
+    action = np.random.default_rng(53).uniform(
+        0.1, 0.9, (args.n_UAVs, action_dim)
+    ).astype(np.float32)
+    next_obs, rewards, _, next_state, _, _, _, next_attention = env.step(action)
+    assert next_obs.shape[0] == 6
+    assert rewards.shape[0] == 6
+    assert next_state.shape == (6, env.state_dim)
+    assert next_attention.shape == (6, 6)
+    next_reconstructed, _ = reconstructor.reconstruct(
+        _batched(env.get_type_s_data())
+    )
+    assert np.all(np.isfinite(next_reconstructed))
+
+
+def test_heterogeneous_resources_preserve_total_budget_under_unreliable_mode():
+    factors = np.asarray([1.0, 1.3, 0.7, 1.3, 0.7])
+    args = _args(
+        mode="md_gru",
+        uav_resource_mode="heterogeneous",
+        uav_resource_scale_factors=factors,
+    )
+    env = MEC(args)
+
+    np.testing.assert_allclose(env.uav_bandwidth_capacities, env.B * factors)
+    np.testing.assert_allclose(env.uav_compute_capacities, env.F_m * factors)
+    np.testing.assert_allclose(env.uav_bandwidth_capacities.sum(), env.B * 5)
+    np.testing.assert_allclose(env.uav_compute_capacities.sum(), env.F_m * 5)
+
+
+def test_receiver_local_md_gru_checkpoint_round_trip_preserves_readiness():
     args = _args(mode="md_gru")
     source = MDStateReconstructor(args, torch.device("cpu"))
-    source.predictor_ready = True
+    source.predictor_ready = [True] * args.n_UAVs
     state = source.checkpoint_state()
     target = MDStateReconstructor(args, torch.device("cpu"))
 
     target.load_checkpoint_state(state)
 
-    assert target.predictor_ready
-    for source_parameter, target_parameter in zip(
-        source.predictor.parameters(), target.predictor.parameters()
+    assert all(target.predictor_ready)
+    for source_predictor, target_predictor in zip(
+        source.predictors, target.predictors
     ):
-        torch.testing.assert_close(source_parameter, target_parameter)
+        for source_parameter, target_parameter in zip(
+            source_predictor.parameters(), target_predictor.parameters()
+        ):
+            torch.testing.assert_close(source_parameter, target_parameter)
+
+
+def test_md_gru_speed_codec_covers_speed_branch_velocity_range():
+    args = _args(
+        mean_velocity=3.0,
+        md_velocity_init_max_factor=1.6,
+        md_velocity_update_clip_max=5.0,
+    )
+    reconstructor = MDStateReconstructor(args, torch.device("cpu"))
+    record = np.asarray(
+        [100.0, 20.0, 5.0, 0.2, 0.2, 5.0, 1e-10, 2e6, 5e8, 1.0]
+    )
+
+    encoded = reconstructor._encode_feature(record)
+    decoded = reconstructor._decode_feature(encoded)
+
+    assert encoded[2] <= 1.0
+    np.testing.assert_allclose(decoded[2], 5.0, atol=1e-6)
 
 
 def test_packet_selection_uses_configured_sort_then_caps_at_twenty():
@@ -431,70 +528,168 @@ def test_md_gru_collects_only_reobservation_targets_and_trains():
     lost["reception_mask"][0, 0, 1] = False
     lost["record_features"][0, 1, 0, 0] = 110
     reconstructor.reconstruct(lost)
-    assert not reconstructor.predictor_ready
+    assert not reconstructor.predictor_ready[0]
     bank = reconstructor.banks[0]
     remembered_slot = bank.find(0, 20)
     np.testing.assert_allclose(
         bank.estimate[0, remembered_slot], bank.last_feature[0, remembered_slot]
     )
-    assert not any(sample[0] == 0 for sample in reconstructor.reservoir.items)
+    assert not reconstructor.replays[0].items
 
     received = copy.deepcopy(lost)
     received["reception_mask"][0, 0, 1] = True
     received["record_features"][0, 1, 0, 0] = 120
     reconstructor.reconstruct(received)
-    assert sum(sample[0] == 0 for sample in reconstructor.reservoir.items) == 1
+    assert len(reconstructor.replays[0].items) == 1
 
     before = [parameter.detach().clone() for parameter in reconstructor.predictors[0].parameters()]
     metrics = reconstructor.train_predictors()
-    assert reconstructor.predictor_ready
+    assert reconstructor.predictor_ready[0]
     assert metrics[0]["md_prediction_samples"] == 1
+    assert metrics[0]["md_prediction_replay_size"] == 1
+    assert metrics[0]["md_prediction_replay_label_age2_fraction"] == 1.0
+    assert metrics[0]["md_prediction_rollout_query_age1_fraction"] == 1.0
     assert np.isfinite(metrics[0]["md_prediction_loss"])
     assert np.isfinite(metrics[0]["md_prediction_position_rmse_m"])
     assert any(
         not torch.equal(old, new)
         for old, new in zip(before, reconstructor.predictors[0].parameters())
     )
-
-
-def test_reservoir_selects_before_context_transfer_when_capacity_is_full():
-    reservoir = _Reservoir(capacity=1, seed=3)
-    selected, destinations = reservoir.plan_batch(1000)
-    context_hidden = np.zeros((len(selected), 8), dtype=np.float32)
-    context_input = np.zeros((len(selected), 8), dtype=np.float32)
-    ages = np.zeros((len(selected), 1), dtype=np.float32)
-    targets = np.zeros((len(selected), 7), dtype=np.float32)
-    reservoir.commit_batch(
-        destinations, 0, context_hidden, context_input, ages, targets
+    after = [
+        parameter.detach().clone()
+        for parameter in reconstructor.predictors[0].parameters()
+    ]
+    idle_metrics = reconstructor.train_predictors()
+    assert idle_metrics[0]["md_prediction_samples"] == 0
+    assert idle_metrics[0]["md_prediction_train_samples"] == 0
+    assert all(
+        torch.equal(old, new)
+        for old, new in zip(after, reconstructor.predictors[0].parameters())
     )
 
-    assert reservoir.seen == 1000
-    assert reservoir.copied == 1
-    assert len(reservoir.items) == 1
-    assert reservoir.items[0] is not None
+
+def test_natural_reobservations_preserve_age_distribution_without_fake_masks():
+    args = _args(mode="md_gru")
+    reconstructor = MDStateReconstructor(args, torch.device("cpu"))
+    data = _synthetic_data(args)
+    reconstructor.reconstruct(copy.deepcopy(data))
+
+    # Consecutive reception -> age 1.
+    reconstructor.reconstruct(copy.deepcopy(data))
+    # One missed slot -> age 2.
+    lost = copy.deepcopy(data)
+    lost["reception_mask"][0, 0, 1] = False
+    reconstructor.reconstruct(lost)
+    reconstructor.reconstruct(copy.deepcopy(data))
+    # Two missed slots -> age 3.
+    reconstructor.reconstruct(copy.deepcopy(lost))
+    reconstructor.reconstruct(copy.deepcopy(lost))
+    reconstructor.reconstruct(copy.deepcopy(data))
+
+    ages = [
+        int(round(item[1][0] * args.md_lifetime_max))
+        for item in reconstructor.replays[0].items
+    ]
+    assert ages == [1, 2, 3]
+    metrics = reconstructor.train_predictors()[0]
+    assert metrics["md_prediction_replay_label_count"] == 3
+    assert metrics["md_prediction_replay_label_age1_fraction"] == 1 / 3
+    assert metrics["md_prediction_replay_label_age2_fraction"] == 1 / 3
+    assert metrics["md_prediction_replay_label_age3_fraction"] == 1 / 3
 
 
-def test_reservoir_commits_last_source_for_repeated_batch_destinations():
-    class FixedDraws:
-        @staticmethod
-        def integers(_low, high):
-            assert len(high) == 4
-            return np.asarray([0, 0, 1, 0], dtype=np.int64)
+def test_online_memory_reset_preserves_natural_replay_and_prequential_baseline():
+    args = _args(mode="md_gru")
+    reconstructor = MDStateReconstructor(args, torch.device("cpu"))
+    data = _synthetic_data(args)
+    reconstructor.reconstruct(copy.deepcopy(data))
+    reconstructor.reconstruct(copy.deepcopy(data))
+    reconstructor.train_predictors()
+    assert reconstructor.predictor_ready[0]
 
-    reservoir = _Reservoir(capacity=2, seed=0)
-    reservoir.items = [("old-0",), ("old-1",)]
-    reservoir.seen = 2
-    reservoir.rng = FixedDraws()
-    selected, destinations = reservoir.plan_batch(4)
-    markers = np.arange(4, dtype=np.float32)[:, None]
-    reservoir.commit_batch(
-        destinations,
-        0,
-        markers[selected],
-        markers[selected],
-        markers[selected],
-        markers[selected],
+    lost = copy.deepcopy(data)
+    lost["reception_mask"][0, 0, 1] = False
+    reconstructor.reconstruct(lost)
+    received = copy.deepcopy(data)
+    received["record_features"][0, 1, 0, 0] += 30.0
+    reconstructor.reconstruct(received)
+    metrics = reconstructor.train_predictors()[0]
+
+    assert metrics["md_prediction_prequential_samples"] == 1
+    assert np.isfinite(metrics["md_prediction_prequential_rmse_m"])
+    assert np.isfinite(metrics["md_last_obs_prequential_rmse_m"])
+    replay_size = len(reconstructor.replays[0].items)
+    reconstructor.reset(np.asarray([True]))
+    assert np.all(reconstructor.banks[0].ids == -1)
+    assert len(reconstructor.replays[0].items) == replay_size
+
+
+def test_sequence_replay_persists_across_updates_and_evicts_oldest():
+    replay = _SequenceReplay(capacity=2, seed=3)
+    for marker in range(3):
+        replay.add(
+            [[marker] * 8], [marker / 10], [marker] * 7
+        )
+
+    assert len(replay.items) == 2
+    assert replay.new_since_train == 3
+    assert replay.mark_trained() == 3
+    assert replay.new_since_train == 0
+    assert len(replay.sample(10)) == 2
+    np.testing.assert_allclose(replay.items[0][-1], np.ones(7))
+
+
+def test_receiver_local_predictors_diverge_after_local_training_only():
+    torch.manual_seed(7)
+    args = _args(mode="md_gru")
+    reconstructor = MDStateReconstructor(args, torch.device("cpu"))
+    history = np.zeros((2, reconstructor.feature_dim + 1), dtype=np.float32)
+    history[:, 0] = [-0.5, -0.4]
+    target = np.zeros(reconstructor.feature_dim, dtype=np.float32)
+    target[0] = -0.3
+    reconstructor.replays[0].add(history, [0.2], target)
+
+    before_receiver_1 = [
+        parameter.detach().clone()
+        for parameter in reconstructor.predictors[1].parameters()
+    ]
+    before_receiver_0 = [
+        parameter.detach().clone()
+        for parameter in reconstructor.predictors[0].parameters()
+    ]
+    assert len(reconstructor.replays[0].items) == 1
+    assert not reconstructor.replays[1].items
+    reconstructor.train_predictors()
+
+    assert reconstructor.predictor_ready[0]
+    assert not reconstructor.predictor_ready[1]
+    assert any(
+        not torch.equal(old, new)
+        for old, new in zip(before_receiver_0, reconstructor.predictors[0].parameters())
+    )
+    assert all(
+        parameter.grad is None or torch.all(torch.isfinite(parameter.grad))
+        for parameter in reconstructor.predictors[0].parameters()
+    )
+    assert all(
+        torch.equal(old, new)
+        for old, new in zip(before_receiver_1, reconstructor.predictors[1].parameters())
     )
 
-    assert reservoir.items[0][-1].item() == 3
-    assert reservoir.items[1][-1].item() == 2
+
+def test_md_gru_waits_for_minimum_replay_before_predictions_are_enabled():
+    args = _args(
+        mode="md_gru",
+        md_gru_min_ready_samples=2,
+        md_gru_train_samples=1,
+    )
+    reconstructor = MDStateReconstructor(args, torch.device("cpu"))
+    history = np.zeros((1, reconstructor.feature_dim + 1), dtype=np.float32)
+    target = np.zeros(reconstructor.feature_dim, dtype=np.float32)
+    reconstructor.replays[0].add(history, [0.1], target)
+
+    metrics = reconstructor.train_predictors()
+
+    assert not reconstructor.predictor_ready[0]
+    assert metrics[0]["md_prediction_replay_size"] == 1
+    assert metrics[0]["md_prediction_train_samples"] == 0

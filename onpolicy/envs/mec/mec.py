@@ -353,12 +353,11 @@ class MEC(gym.Env):
         self.md_lifetime_max = args.md_lifetime_max
         if self.dynamic_md:
             assert (
-                self.n_UAVs == 5
-                and args.x_min_gu == args.y_min_gu == 0
+                args.x_min_gu == args.y_min_gu == 0
                 and args.x_max_gu == args.y_max_gu
                 and args.x_min_uav == args.y_min_uav == 0
                 and args.x_max_uav == args.y_max_uav == args.x_max_gu
-            ), "dynamic_md requires matching square UAV/GU maps for the 5-UAV scenario."
+            ), "dynamic_md requires matching square UAV/GU maps."
             assert 0 <= self.md_arrivals_min <= self.md_arrivals_max
             assert 1 <= self.md_lifetime_min <= self.md_lifetime_max
             max_arrivals = self.md_arrivals_max
@@ -512,7 +511,7 @@ class MEC(gym.Env):
         assert not (self.actor_neighbor_obs and self.use_atten_actor), \
             "actor_neighbor_obs requires local actor observations"
         if self.uav_reset_curriculum:
-            assert self.dynamic_md and self.n_UAVs == 5
+            assert self.dynamic_md
 
         assert not (self.perform_with_local_state and self.state_is_k_hops), "不能同时使用和obs一样的local_state，和k_hops state"
         # self.concat_neighbor_obs = args.concat_neighbor_obs
@@ -550,6 +549,55 @@ class MEC(gym.Env):
         self.H_UAV = args.H_UAV
         self.H_GU = args.H_GU
         self.F_m = args.F_m
+        self.uav_resource_mode = getattr(args, "uav_resource_mode", "homogeneous")
+        raw_resource_scales = getattr(args, "uav_resource_scale_factors", None)
+        if self.uav_resource_mode == "homogeneous":
+            if raw_resource_scales is not None:
+                supplied_scales = np.asarray(raw_resource_scales, dtype=np.float64)
+                if supplied_scales.size and not np.allclose(supplied_scales, 1.0):
+                    raise ValueError(
+                        "uav_resource_scale_factors must be all ones in "
+                        "homogeneous mode"
+                    )
+            self.uav_resource_scale_factors = np.ones(
+                self.n_UAVs, dtype=np.float64
+            )
+        elif self.uav_resource_mode == "heterogeneous":
+            if raw_resource_scales is None:
+                raise ValueError(
+                    "heterogeneous mode requires --uav_resource_scale_factors"
+                )
+            self.uav_resource_scale_factors = np.asarray(
+                raw_resource_scales, dtype=np.float64
+            ).reshape(-1)
+            if self.uav_resource_scale_factors.size != self.n_UAVs:
+                raise ValueError(
+                    "uav_resource_scale_factors must contain exactly "
+                    f"{self.n_UAVs} values, got "
+                    f"{self.uav_resource_scale_factors.size}"
+                )
+            if not np.all(np.isfinite(self.uav_resource_scale_factors)):
+                raise ValueError("uav resource scale factors must be finite")
+            if np.any(self.uav_resource_scale_factors <= 0.0):
+                raise ValueError("uav resource scale factors must be positive")
+            if not np.isclose(
+                self.uav_resource_scale_factors.sum(),
+                float(self.n_UAVs),
+                rtol=0.0,
+                atol=1e-6,
+            ):
+                raise ValueError(
+                    "heterogeneous UAV resource scale factors must sum to "
+                    f"n_UAVs ({self.n_UAVs}) to preserve total resources"
+                )
+        else:
+            raise ValueError(f"unknown uav_resource_mode: {self.uav_resource_mode}")
+        self.uav_bandwidth_capacities = (
+            self.B * self.uav_resource_scale_factors
+        )
+        self.uav_compute_capacities = (
+            self.F_m * self.uav_resource_scale_factors
+        )
         self.F_n = args.F_n
         self.D_min = args.D_min
         self.D_max = args.D_max
@@ -574,6 +622,12 @@ class MEC(gym.Env):
         self.nearest_associate = args.nearest_associate
         self.nearest_avail_actions = args.nearest_avail_actions
         assert self.discrete_associate + self.continuous_associate + self.nearest_associate == 1
+        self.association_threshold = float(
+            getattr(args, "association_threshold", 0.5)
+        )
+        self.offload_deadline_filter = bool(
+            getattr(args, "offload_deadline_filter", True)
+        )
         self.not_process_action = args.not_process_action
         self.fix_uav_pos = args.fix_uav_pos
         self.ave_resource = args.ave_resource
@@ -1015,6 +1069,11 @@ class MEC(gym.Env):
         self.hotspot_layout_rng = np.random.default_rng(layout_seed)
         self.candidate_birth_rng = np.random.default_rng(candidate_seed)
 
+    def _type_s_geometric_mask(self):
+        if self.neighbor_distance <= 0:
+            return np.eye(self.n_UAVs, dtype=bool)
+        return self.uav_uav_distances_2d <= self.neighbor_distance
+
     def _sample_state_reception_mask(self):
         """Return the per-slot Type-S availability with axes (receiver, sender)."""
         if self.communication_mode == "reliable":
@@ -1028,8 +1087,13 @@ class MEC(gym.Env):
             deadline_ms=self.args.state_deadline_ms,
         )[0, 0].T
         off_diagonal = ~np.eye(self.n_UAVs, dtype=bool)
-        self.state_packets_received += int(np.sum(receptions[off_diagonal]))
-        self.state_packets_attempted += int(np.sum(off_diagonal))
+        geometric = self._type_s_geometric_mask()
+        attempted = off_diagonal & geometric
+        # The shared physical sampler already gates by d_com.  Keep this local
+        # mask as an explicit Type-S contract and for patched/custom samplers.
+        receptions &= geometric
+        self.state_packets_received += int(np.sum(receptions[attempted]))
+        self.state_packets_attempted += int(np.sum(attempted))
         np.fill_diagonal(receptions, True)
         return receptions
 
@@ -1051,11 +1115,7 @@ class MEC(gym.Env):
         single_state_dim = self.state_dim // self.max_UAVs_obs_concat
         final_state = np.zeros((self.n_UAVs, self.state_dim))
         if self.all_uav_k_hops:
-            available = (
-                self.uav_uav_distances_2d <= self.neighbor_distance
-                if self.neighbor_distance > 0
-                else np.eye(self.n_UAVs, dtype=bool)
-            )
+            available = self._type_s_geometric_mask()
             available &= self.last_state_reception_mask
             np.fill_diagonal(available, True)
             all_uavs = np.arange(self.n_UAVs)
@@ -1315,6 +1375,8 @@ class MEC(gym.Env):
 
     def reset(self, seed=None, *args, **kwargs):
         self.time_step = 0
+        self.state_packets_received = 0
+        self.state_packets_attempted = 0
         # Initialize UAV positions randomly within the area
         # np.random.seed(0)
 
@@ -1336,7 +1398,19 @@ class MEC(gym.Env):
         #     if x_pos >= self.x_max:
         #         x_pos = x_start
         #         y_pos += y_spacing
-        if self.n_UAVs == 9 and self.x_min_gu == 0 and self.x_max_gu == 600 and self.n_GUs == 80:
+        # Explicit dynamic-MD starts take precedence over legacy scenario
+        # geometries, which keeps the unreliable Type-S/GRU path generic in
+        # the same way as the reliable speed branch.
+        if self.uav_start_positions is not None and self.dynamic_md:
+            self.uav_positions = np.column_stack((
+                self.uav_start_positions,
+                np.full((self.n_UAVs, 1), self.H_UAV, dtype=np.float32),
+            ))
+            self.x_min_all_gus = np.full(self.n_GUs, self.x_min_gu)
+            self.x_max_all_gus = np.full(self.n_GUs, self.x_max_gu)
+            self.y_min_all_gus = np.full(self.n_GUs, self.y_min_gu)
+            self.y_max_all_gus = np.full(self.n_GUs, self.y_max_gu)
+        elif self.n_UAVs == 9 and self.x_min_gu == 0 and self.x_max_gu == 600 and self.n_GUs == 80:
             # self.uav_positions = np.array([[120, 120, self.H_UAV], [300,120, self.H_UAV], [480, 120, self.H_UAV],
             #                                [120, 300, self.H_UAV], [300, 300, self.H_UAV], [480, 300, self.H_UAV],
             #                                [120, 480, self.H_UAV],[300, 480, self.H_UAV], [480, 480, self.H_UAV]], dtype=np.float32)
@@ -1861,8 +1935,14 @@ class MEC(gym.Env):
                         best_reward = -float('inf')
                         for m in range(self.n_UAVs):
                             if actions[0][m, n] == 1:
-                                bandwidth_allocation_m_n = actions[1][m, n] * self.B
-                                computation_allocation_m_n = actions[2][m, n] * self.F_m
+                                bandwidth_allocation_m_n = (
+                                    actions[1][m, n]
+                                    * self.uav_bandwidth_capacities[m]
+                                )
+                                computation_allocation_m_n = (
+                                    actions[2][m, n]
+                                    * self.uav_compute_capacities[m]
+                                )
 
                                 # Calculate total energy and delay for UAV m serving user n
                                 uav_m_position = self.uav_positions[m]
@@ -1941,8 +2021,14 @@ class MEC(gym.Env):
                         best_reward = -float('inf')
                         for m in range(self.n_UAVs):
                             if actions[1][m, n] == 1:
-                                bandwidth_allocation_m_n = actions[2][m, n] * self.B
-                                computation_allocation_m_n = actions[3][m, n] * self.F_m
+                                bandwidth_allocation_m_n = (
+                                    actions[2][m, n]
+                                    * self.uav_bandwidth_capacities[m]
+                                )
+                                computation_allocation_m_n = (
+                                    actions[3][m, n]
+                                    * self.uav_compute_capacities[m]
+                                )
 
                                 # Calculate total energy and delay for UAV m serving user n
                                 uav_m_position = self.uav_positions[m]
@@ -1994,7 +2080,9 @@ class MEC(gym.Env):
                 mask_2 = actions[2] == 0
                 combined_mask = mask_1 | mask_2
                 actions[0][combined_mask] = 0
-                actions[0] = np.where(actions[0] >= 0.5, actions[0], 0)
+                actions[0] = np.where(
+                    actions[0] >= self.association_threshold, actions[0], 0
+                )
                 col_max = np.max(actions[0], axis=0)
                 # 为了防止最大值为0的存在，导致取到多个不存在的无人机。
                 col_max = np.where(col_max, col_max, 99.0)
@@ -2041,30 +2129,32 @@ class MEC(gym.Env):
                     if total_comp > 0:
                         actions[2][m] = actions[2][m] / total_comp
                 # 计算实际带宽和计算资源
-                bandwidth_actions = actions[1] * self.B
-                computation_actions = actions[2] * self.F_m
+                bandwidth_actions = (
+                    actions[1] * self.uav_bandwidth_capacities[:, None]
+                )
+                computation_actions = (
+                    actions[2] * self.uav_compute_capacities[:, None]
+                )
 
-                # 验证每个用户任务
-                for n in range(self.n_GUs):
-                    if np.any(actions[0][:, n]):
-                        m = np.argmax(actions[0][:, n])
-                        task = self.gu_tasks[n]
-
-                        # 计算传输速率
-                        h_nm = self.channel_gains[m, n]
-                        bw = bandwidth_actions[m, n]
-                        R_nm = bw * np.log2(1 + p_t * h_nm / (N_0 * (bw + 1e-10)))
-
-                        # 计算时延
-                        tau_trans = task[0] / (R_nm + 1e-10)
-                        tau_exe = task[1] / (computation_actions[m, n] + 1e-10)
-                        total_delay = tau_trans + tau_exe
-
-                        # 如果无法满足延迟要求，取消分配
-                        if total_delay > task[2]:
-                            actions[0][m, n] = 0
-                            actions[1][m, n] = 0
-                            actions[2][m, n] = 0
+                if self.offload_deadline_filter:
+                    # Cancel predicted-late offloads before reward evaluation.
+                    for n in range(self.n_GUs):
+                        if np.any(actions[0][:, n]):
+                            m = np.argmax(actions[0][:, n])
+                            task = self.gu_tasks[n]
+                            h_nm = self.channel_gains[m, n]
+                            bw = bandwidth_actions[m, n]
+                            R_nm = bw * np.log2(
+                                1 + p_t * h_nm / (N_0 * (bw + 1e-10))
+                            )
+                            tau_trans = task[0] / (R_nm + 1e-10)
+                            tau_exe = task[1] / (
+                                computation_actions[m, n] + 1e-10
+                            )
+                            if tau_trans + tau_exe > task[2]:
+                                actions[0][m, n] = 0
+                                actions[1][m, n] = 0
+                                actions[2][m, n] = 0
 
                 # 重新标准化资源
                 for m in range(self.n_UAVs):
@@ -2079,7 +2169,9 @@ class MEC(gym.Env):
 
             else:
                 if self.ave_resource:
-                    actions[1] = np.where(actions[1]>=0.5, actions[1], 0)   # 添加了卸载的阈值为0.5。
+                    actions[1] = np.where(
+                        actions[1] >= self.association_threshold, actions[1], 0
+                    )
                     col_max = np.max(actions[1], axis=0)
                     # 为了防止最大值为0的存在，导致取到多个不存在的无人机。
                     col_max = np.where(col_max, col_max, 99.0)
@@ -2105,7 +2197,9 @@ class MEC(gym.Env):
                 elif self.ave_bandwidth:
                     mask_2 = actions[2] == 0
                     actions[1][mask_2] = 0
-                    actions[1] = np.where(actions[1] >= 0.5, actions[1], 0)  # 添加了卸载的阈值为0.5。
+                    actions[1] = np.where(
+                        actions[1] >= self.association_threshold, actions[1], 0
+                    )
                     col_max = np.max(actions[1], axis=0)
                     # 为了防止最大值为0的存在，导致取到多个不存在的无人机。把0变为不可能出现的99
                     col_max = np.where(col_max, col_max, 99.0)
@@ -2140,28 +2234,31 @@ class MEC(gym.Env):
                             actions[2][m] = actions[2][m] / total
                     # 判断卸载分配的资源能不能完成任务..
                     ones_count = np.sum(actions[1], axis=1, keepdims=True)  # 避免除零，使用np.divide处理
-                    bandwidth_actions = np.divide(actions[1] * self.B, ones_count, where=ones_count != 0)
-                    computation_actions = actions[2] * self.F_m
-                    for n in range(self.n_GUs):
-                        if np.sum(actions[1][:, n]) != 0:
-                            m = np.argmax(actions[1][:, n])
-                            gu_n_task = self.gu_tasks[n]
-
-                            # 计算传输速率
-                            h_nm = self.channel_gains[m, n]
-                            bw = bandwidth_actions[m, n]
-                            R_nm = bw * np.log2(1 + p_t * h_nm / (N_0 * (bw + 1e-10)))
-
-                            epsilon = 0
-                            tau_trans = gu_n_task[0] / (R_nm + epsilon)
-                            tau_exe = gu_n_task[1] / (computation_actions[m, n] + epsilon)
-                            total_delay = tau_trans + tau_exe
-                            if total_delay > self.gu_tasks[n, 2]:
-
-                            # if gu_n_task[1] / computation_actions[m, n] > self.gu_tasks[n, 2]:
-
-                                actions[1][m, n] = 0
-                                actions[2][m, n] = 0
+                    bandwidth_actions = np.divide(
+                        actions[1] * self.uav_bandwidth_capacities[:, None],
+                        ones_count,
+                        where=ones_count != 0,
+                    )
+                    computation_actions = (
+                        actions[2] * self.uav_compute_capacities[:, None]
+                    )
+                    if self.offload_deadline_filter:
+                        for n in range(self.n_GUs):
+                            if np.sum(actions[1][:, n]) != 0:
+                                m = np.argmax(actions[1][:, n])
+                                gu_n_task = self.gu_tasks[n]
+                                h_nm = self.channel_gains[m, n]
+                                bw = bandwidth_actions[m, n]
+                                R_nm = bw * np.log2(
+                                    1 + p_t * h_nm / (N_0 * (bw + 1e-10))
+                                )
+                                tau_trans = gu_n_task[0] / R_nm
+                                tau_exe = (
+                                    gu_n_task[1] / computation_actions[m, n]
+                                )
+                                if tau_trans + tau_exe > gu_n_task[2]:
+                                    actions[1][m, n] = 0
+                                    actions[2][m, n] = 0
                     for m in range(self.n_UAVs):
                         total = np.sum(actions[2][m])
                         if total > 0:
@@ -2171,7 +2268,9 @@ class MEC(gym.Env):
                     mask_3 = actions[3] == 0
                     combined_mask = mask_2 | mask_3
                     actions[1][combined_mask] = 0
-                    actions[1] = np.where(actions[1] >= 0.5, actions[1], 0)  # 添加了卸载的阈值为0.5。
+                    actions[1] = np.where(
+                        actions[1] >= self.association_threshold, actions[1], 0
+                    )
                     col_max = np.max(actions[1], axis=0)
                     # 为了防止最大值为0的存在，导致取到多个不存在的无人机。把0变为不可能出现的99
                     col_max = np.where(col_max, col_max, 99.0)
@@ -2202,25 +2301,37 @@ class MEC(gym.Env):
                         if total_comp > 0:
                             actions[3][m] = actions[3][m] / total_comp
                     # 判断卸载分配的资源能不能完成任务..
-                    bandwidth_actions = actions[2] * self.B
-                    computation_actions = actions[3] * self.F_m
-                    selected_gu_ids = np.flatnonzero(np.any(actions[1], axis=0))
-                    if selected_gu_ids.size:
-                        selected_uav_ids = np.argmax(actions[1][:, selected_gu_ids], axis=0)
-                        tau_trans, tau_exe = _offload_delay(
-                            self.gu_tasks,
-                            selected_uav_ids,
-                            selected_gu_ids,
-                            bandwidth_actions,
-                            computation_actions,
-                            self.channel_gains,
+                    bandwidth_actions = (
+                        actions[2] * self.uav_bandwidth_capacities[:, None]
+                    )
+                    computation_actions = (
+                        actions[3] * self.uav_compute_capacities[:, None]
+                    )
+                    if self.offload_deadline_filter:
+                        selected_gu_ids = np.flatnonzero(
+                            np.any(actions[1], axis=0)
                         )
-                        overdue = tau_trans + tau_exe > self.gu_tasks[selected_gu_ids, 2]
-                        overdue_gu_ids = selected_gu_ids[overdue]
-                        overdue_uav_ids = selected_uav_ids[overdue]
-                        actions[1][overdue_uav_ids, overdue_gu_ids] = 0
-                        actions[2][overdue_uav_ids, overdue_gu_ids] = 0
-                        actions[3][overdue_uav_ids, overdue_gu_ids] = 0
+                        if selected_gu_ids.size:
+                            selected_uav_ids = np.argmax(
+                                actions[1][:, selected_gu_ids], axis=0
+                            )
+                            tau_trans, tau_exe = _offload_delay(
+                                self.gu_tasks,
+                                selected_uav_ids,
+                                selected_gu_ids,
+                                bandwidth_actions,
+                                computation_actions,
+                                self.channel_gains,
+                            )
+                            overdue = (
+                                tau_trans + tau_exe
+                                > self.gu_tasks[selected_gu_ids, 2]
+                            )
+                            overdue_gu_ids = selected_gu_ids[overdue]
+                            overdue_uav_ids = selected_uav_ids[overdue]
+                            actions[1][overdue_uav_ids, overdue_gu_ids] = 0
+                            actions[2][overdue_uav_ids, overdue_gu_ids] = 0
+                            actions[3][overdue_uav_ids, overdue_gu_ids] = 0
                     # 重新标准化资源
                     for m in range(self.n_UAVs):
                         total_bw = np.sum(actions[2][m])
@@ -2557,8 +2668,12 @@ class MEC(gym.Env):
                 action[:, 2 * self.n_GUs:]  # Computation resource allocation
             ]
             offloading_actions = action_components[0]
-            bandwidth_actions = action_components[1] * self.B
-            computation_actions = action_components[2] * self.F_m
+            bandwidth_actions = (
+                action_components[1] * self.uav_bandwidth_capacities[:, None]
+            )
+            computation_actions = (
+                action_components[2] * self.uav_compute_capacities[:, None]
+            )
         else:
             if self.nearest_associate:
                 if self.ave_resource:
@@ -2570,9 +2685,17 @@ class MEC(gym.Env):
                     uav_gu_distances_2d_min = np.min(uav_gu_distances_2d, axis=0)
                     offloading_actions = ((uav_gu_distances_2d==uav_gu_distances_2d_min) & (coverage_mask)).astype(int)
                     ones_count = np.sum(offloading_actions, axis=1, keepdims=True)  # 避免除零，使用np.divide处理
-                    bandwidth_actions = np.divide(offloading_actions * self.B, ones_count, where=ones_count != 0)
+                    bandwidth_actions = np.divide(
+                        offloading_actions * self.uav_bandwidth_capacities[:, None],
+                        ones_count,
+                        where=ones_count != 0,
+                    )
                     ones_count = np.sum(offloading_actions, axis=1, keepdims=True)  # 避免除零，使用np.divide处理
-                    computation_actions = np.divide(offloading_actions * self.F_m, ones_count, where=ones_count != 0)
+                    computation_actions = np.divide(
+                        offloading_actions * self.uav_compute_capacities[:, None],
+                        ones_count,
+                        where=ones_count != 0,
+                    )
                 elif self.ave_bandwidth:
                     raise ValueError("最近关联的情况下，没有写仅平均带宽。")  # 主动抛出异常
                 else:
@@ -2582,8 +2705,14 @@ class MEC(gym.Env):
                         action[:, 2 + self.n_GUs:],  # computation allocation
                     ]
                     fly_actions = action_components[0]
-                    bandwidth_actions = action_components[1] * self.B
-                    computation_actions = action_components[2] * self.F_m
+                    bandwidth_actions = (
+                        action_components[1]
+                        * self.uav_bandwidth_capacities[:, None]
+                    )
+                    computation_actions = (
+                        action_components[2]
+                        * self.uav_compute_capacities[:, None]
+                    )
             else:
                 if self.ave_resource:
                     action_components = [
@@ -2593,8 +2722,18 @@ class MEC(gym.Env):
                     fly_actions = action_components[0]
                     offloading_actions = action_components[1]
                     ones_count = np.sum(action_components[1], axis=1, keepdims=True)# 避免除零，使用np.divide处理
-                    bandwidth_actions = np.divide(action_components[1] * self.B, ones_count, where=ones_count != 0)
-                    computation_actions = np.divide(action_components[1] * self.F_m, ones_count, where=ones_count != 0)
+                    bandwidth_actions = np.divide(
+                        action_components[1]
+                        * self.uav_bandwidth_capacities[:, None],
+                        ones_count,
+                        where=ones_count != 0,
+                    )
+                    computation_actions = np.divide(
+                        action_components[1]
+                        * self.uav_compute_capacities[:, None],
+                        ones_count,
+                        where=ones_count != 0,
+                    )
                 elif self.ave_bandwidth:
                     action_components = [
                         action[:, :2],  # Movement actions
@@ -2604,8 +2743,16 @@ class MEC(gym.Env):
                     fly_actions = action_components[0]
                     offloading_actions = action_components[1]
                     ones_count = np.sum(action_components[1], axis=1, keepdims=True)  # 避免除零，使用np.divide处理
-                    bandwidth_actions = np.divide(action_components[1] * self.B, ones_count, where=ones_count != 0)
-                    computation_actions = action_components[2] * self.F_m
+                    bandwidth_actions = np.divide(
+                        action_components[1]
+                        * self.uav_bandwidth_capacities[:, None],
+                        ones_count,
+                        where=ones_count != 0,
+                    )
+                    computation_actions = (
+                        action_components[2]
+                        * self.uav_compute_capacities[:, None]
+                    )
                 else:
                     action_components = [
                         action[:, :2],  # Movement actions
@@ -2615,8 +2762,14 @@ class MEC(gym.Env):
                     ]
                     fly_actions = action_components[0]
                     offloading_actions = action_components[1]
-                    bandwidth_actions = action_components[2] * self.B
-                    computation_actions = action_components[3] * self.F_m
+                    bandwidth_actions = (
+                        action_components[2]
+                        * self.uav_bandwidth_capacities[:, None]
+                    )
+                    computation_actions = (
+                        action_components[3]
+                        * self.uav_compute_capacities[:, None]
+                    )
         if not self.nearest_associate:
             offloading_actions = np.where(
                 (bandwidth_actions > 0) & (computation_actions > 0),
@@ -3400,7 +3553,7 @@ class MEC(gym.Env):
     def get_type_s_data(self):
         """Return the current structured Type-S state without exposing actor messages."""
         packet = self.current_type_s_packet
-        geometric_mask = self.uav_uav_distances_2d <= self.neighbor_distance
+        geometric_mask = self._type_s_geometric_mask()
         np.fill_diagonal(geometric_mask, True)
         return {
             "sender_ids": packet["sender_ids"].copy(),
@@ -3943,7 +4096,7 @@ class MEC(gym.Env):
                                               markerfacecolor='black', markersize=8,
                                               label='MDs'))
         else:
-            for i in range(4):
+            for i in range(self.n_UAVs):
                 # Add UEs served by each UAV
                 legend_elements.append(plt.Line2D([0], [0], marker='o', color='w',
                                                   markerfacecolor=colors[i], markersize=8,

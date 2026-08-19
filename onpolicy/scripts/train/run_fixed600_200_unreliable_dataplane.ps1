@@ -5,8 +5,32 @@ param(
     [int]$EpisodeLength = 400,
     [ValidateSet('zero', 'last_obs', 'md_gru')]
     [string]$StateReconstruction = 'md_gru',
+    [ValidateSet('local', 'mixed_consensus', 'pure_consensus', 'legacy_noise', 'per_agent_noise')]
+    [string]$AdvantageMode = 'per_agent_noise',
+    [double]$NoiseScale = 3.0,
+    [Nullable[double]]$CommunicationDistance = $null,
+    [double]$ActorNeighborDistance = 520,
+    [Nullable[double]]$A2ATransmitPowerW = $null,
+    [double]$A2ARicianKDb = 10.0,
+    [double]$A2ADistanceToleranceM = 5.0,
+    [int]$RunningSumRounds = 50,
+    [int]$MDGRUTrainSamples = 512,
+    [int]$MDGRUMinReadySamples = 512,
+    [ValidateRange(0.0, 1.0)]
+    [double]$AssociationThreshold = 0.5,
+    [switch]$DisableOffloadDeadlineFilter,
+    [ValidateSet('homogeneous', 'heterogeneous')]
+    [string]$UAVResourceMode = 'homogeneous',
+    [double[]]$UAVResourceScaleFactors = @(),
+    [ValidateRange(0.0, 1.0)]
+    [double]$ClipParam = 0.15,
+    [ValidateRange(0.0, 1.0)]
+    [double]$Gamma = 0.99,
+    [ValidateRange(1, 100)]
+    [int]$PpoEpoch = 4,
     [ValidateSet('disabled', 'task_summary')]
     [string]$ActorMessageMode = 'disabled',
+    [switch]$CPUOnly,
     [string]$Python = 'C:\Users\wyj2\.conda\envs\marl\python.exe',
     [string]$ExperimentName = ''
 )
@@ -18,8 +42,15 @@ if (-not (Test-Path -LiteralPath $common)) {
 }
 if (-not $ExperimentName) {
     $messageTag = if ($ActorMessageMode -eq 'disabled') { 'noactor' } else { 'actor' }
+    $communicationTag = if ($null -ne $CommunicationDistance) {
+        "R${CommunicationDistance}"
+    } elseif ($null -ne $A2ATransmitPowerW) {
+        "Pc${A2ATransmitPowerW}W"
+    } else {
+        'R520'
+    }
     $ExperimentName = (
-        "dcppoR520_fixed600_200_vmax30_md12_unreliable_${StateReconstruction}_${messageTag}_seed${Seed}_60m"
+        "dcppo${communicationTag}_fixed600_200_vmax30_md12_unreliable_${AdvantageMode}_${StateReconstruction}_${messageTag}_seed${Seed}_60m"
     )
 }
 
@@ -31,17 +62,28 @@ if (-not $ExperimentName) {
     -EpisodeLength $EpisodeLength `
     -MDLifetime 12 `
     -CommunicationMode unreliable `
-    -CommunicationDistance 520 `
-    -ActorNeighborDistance 520 `
-    -RunningSumRounds 50 `
+    -CommunicationDistance $CommunicationDistance `
+    -ActorNeighborDistance $ActorNeighborDistance `
+    -RunningSumRounds $RunningSumRounds `
+    -A2ATransmitPowerW $A2ATransmitPowerW `
+    -A2ARicianKDb $A2ARicianKDb `
+    -A2ADistanceToleranceM $A2ADistanceToleranceM `
+    -AssociationThreshold $AssociationThreshold `
+    -DisableOffloadDeadlineFilter:$DisableOffloadDeadlineFilter `
+    -UAVResourceMode $UAVResourceMode `
+    -UAVResourceScaleFactors $UAVResourceScaleFactors `
+    -ClipParam $ClipParam -Gamma $Gamma -PpoEpoch $PpoEpoch `
     -StateReconstruction $StateReconstruction `
+    -MDGRUTrainSamples $MDGRUTrainSamples `
+    -MDGRUMinReadySamples $MDGRUMinReadySamples `
     -CriticMDMetadata `
-    -AdvantageMode per_agent_noise `
-    -NoiseScale 3.0 `
+    -AdvantageMode $AdvantageMode `
+    -NoiseScale $NoiseScale `
     -ActorMessageMode $ActorMessageMode `
     -ActorMessagePool receiver_gated_sum `
     -ActorMessageContract absolute_raw_v2 `
     -HotspotLayoutMode episode_template4_600_200 `
+    -UAVStartPositions @(110, 180, 220, 180, 330, 180, 440, 180, 400, 400) `
     -MapSize 600 `
     -UAVMaxSpeed 30 `
     -MeanVelocity 3.0 `
@@ -55,6 +97,7 @@ if (-not $ExperimentName) {
     -CompletionPriorityUserSort `
     -EpisodeLayoutContext `
     -EpisodeLayoutContextUnits meters_v2 `
+    -CPUOnly:$CPUOnly `
     -Python $Python `
     -ExperimentName $ExperimentName
 exit $LASTEXITCODE

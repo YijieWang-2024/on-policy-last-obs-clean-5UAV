@@ -57,6 +57,77 @@ class CartesianFlightTest(unittest.TestCase):
         np.testing.assert_allclose(velocities[5], [18.0, 24.0])
         self.assertTrue(np.all(np.linalg.norm(velocities, axis=1) <= 30.0 + 1e-12))
 
+    def test_association_and_deadline_filter_arguments(self):
+        defaults = parse_args([], get_config())
+        self.assertEqual(defaults.association_threshold, 0.5)
+        self.assertTrue(defaults.offload_deadline_filter)
+
+        configured = parse_args(
+            [
+                "--association_threshold", "0.7",
+                "--disable_offload_deadline_filter",
+            ],
+            get_config(),
+        )
+        self.assertEqual(configured.association_threshold, 0.7)
+        self.assertFalse(configured.offload_deadline_filter)
+
+    def test_association_threshold_uses_greater_than_or_equal_boundary(self):
+        args = self.make_args(
+            association_threshold=0.7,
+            offload_deadline_filter=False,
+        )
+        env = MEC(args)
+        env.seed(31)
+        env.reset()
+        gu_id = np.flatnonzero(env.active_md_mask)[0]
+        actions = np.zeros(
+            (env.n_UAVs, 2 + 3 * env.n_GUs), dtype=np.float64
+        )
+        actions[0, 2 + env.n_GUs + gu_id] = 1.0
+        actions[0, 2 + 2 * env.n_GUs + gu_id] = 1.0
+
+        actions[0, 2 + gu_id] = 0.699
+        processed_below = env.process_actions(actions)
+        self.assertEqual(processed_below[0, 2 + gu_id], 0)
+
+        actions[0, 2 + gu_id] = 0.7
+        processed_equal = env.process_actions(actions)
+        self.assertEqual(processed_equal[0, 2 + gu_id], 1)
+
+        layer = ACTLayer(env.action_space, 16, True, 0.01, args)
+        self.assertEqual(layer.association_threshold, 0.7)
+
+    def test_deadline_filter_only_controls_pre_execution_rejection(self):
+        processed = {}
+        gu_ids = {}
+        n_gus = None
+        for enabled in (True, False):
+            env = MEC(self.make_args(offload_deadline_filter=enabled))
+            n_gus = env.n_GUs
+            env.seed(37)
+            env.reset()
+            gu_id = np.flatnonzero(env.active_md_mask)[0]
+            env.gu_tasks[gu_id] = [1e12, 1e12, 1e-9]
+            env.channel_gains[:, gu_id] = 1e-9
+            actions = np.zeros(
+                (env.n_UAVs, 2 + 3 * env.n_GUs), dtype=np.float64
+            )
+            actions[0, 2 + gu_id] = 1.0
+            actions[0, 2 + env.n_GUs + gu_id] = 1.0
+            actions[0, 2 + 2 * env.n_GUs + gu_id] = 1.0
+            processed[enabled] = env.process_actions(actions)
+            gu_ids[enabled] = gu_id
+
+        enabled_gu = gu_ids[True]
+        disabled_gu = gu_ids[False]
+        np.testing.assert_allclose(
+            processed[True][0, 2 + enabled_gu::n_gus], 0.0
+        )
+        np.testing.assert_allclose(
+            processed[False][0, 2 + disabled_gu::n_gus], 1.0
+        )
+
     def test_environment_does_not_clip_negative_flight_proposals(self):
         env = MEC(self.make_args())
         env.reset()

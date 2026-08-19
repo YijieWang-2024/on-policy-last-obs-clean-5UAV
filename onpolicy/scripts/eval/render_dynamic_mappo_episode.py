@@ -39,7 +39,11 @@ from onpolicy.utils.checkpoint_manifest import (
 )
 
 
-COLORS = ["#1f77b4", "#2ca02c", "#d62728", "#9467bd", "#ff7f0e"]
+COLORS = [
+    # Okabe-Ito-style colors: readable for common red-green colour-vision
+    # deficiencies while still giving six UAVs distinct trajectories.
+    "#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7", "#56B4E9",
+]
 
 
 def parse_cli():
@@ -73,9 +77,16 @@ def parse_cli():
     return parser.parse_args()
 
 
-def snapshot_checkpoint(run_dir, output_dir, allow_frozen_legacy=False):
+def _num_agents_from_args(args_path):
+    with Path(args_path).open("r", encoding="utf-8") as handle:
+        return int(json.load(handle)["n_UAVs"])
+
+
+def snapshot_checkpoint(run_dir, output_dir, allow_frozen_legacy=False, num_agents=None):
+    if num_agents is None:
+        num_agents = _num_agents_from_args(run_dir / "args.json")
     source = run_dir / "models"
-    required = [source / name for name in expected_checkpoint_names(5)]
+    required = [source / name for name in expected_checkpoint_names(num_agents)]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError("Missing checkpoint files: " + ", ".join(missing))
@@ -84,7 +95,7 @@ def snapshot_checkpoint(run_dir, output_dir, allow_frozen_legacy=False):
     temporary = output_dir / "checkpoint_snapshot.tmp"
     for _ in range(3):
         manifest_before = read_checkpoint_manifest(
-            source, 5, args_path=run_dir / "args.json"
+            source, num_agents, args_path=run_dir / "args.json"
         )
         if manifest_before is None and not allow_frozen_legacy:
             raise ValueError(
@@ -99,7 +110,7 @@ def snapshot_checkpoint(run_dir, output_dir, allow_frozen_legacy=False):
             shutil.copy2(path, temporary / path.name)
         after = {path.name: (path.stat().st_size, path.stat().st_mtime_ns) for path in source_files}
         manifest_after = read_checkpoint_manifest(
-            source, 5, args_path=run_dir / "args.json"
+            source, num_agents, args_path=run_dir / "args.json"
         )
         if before == after and manifest_before == manifest_after:
             shutil.copy2(run_dir / "args.json", temporary / "args.json")
@@ -116,9 +127,11 @@ def snapshot_checkpoint(run_dir, output_dir, allow_frozen_legacy=False):
     raise RuntimeError("Checkpoint changed during all three snapshot attempts")
 
 
-def checkpoint_manifest_step(checkpoint_dir):
+def checkpoint_manifest_step(checkpoint_dir, num_agents=None):
+    if num_agents is None:
+        num_agents = _num_agents_from_args(checkpoint_dir / "args.json")
     manifest = read_checkpoint_manifest(
-        checkpoint_dir, 5, args_path=checkpoint_dir / "args.json"
+        checkpoint_dir, num_agents, args_path=checkpoint_dir / "args.json"
     )
     return None if manifest is None else int(manifest["total_num_steps"])
 
@@ -314,7 +327,7 @@ def render_frame(path, method_label, slot, cover_radius, uav_positions, gu_posit
     handles = [
         plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=COLORS[i], markersize=7,
                    label=f"MDs served by UAV {i + 1}")
-        for i in range(5)
+        for i in range(len(uav_positions))
     ]
     handles.append(plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="black", markersize=7,
                               label="MDs computing locally"))

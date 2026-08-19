@@ -1,5 +1,6 @@
 import json
 import numpy as np
+import torch
 from types import SimpleNamespace
 
 from onpolicy.scripts.eval.compare_fixed_evaluations import paired_stats
@@ -16,11 +17,131 @@ from onpolicy.scripts.eval.render_dynamic_mappo_episode import (
     snapshot_checkpoint,
 )
 from onpolicy.runner.separated.mec_runner import MECRunner
+from onpolicy.envs.mec.vec_normalize import normalize_batch
 from onpolicy.utils.checkpoint_manifest import (
     build_checkpoint_manifest,
     write_checkpoint_manifest_atomic,
 )
 from scipy.stats import t as student_t
+
+
+class _EvalPolicy:
+    def act(
+        self, obs, rnn_states, masks, available_actions=None,
+        deterministic=False, attention_active_mask=None,
+    ):
+        assert deterministic
+        assert attention_active_mask is not None
+        return (
+            torch.zeros((len(obs), 1), dtype=torch.float32),
+            torch.as_tensor(rnn_states),
+        )
+
+
+class _EvalTrainer:
+    def __init__(self):
+        self.policy = _EvalPolicy()
+        self.prepared = 0
+
+    def prep_rollout(self):
+        self.prepared += 1
+
+
+class _EightFieldEvalEnv:
+    def __init__(self):
+        self.actions = None
+
+    @staticmethod
+    def reset():
+        return (
+            np.zeros((1, 2, 3), dtype=np.float32),
+            np.zeros((1, 2, 4), dtype=np.float32),
+            np.ones((1, 2, 1), dtype=np.float32),
+            np.zeros((1, 2, 2), dtype=np.float32),
+            np.ones((1, 2, 2), dtype=np.float32),
+        )
+
+    def step(self, actions):
+        self.actions = actions.copy()
+        info = {
+            "cumulative_reward": np.asarray([1.0, 2.0]),
+            "uav_m_toal_energy_consumption": np.asarray([3.0, 4.0]),
+            "n_GUs_per_uav_served": np.asarray([5.0, 6.0]),
+            "user_in_m_average_delay": np.asarray([7.0, 9.0]),
+        }
+        return (
+            np.zeros((1, 2, 3), dtype=np.float32),
+            np.zeros((1, 2, 4), dtype=np.float32),
+            np.zeros((1, 2, 1), dtype=np.float32),
+            np.ones((1, 2), dtype=bool),
+            [info],
+            np.ones((1, 2, 1), dtype=np.float32),
+            np.zeros((1, 2, 2), dtype=np.float32),
+            np.ones((1, 2, 2), dtype=np.float32),
+        )
+
+
+def test_separated_eval_uses_per_agent_trainers_and_eight_field_env_contract():
+    runner = SimpleNamespace(
+        num_agents=2,
+        eval_envs=_EightFieldEvalEnv(),
+        normer=[],
+        trainer=[_EvalTrainer(), _EvalTrainer()],
+        n_eval_rollout_threads=1,
+        recurrent_N=1,
+        hidden_size=3,
+        all_args=SimpleNamespace(eval_episodes=1),
+    )
+
+    MECRunner.eval(runner, total_num_steps=0)
+
+    assert runner.eval_envs.actions.shape == (1, 2, 1)
+    assert [trainer.prepared for trainer in runner.trainer] == [1, 1]
+
+
+class _FrozenRms:
+    def __init__(self, width):
+        self.mean = np.zeros(width, dtype=np.float64)
+        self.var = np.ones(width, dtype=np.float64)
+
+    @staticmethod
+    def update(_values):
+        raise AssertionError("evaluation must not update normalization statistics")
+
+
+def test_normalize_batch_can_freeze_eval_statistics():
+    normers = []
+    for _ in range(2):
+        normers.append(SimpleNamespace(
+            ob_norm=True,
+            ret_norm=True,
+            shared_ret_norm=True,
+            not_norm=0,
+            obs_preserve_slices=(),
+            clipob=10.0,
+            cliprew=10.0,
+            gamma=0.99,
+            epsilon=1e-8,
+            ob_rms=_FrozenRms(3),
+            state_rms=_FrozenRms(4),
+            ret_rms=_FrozenRms(1),
+        ))
+    obs = np.ones((1, 2, 3), dtype=np.float32)
+    states = np.ones((1, 2, 4), dtype=np.float32)
+    rewards = np.ones((1, 2, 1), dtype=np.float32)
+
+    normalized_obs, normalized_states, normalized_rewards = normalize_batch(
+        normers,
+        obs.copy(),
+        states.copy(),
+        rewards.copy(),
+        np.ones((1, 2), dtype=bool),
+        update=False,
+    )
+
+    np.testing.assert_allclose(normalized_obs, obs, atol=1e-6)
+    np.testing.assert_allclose(normalized_states, states, atol=1e-6)
+    np.testing.assert_allclose(normalized_rewards, rewards, atol=1e-6)
 
 
 def test_settling_slot_finds_suffix_near_final_deployment():
@@ -216,17 +337,17 @@ def test_actor_message_distance_mask_validates_contract():
             )
 
 
-def _write_checkpoint_files(models_dir):
-    for agent_id in range(5):
+def _write_checkpoint_files(models_dir, num_agents=5):
+    for agent_id in range(num_agents):
         (models_dir / f"actor_agent{agent_id}.pt").write_bytes(b"actor")
         (models_dir / f"critic_agent{agent_id}.pt").write_bytes(b"critic")
         (models_dir / f"normer{agent_id}.pkl").write_bytes(b"normer")
 
 
-def _write_manifest(models_dir, args_path, session_step, source_step=0):
+def _write_manifest(models_dir, args_path, session_step, source_step=0, num_agents=5):
     manifest = build_checkpoint_manifest(
         models_dir,
-        num_agents=5,
+        num_agents=num_agents,
         episode_index=10,
         session_total_num_steps=session_step,
         source_total_num_steps=source_step,
@@ -245,7 +366,7 @@ def test_snapshot_checkpoint_verifies_and_copies_manifest(tmp_path):
     models_dir = run_dir / "models"
     models_dir.mkdir(parents=True)
     args_path = run_dir / "args.json"
-    args_path.write_text("{}", encoding="utf-8")
+    args_path.write_text('{"n_UAVs": 5}', encoding="utf-8")
     _write_checkpoint_files(models_dir)
     _write_manifest(models_dir, args_path, 123456)
 
@@ -257,12 +378,28 @@ def test_snapshot_checkpoint_verifies_and_copies_manifest(tmp_path):
     assert copied["total_num_steps"] == 123456
 
 
+def test_snapshot_checkpoint_reads_six_uav_count_from_args(tmp_path):
+    run_dir = tmp_path / "run"
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True)
+    args_path = run_dir / "args.json"
+    args_path.write_text('{"n_UAVs": 6}', encoding="utf-8")
+    _write_checkpoint_files(models_dir, num_agents=6)
+    _write_manifest(models_dir, args_path, 654321, num_agents=6)
+
+    checkpoint_dir, _ = snapshot_checkpoint(run_dir, tmp_path / "evaluation")
+
+    assert (checkpoint_dir / "actor_agent5.pt").is_file()
+    assert (checkpoint_dir / "critic_agent5.pt").is_file()
+    assert (checkpoint_dir / "normer5.pkl").is_file()
+
+
 def test_snapshot_checkpoint_rejects_file_changed_after_manifest(tmp_path):
     run_dir = tmp_path / "run"
     models_dir = run_dir / "models"
     models_dir.mkdir(parents=True)
     args_path = run_dir / "args.json"
-    args_path.write_text("{}", encoding="utf-8")
+    args_path.write_text('{"n_UAVs": 5}', encoding="utf-8")
     _write_checkpoint_files(models_dir)
     _write_manifest(models_dir, args_path, 123456)
     changed = models_dir / "actor_agent0.pt"
@@ -277,7 +414,7 @@ def test_snapshot_checkpoint_rejects_partial_manifest(tmp_path):
     models_dir = run_dir / "models"
     models_dir.mkdir(parents=True)
     args_path = run_dir / "args.json"
-    args_path.write_text("{}", encoding="utf-8")
+    args_path.write_text('{"n_UAVs": 5}', encoding="utf-8")
     _write_checkpoint_files(models_dir)
     manifest = _write_manifest(models_dir, args_path, 123456)
     del manifest["files"]["critic_agent4.pt"]
@@ -295,10 +432,10 @@ def test_snapshot_checkpoint_rejects_args_changed_after_manifest(tmp_path):
     models_dir = run_dir / "models"
     models_dir.mkdir(parents=True)
     args_path = run_dir / "args.json"
-    args_path.write_text("{}", encoding="utf-8")
+    args_path.write_text('{"n_UAVs": 5}', encoding="utf-8")
     _write_checkpoint_files(models_dir)
     _write_manifest(models_dir, args_path, 123456)
-    args_path.write_text('{"changed": true}', encoding="utf-8")
+    args_path.write_text('{"n_UAVs": 5, "changed": true}', encoding="utf-8")
 
     with np.testing.assert_raises_regex(RuntimeError, "args.json does not match"):
         snapshot_checkpoint(run_dir, tmp_path / "evaluation")
@@ -309,7 +446,7 @@ def test_manifest_tracks_cumulative_warm_start_steps(tmp_path):
     models_dir = run_dir / "models"
     models_dir.mkdir(parents=True)
     args_path = run_dir / "args.json"
-    args_path.write_text("{}", encoding="utf-8")
+    args_path.write_text('{"n_UAVs": 5}', encoding="utf-8")
     _write_checkpoint_files(models_dir)
 
     manifest = _write_manifest(
@@ -326,7 +463,7 @@ def test_snapshot_checkpoint_keeps_optional_md_gru_state(tmp_path):
     models_dir = run_dir / "models"
     models_dir.mkdir(parents=True)
     args_path = run_dir / "args.json"
-    args_path.write_text("{}", encoding="utf-8")
+    args_path.write_text('{"n_UAVs": 5}', encoding="utf-8")
     _write_checkpoint_files(models_dir)
     (models_dir / "md_gru_shared.pt").write_bytes(b"shared-gru")
     manifest = build_checkpoint_manifest(
@@ -482,7 +619,7 @@ def test_snapshot_legacy_requires_explicit_frozen_confirmation(tmp_path):
     run_dir = tmp_path / "run"
     models_dir = run_dir / "models"
     models_dir.mkdir(parents=True)
-    (run_dir / "args.json").write_text("{}", encoding="utf-8")
+    (run_dir / "args.json").write_text('{"n_UAVs": 5}', encoding="utf-8")
     _write_checkpoint_files(models_dir)
 
     with np.testing.assert_raises_regex(ValueError, "legacy checkpoint"):

@@ -3,7 +3,7 @@ import numpy as np
 import pickle
 
 
-def normalize_batch(normers, obs, states, rews=None, dones=None):
+def normalize_batch(normers, obs, states, rews=None, dones=None, update=True):
     """Normalize all agents, optionally sharing only the return scale."""
     if not normers:
         return obs, states, rews
@@ -22,11 +22,11 @@ def normalize_batch(normers, obs, states, rews=None, dones=None):
 
     discounted_returns = []
     for agent_id, normer in enumerate(normers):
-        if normer.ob_rms:
+        if normer.ob_rms and update:
             normer.ob_rms.update(obs[:, agent_id])
             normer.state_rms.update(states[:, agent_id])
 
-        if rews is not None and normer.ret_rms:
+        if rews is not None and normer.ret_rms and update:
             agent_rews = rews[:, agent_id]
             if not hasattr(normer, 'returns') or normer.returns is None:
                 normer.returns = np.zeros_like(agent_rews)
@@ -40,7 +40,7 @@ def normalize_batch(normers, obs, states, rews=None, dones=None):
             if not first.shared_ret_norm:
                 normer.ret_rms.update(discounted_returns[-1])
 
-    if rews is not None and first.ret_rms and first.shared_ret_norm:
+    if rews is not None and first.ret_rms and first.shared_ret_norm and update:
         # Every agent observes the same pooled return distribution.  The RMS
         # objects remain separate so existing per-agent checkpoint files stay
         # self-contained, but receive identical samples and therefore retain

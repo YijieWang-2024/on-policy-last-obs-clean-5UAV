@@ -306,3 +306,42 @@ The new `episode_moving_template4` mode moves only the hidden MD birth-intensity
 - `externality_consensus` 不允许与不可靠 running-sum 混用；其可靠图系数语义未被伪造。
 - 验收：全套 `95 passed`，以及 reliable-zero / unreliable-zero / unreliable-last_obs / unreliable-md_gru 四组端到端 2-slot smoke 全部完成 PPO 更新和 checkpoint。
 - 详细合同见 `UNRELIABLE_DATAPLANE.md` 第 7–10 节。
+
+## 2026-08-19：可靠主线 8 月 14—19 日增量已适配
+
+- 再次确认 `on-policy-last-obs-clean-5UAV` 的 `agent/dcppo-runtime-optimization` 是可靠通信/Actor-message/速度实验主线；逐提交审计见 `UNRELIABLE_SPEED_COMPATIBILITY_AUDIT_20260813.md` 第 13 节。
+- 已接入 association threshold、deadline prefilter 开关、任意 UAV 数、显式起点优先、异构 per-UAV 带宽/算力，以及动态 agent 数的 checkpoint/render。
+- 原有 Type-S 丢包、receiver-local GRU、Type-A running-sum、优势模式和 PPO 后处理保持不变；Actor-message 仍可消融且不伪装成不可靠链路。
+- 新增六 UAV 正式入口 `onpolicy/scripts/train/run_fixed600_200_6uav_unreliable_dataplane.ps1`；五 UAV 入口也已暴露新参数。
+- CPU-only 全套 `107 passed, 2 warnings`；4 个启动器语法解析和 5/6 UAV argv probe 通过。没有启动 GPU 或长训练。
+- `hybrid_actor.py` 仅服务可靠主线的离线 checkpoint 混合评估，没有进入训练 import graph，故未纳入不可靠算法。
+## 2026-08-13：MD-GRU 论文/实现训练闭环复核
+
+- 论文 IV-D 要求每 UAV 一套本地 GRU 参数、每个 receiver/MD session 一份独立 hidden；旧实现只有一套跨 UAV 共享模型，已改为五套相同初值但本地独立更新的 predictor/optimizer。
+- 在线 hidden 在 episode reset 清空；监督 sequence replay 跨 episode 保留、有界 FIFO，保存原始观测短序列并在训练时用当前参数重算 hidden，避免 recurrent-state staleness。
+- GRU 采用独立 Smooth-L1 监督更新；PPO actor/critic 梯度不进入 GRU，重构只供 critic。`md_prediction_loss_coef` 仅保留兼容性，不再缩放 optimizer loss。
+- runner 更新顺序已改为 `compute -> PPO -> predictor -> next rollout`，防止一个 on-policy batch 内 estimator 版本漂移。
+- 启动脚本新增 `-CPUOnly`。本机 `marl` 的 PyTorch 2.12 CUDA wheel 在禁用 GPU 后可计算有限 GRU 梯度，但最小独立脚本也会在 CPU 原生后端出现 `0xC0000005`，故不要把该环境当作 CPU 训练验收环境。
+- 论文工作树本轮只读，原有未提交 `paper.tex/ref.bib/pdf/bbl` 等修改未触碰。
+
+## 2026-08-13：不可靠/速度合同二次审计
+
+- 证据与兼容矩阵见 `UNRELIABLE_SPEED_COMPATIBILITY_AUDIT_20260813.md`。
+- 当前环境/Actor/PPO 主合同继承速度提交 `fa53f3a`；Type-S、Type-A 和 critic-only reconstruction 是正交叠加。
+- 速度兼容优势是 `per_agent_noise=3`；论文 IV-D 直接使用 running-sum 是 `pure_consensus`。固定启动器现已显式开放该选择。
+- 优势通信使用 reset 前的终局 UAV 位置；自 2026-08-19 起 `neighbor_distance/d_com` 同时硬门控 Type-A 名义范围图，旧全连接语义已废止。
+- Actor-message 在不可靠项目里仍只有几何门控；若开启，应标记为速度兼容 Actor 路径，而不是全链路不可靠。
+- 同时修复 residual 零分母端点、GRU 5 m/s 速度编码和 separated eval 当前环境/训练器接口。
+- CPU-only 隔离断言通过 17+11+8+2 项，两个 launcher argv probe 通过；本机长 Python 进程仍可复现已知 `0xC0000005`，所以完整 PPO CPU 验收仍未完成。
+- GRU 当前 replay capacity/train samples/min-ready samples 为 `32768/512/512`；不要再把 capacity 当成每个 PPO update 的训练样本数。
+- Type-S timely-reception KPI 现在只计 R 内几何邻居的有向尝试，并在每个 episode reset 清零；此前 R 外抽样和跨 episode 累计只影响日志口径，不改变 critic 的几何 mask。
+
+## 2026-08-19：Type-A 范围图、P_c/d_com 与 natural-only GRU 定稿
+
+- 修复 Type-A 的旧完全图假设：按 rollout 终局位置和可调 `d_com` 建图，running-sum 使用每个 sender 的实际 `out_degree+1`；Type-S/Type-A 共用同一范围门控。
+- 默认 `d_com=520 m`、`P_c=1.1809658836 W`、`K_c=10 dB`、`H=50`。距离/功率可只给一项并反算另一项；两项同时给出时误差必须不超过 5 m。
+- 保留 `per_agent_noise`，不加入 `|C_i|/M` 缩放；修复 local 恰为全局均值但 consensus 偏离时 residual 被错误置零的问题。
+- GRU 默认只训练真实信道自然重观测样本，不制造人工缺失；新增 replay-label/rollout-query age 分桶及 GRU-vs-last_obs prequential RMSE。
+- 预测器仍为 receiver-local 独立 Smooth-L1/Adam；重构 NumPy state 只供 critic，PPO 梯度不进入 GRU。checkpoint 是模型/optimizer warm-start，不是含 replay 的 bitwise exact resume。
+- CPU-only 定向回归 `48 passed`，全套 `117 passed, 2 warnings`；5/6-UAV launcher 语法通过，5-UAV power-only argv probe 通过。未启动长训练或 GPU 工作负载。
+- 追加 2-slot/1-worker CPU-only 训练闭环 `codex_cpu_smoke_rangegraph_gru_20260819/run1`：PPO 更新完成，args 为 520 m / 1.1809658836 W / 10 dB / H50 / per-agent-noise / md_gru，checkpoint manifest 和 `md_gru_shared.pt` 正常生成；仅作执行验证，不作性能证据。
