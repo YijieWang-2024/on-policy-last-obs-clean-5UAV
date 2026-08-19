@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import argparse
 from pathlib import Path
 
 import matplotlib
@@ -41,14 +42,20 @@ HATCHES = {
 }
 
 
-def load_rows():
-    with INPUT.open("r", newline="", encoding="utf-8-sig") as handle:
+def load_rows(input_path: Path):
+    with input_path.open("r", newline="", encoding="utf-8-sig") as handle:
         rows = list(csv.DictReader(handle))
     return rows
 
 
 def main():
-    rows = load_rows()
+    parser = argparse.ArgumentParser(description="Plot UAV-wise deterministic evaluation metrics.")
+    parser.add_argument("--results-dir", type=Path, default=RESULTS)
+    parser.add_argument("--output", type=Path, default=None)
+    cli = parser.parse_args()
+    input_path = cli.results_dir / "per_uav_aggregate.csv"
+    output = cli.output or (cli.results_dir / "per_uav_metrics_25det.png")
+    rows = load_rows(input_path)
     models = [model for model in MODEL_ORDER if any(row["model"] == model for row in rows)]
     if len(models) != 3:
         raise RuntimeError(f"Expected all three models, found {models}")
@@ -120,10 +127,11 @@ def main():
         y=0.995,
     )
     fig.subplots_adjust(left=0.07, right=0.985, bottom=0.06, top=0.86, wspace=0.28, hspace=0.32)
-    fig.savefig(OUTPUT, dpi=300, bbox_inches="tight", pad_inches=0.06)
-    fig.savefig(OUTPUT.with_suffix(".pdf"), bbox_inches="tight", pad_inches=0.06)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=300, bbox_inches="tight", pad_inches=0.06)
+    fig.savefig(output.with_suffix(".pdf"), bbox_inches="tight", pad_inches=0.06)
     plt.close(fig)
-    print(OUTPUT)
+    print(output)
 
 
 if __name__ == "__main__":
