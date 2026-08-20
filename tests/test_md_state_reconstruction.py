@@ -7,7 +7,11 @@ from onpolicy.config import get_config
 from onpolicy.envs.mec.mec import MEC
 from onpolicy.scripts.train.train_mec import parse_args
 from onpolicy.utils.md_roster import order_md_candidates
-from onpolicy.utils.md_state_reconstruction import MDStateReconstructor, _SequenceReplay
+from onpolicy.utils.md_state_reconstruction import (
+    MDGRUPredictor,
+    MDStateReconstructor,
+    _RolloutSessionBuffer,
+)
 
 
 def _args(mode="last_obs", **overrides):
@@ -290,6 +294,18 @@ def test_receiver_local_md_gru_checkpoint_round_trip_preserves_readiness():
             torch.testing.assert_close(source_parameter, target_parameter)
 
 
+def test_new_md_gru_head_starts_as_exact_last_obs_residual():
+    torch.manual_seed(3)
+    predictor = MDGRUPredictor(feature_dim=7, hidden_dim=8)
+    hidden = torch.randn(11, 8)
+    age = torch.rand(11, 1)
+    baseline = torch.randn(11, 7)
+
+    prediction = predictor.predict(hidden, age, baseline)
+
+    torch.testing.assert_close(prediction, baseline, rtol=0, atol=0)
+
+
 def test_md_gru_speed_codec_covers_speed_branch_velocity_range():
     args = _args(
         mean_velocity=3.0,
@@ -451,7 +467,8 @@ def test_reobserved_id_is_not_cleared_when_predicted_lifetime_reaches_zero():
 
     slot_after = bank.find(0, 20)
     assert slot_after == slot_before
-    assert bank.lifetime[0, slot_after] == 1
+    # clock points to the next reconstruction slot after reconstruct() returns.
+    assert bank.expire_at[0, slot_after] - (reconstructor.clock[0] - 1) == 1
     assert not torch.equal(hidden_before, bank.hidden[0, slot_after])
 
 
@@ -461,8 +478,8 @@ def test_receiver_memory_releases_expired_slots_before_replacements():
     reconstructor._ensure_banks(1)
     bank = reconstructor.banks[0]
     bank.ids[0] = np.arange(args.n_GUs)
-    bank.lifetime[0] = 10
-    bank.lifetime[0, -6:] = 1
+    bank.expire_at[0] = reconstructor.clock[0] + 10
+    bank.expire_at[0, -6:] = reconstructor.clock[0]
 
     data = _synthetic_data(args, lifetime=10)
     data["record_features"][:] = 0
@@ -531,16 +548,13 @@ def test_md_gru_collects_only_reobservation_targets_and_trains():
     assert not reconstructor.predictor_ready[0]
     bank = reconstructor.banks[0]
     remembered_slot = bank.find(0, 20)
-    np.testing.assert_allclose(
-        bank.estimate[0, remembered_slot], bank.last_feature[0, remembered_slot]
-    )
-    assert not reconstructor.replays[0].items
+    assert reconstructor.session_buffers[0].target_count() == 0
 
     received = copy.deepcopy(lost)
     received["reception_mask"][0, 0, 1] = True
     received["record_features"][0, 1, 0, 0] = 120
     reconstructor.reconstruct(received)
-    assert len(reconstructor.replays[0].items) == 1
+    assert reconstructor.session_buffers[0].target_count() == 1
 
     before = [parameter.detach().clone() for parameter in reconstructor.predictors[0].parameters()]
     metrics = reconstructor.train_predictors()
@@ -586,10 +600,7 @@ def test_natural_reobservations_preserve_age_distribution_without_fake_masks():
     reconstructor.reconstruct(copy.deepcopy(lost))
     reconstructor.reconstruct(copy.deepcopy(data))
 
-    ages = [
-        int(round(item[1][0] * args.md_lifetime_max))
-        for item in reconstructor.replays[0].items
-    ]
+    ages = reconstructor.session_buffers[0].age_values().tolist()
     assert ages == [1, 2, 3]
     metrics = reconstructor.train_predictors()[0]
     assert metrics["md_prediction_replay_label_count"] == 3
@@ -598,7 +609,7 @@ def test_natural_reobservations_preserve_age_distribution_without_fake_masks():
     assert metrics["md_prediction_replay_label_age3_fraction"] == 1 / 3
 
 
-def test_online_memory_reset_preserves_natural_replay_and_prequential_baseline():
+def test_rollout_session_buffer_clears_after_training_and_restarts_after_reset():
     args = _args(mode="md_gru")
     reconstructor = MDStateReconstructor(args, torch.device("cpu"))
     data = _synthetic_data(args)
@@ -606,6 +617,9 @@ def test_online_memory_reset_preserves_natural_replay_and_prequential_baseline()
     reconstructor.reconstruct(copy.deepcopy(data))
     reconstructor.train_predictors()
     assert reconstructor.predictor_ready[0]
+    assert reconstructor.session_buffers[0].target_count() == 0
+    reconstructor.reset(np.asarray([True]))
+    reconstructor.reconstruct(copy.deepcopy(data), collect_samples=False)
 
     lost = copy.deepcopy(data)
     lost["reception_mask"][0, 0, 1] = False
@@ -618,36 +632,34 @@ def test_online_memory_reset_preserves_natural_replay_and_prequential_baseline()
     assert metrics["md_prediction_prequential_samples"] == 1
     assert np.isfinite(metrics["md_prediction_prequential_rmse_m"])
     assert np.isfinite(metrics["md_last_obs_prequential_rmse_m"])
-    replay_size = len(reconstructor.replays[0].items)
     reconstructor.reset(np.asarray([True]))
     assert np.all(reconstructor.banks[0].ids == -1)
-    assert len(reconstructor.replays[0].items) == replay_size
+    assert reconstructor.session_buffers[0].target_count() == 0
 
 
-def test_sequence_replay_persists_across_updates_and_evicts_oldest():
-    replay = _SequenceReplay(capacity=2, seed=3)
-    for marker in range(3):
-        replay.add(
-            [[marker] * 8], [marker / 10], [marker] * 7
-        )
+def test_rollout_session_buffer_stores_one_sequence_without_prefix_copies():
+    buffer = _RolloutSessionBuffer(1, 2, 6, 7)
+    for marker, gap in enumerate((0, 1, 1, 3, 1, 3)):
+        buffer.append([0], [1], [[marker] * 7], [gap])
 
-    assert len(replay.items) == 2
-    assert replay.new_since_train == 3
-    assert replay.mark_trained() == 3
-    assert replay.new_since_train == 0
-    assert len(replay.sample(10)) == 2
-    np.testing.assert_allclose(replay.items[0][-1], np.ones(7))
+    assert buffer.target_count() == 5
+    assert buffer.session_pairs().tolist() == [[0, 1]]
+    assert buffer.age_values().tolist() == [1, 1, 3, 1, 3]
+    buffer.reset()
+    assert buffer.target_count() == 0
 
 
 def test_receiver_local_predictors_diverge_after_local_training_only():
     torch.manual_seed(7)
     args = _args(mode="md_gru")
     reconstructor = MDStateReconstructor(args, torch.device("cpu"))
-    history = np.zeros((2, reconstructor.feature_dim + 1), dtype=np.float32)
-    history[:, 0] = [-0.5, -0.4]
-    target = np.zeros(reconstructor.feature_dim, dtype=np.float32)
-    target[0] = -0.3
-    reconstructor.replays[0].add(history, [0.2], target)
+    reconstructor._ensure_banks(1)
+    reconstructor.session_buffers[0].append(
+        [0], [0], [[-0.5] + [0.0] * 6], [0]
+    )
+    reconstructor.session_buffers[0].append(
+        [0], [0], [[-0.3] + [0.0] * 6], [2]
+    )
 
     before_receiver_1 = [
         parameter.detach().clone()
@@ -657,8 +669,8 @@ def test_receiver_local_predictors_diverge_after_local_training_only():
         parameter.detach().clone()
         for parameter in reconstructor.predictors[0].parameters()
     ]
-    assert len(reconstructor.replays[0].items) == 1
-    assert not reconstructor.replays[1].items
+    assert reconstructor.session_buffers[0].target_count() == 1
+    assert reconstructor.session_buffers[1].target_count() == 0
     reconstructor.train_predictors()
 
     assert reconstructor.predictor_ready[0]
@@ -684,9 +696,11 @@ def test_md_gru_waits_for_minimum_replay_before_predictions_are_enabled():
         md_gru_train_samples=1,
     )
     reconstructor = MDStateReconstructor(args, torch.device("cpu"))
-    history = np.zeros((1, reconstructor.feature_dim + 1), dtype=np.float32)
-    target = np.zeros(reconstructor.feature_dim, dtype=np.float32)
-    reconstructor.replays[0].add(history, [0.1], target)
+    reconstructor._ensure_banks(1)
+    reconstructor.session_buffers[0].append([0], [0], [[0.0] * 7], [0])
+    reconstructor.session_buffers[0].append(
+        [0], [0], [[0.1] + [0.0] * 6], [1]
+    )
 
     metrics = reconstructor.train_predictors()
 
