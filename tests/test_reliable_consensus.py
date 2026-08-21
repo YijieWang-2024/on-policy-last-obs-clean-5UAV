@@ -1,9 +1,26 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from onpolicy.envs.mec.mec import MEC
 from onpolicy.runner.separated.mec_runner import MECRunner
+
+
+class _BufferStub:
+    def __init__(self):
+        self.advantages = None
+
+    def after_update(self):
+        pass
+
+
+class _TrainerStub:
+    def prep_training(self):
+        pass
+
+    def train(self, buffer):
+        return {}
 
 
 def test_finite_consensus_approaches_component_mean():
@@ -47,6 +64,65 @@ def test_finite_consensus_approaches_component_mean():
     np.testing.assert_allclose(
         after_fifty, np.broadcast_to(exact_mean, after_fifty.shape), atol=1e-5
     )
+
+
+@pytest.mark.parametrize(
+    ("advantage_mode", "exact_mean_weight"),
+    [
+        ("per_agent_noise", 0.0),
+        ("local_mean_per_agent_noise", 1.0),
+    ],
+)
+def test_per_agent_noise_contracts_preserve_old_mode_and_add_exact_mean(
+    monkeypatch, advantage_mode, exact_mean_weight,
+):
+    local_advantages = np.array(
+        [
+            [[[-2.0]], [[1.0]]],
+            [[[1.0]], [[4.0]]],
+            [[[7.0]], [[10.0]]],
+        ],
+        dtype=np.float32,
+    )
+    consensus_advantages = np.zeros_like(local_advantages)
+    noise_magnitude = np.array([0.0, 0.5, 1.0], dtype=np.float32).reshape(
+        3, 1, 1, 1
+    )
+    buffers = [_BufferStub() for _ in range(3)]
+    runner = SimpleNamespace(
+        advantage_mode=advantage_mode,
+        noise_scale=2.0,
+        num_agents=3,
+        all_args=SimpleNamespace(n_iterations=50, cartesian_flight=False),
+        buffer=buffers,
+        trainer=[_TrainerStub() for _ in range(3)],
+        collect_local_advantages=lambda: local_advantages.copy(),
+        run_consensus_algorithm=lambda advantages, iterations: (
+            consensus_advantages
+        ),
+        per_agent_consensus_residual=lambda local, consensus: noise_magnitude,
+        _safe_correlation=lambda left, right: 0.0,
+    )
+    monkeypatch.setattr(
+        np.random,
+        "randn",
+        lambda *shape: np.ones(shape, dtype=np.float32),
+    )
+
+    train_infos = MECRunner.train(runner)
+
+    exact_mean = np.mean(local_advantages, axis=0, keepdims=True)
+    local_std = np.std(local_advantages, axis=0, keepdims=True)
+    expected = (
+        local_advantages
+        + exact_mean_weight * exact_mean
+        + noise_magnitude * 2.0 * local_std
+    )
+    for agent_id, buffer in enumerate(buffers):
+        np.testing.assert_allclose(
+            buffer.advantages, expected[agent_id], atol=1e-7
+        )
+    assert train_infos[0]["exact_mean_added"] == exact_mean_weight
 
 
 def test_terminal_consensus_uses_positions_and_neighbor_distance_not_buffer_graph():

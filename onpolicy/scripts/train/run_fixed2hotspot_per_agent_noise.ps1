@@ -2,6 +2,8 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateRange(0.0, 100.0)]
     [double]$NoiseScale,
+    [ValidateSet('per_agent_noise', 'local_mean_per_agent_noise')]
+    [string]$AdvantageMode = 'per_agent_noise',
     [int]$Seed = 2,
     [long]$NumEnvSteps = 60000000,
     [int]$RolloutThreads = 64,
@@ -73,7 +75,12 @@ if (-not (Test-Path -LiteralPath $python)) {
 
 $noiseTag = ('{0:00}' -f [int][math]::Round($NoiseScale * 100))
 if (-not $ExperimentName) {
-    $ExperimentName = 'fixed2hotspot_nocurr_A_peragentnoise_s' + $noiseTag + '_seed' + $Seed + '_60m_20260807'
+    $advantageTag = if ($AdvantageMode -eq 'local_mean_per_agent_noise') {
+        'localmean_peragentnoise'
+    } else {
+        'peragentnoise'
+    }
+    $ExperimentName = 'fixed2hotspot_nocurr_A_' + $advantageTag + '_s' + $noiseTag + '_seed' + $Seed + '_60m_20260807'
 }
 
 $running = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
@@ -198,7 +205,7 @@ $trainArgs = @(
     '--spatial_flight_actor',
     '--completion_priority_user_sort',
     '--n_iterations', '50',
-    '--advantage_mode', 'per_agent_noise',
+    '--advantage_mode', $AdvantageMode,
     '--experiment_name', $ExperimentName,
     '--noise_scale', $NoiseScale
 )
@@ -233,6 +240,7 @@ if ($ModelDir) {
 }
 
 Write-Host "Experiment : $ExperimentName"
+Write-Host "Advantage  : $AdvantageMode"
 Write-Host "Noise scale: $NoiseScale"
 Write-Host "MD lifetime: $MdLifetime"
 Write-Host "UAV v_max  : $UAVMaxSpeed"

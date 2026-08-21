@@ -7,7 +7,7 @@ param(
     [int]$CommunicationDistance = 260,
     [int]$ActorNeighborDistance = 260,
     [int]$ConsensusRounds = 50,
-    [ValidateSet('local', 'mixed_consensus', 'pure_consensus', 'externality_consensus', 'legacy_noise', 'per_agent_noise')]
+    [ValidateSet('local', 'mixed_consensus', 'pure_consensus', 'externality_consensus', 'legacy_noise', 'per_agent_noise', 'local_mean_per_agent_noise')]
     [string]$AdvantageMode = 'mixed_consensus',
     [double]$NoiseScale = 0.12,
     [double]$ConsensusAlpha = 0.5,
@@ -188,7 +188,7 @@ if ($Method -eq 'dcppo') {
         '--externality_beta', $ExternalityBeta,
         '--n_iterations', $ConsensusRounds
     )
-    if ($AdvantageMode -eq 'per_agent_noise') {
+    if ($AdvantageMode -in @('per_agent_noise', 'local_mean_per_agent_noise')) {
         $arguments += @('--noise_scale', $NoiseScale)
     }
     if ($AdvantageMode -ne 'legacy_noise' -and -not $LegacyMeanPoolCritic) {

@@ -391,16 +391,21 @@ def parse_args(args, parser):
             "externality_consensus",
             "legacy_noise",
             "per_agent_noise",
+            "local_mean_per_agent_noise",
         ],
         default="default",
-        help="Actor advantage contract. Consensus modes use the rollout-ending communication graph.",
+        help=(
+            "Actor advantage contract. Consensus modes use the rollout-ending "
+            "communication graph. local_mean_per_agent_noise uses A_i + "
+            "mean_j(A_j) + residual_i * noise_scale * std_j(A_j) * N(0,1)."
+        ),
     )
     parser.add_argument(
         "--noise_scale", type=float, default=0.12,
         help=(
-            "Base Gaussian-noise scale for per_agent_noise. The final actor "
-            "advantage is A_local + noise_magnitude_i * noise_scale * "
-            "std(A_local) * N(0,1)."
+            "Base Gaussian-noise scale for per_agent_noise and "
+            "local_mean_per_agent_noise. The latter also adds the exact "
+            "cross-UAV mean advantage."
         ),
     )
     parser.add_argument(

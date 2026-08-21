@@ -368,10 +368,10 @@ class MECRunner(Runner):
                     'consensus_residual_mean': float(np.mean(consensus_residual)),
                     'consensus_residual_max': float(np.max(consensus_residual)),
                 }
-            elif self.advantage_mode == "per_agent_noise":
-                # Deliberately retain only each UAV's local advantage plus an
-                # independently sampled Gaussian perturbation.  No exact or
-                # communicated mean is added in this ablation.
+            elif self.advantage_mode in (
+                "per_agent_noise",
+                "local_mean_per_agent_noise",
+            ):
                 raw_consensus = self.run_consensus_algorithm(
                     local_advantage, self.all_args.n_iterations
                 )
@@ -379,7 +379,15 @@ class MECRunner(Runner):
                     local_advantage, raw_consensus
                 )
                 local_std = np.std(local_advantage, axis=0, keepdims=True)
-                training_advantage = local_advantage + (
+                training_advantage = local_advantage.copy()
+                if self.advantage_mode == "local_mean_per_agent_noise":
+                    # Add the exact cross-UAV mean, not the finite-round
+                    # consensus estimate.  Consensus only controls each UAV's
+                    # Gaussian-noise magnitude in this contract.
+                    training_advantage += np.mean(
+                        local_advantage, axis=0, keepdims=True
+                    )
+                training_advantage += (
                     noise_magnitude
                     * self.noise_scale
                     * local_std
@@ -389,6 +397,9 @@ class MECRunner(Runner):
                 ).astype(local_advantage.dtype, copy=False)
                 consensus_infos = {
                     'noise_scale': float(self.noise_scale),
+                    'exact_mean_added': float(
+                        self.advantage_mode == "local_mean_per_agent_noise"
+                    ),
                     'noise_magnitude_mean': float(np.mean(noise_magnitude)),
                     'noise_magnitude_min': float(np.min(noise_magnitude)),
                     'noise_magnitude_max': float(np.max(noise_magnitude)),
