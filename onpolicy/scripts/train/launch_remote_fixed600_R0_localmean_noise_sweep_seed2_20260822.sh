@@ -7,8 +7,16 @@ log_dir="$repo_root/training_logs"
 mkdir -p "$log_dir"
 
 gpu_process_count() {
-  nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null \
-    | grep -c '^[0-9]' || true
+  local pids count=0
+  if ! pids="$(nvidia-smi --query-compute-apps=pid \
+      --format=csv,noheader,nounits 2>/dev/null)"; then
+    echo 999
+    return
+  fi
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] && ((count += 1))
+  done <<< "$pids"
+  echo "$count"
 }
 
 while (( $(gpu_process_count) > 0 )); do
