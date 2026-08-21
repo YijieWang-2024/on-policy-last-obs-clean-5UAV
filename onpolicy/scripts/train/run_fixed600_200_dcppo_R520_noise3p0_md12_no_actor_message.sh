@@ -3,9 +3,26 @@ set -euo pipefail
 
 radius="${1:-520}"
 experiment_name="${2:-dcppoR520_fixed600_200_layoutctx_inputv2_peragentnoise_s3p0_md12_no_actor_message_seed2_60m_20260810}"
+advantage_mode="${3:-per_agent_noise}"
+noise_scale="${4:-3.0}"
+deadline_filter="${5:-enabled}"
 case "$radius" in
   0|260|520) ;;
   *) echo "radius must be 0, 260, or 520" >&2; exit 2 ;;
+esac
+case "$advantage_mode" in
+  per_agent_noise|local_mean_per_agent_noise) ;;
+  *) echo "unsupported advantage mode: $advantage_mode" >&2; exit 2 ;;
+esac
+if [[ ! "$noise_scale" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]; then
+  echo "noise scale must be a non-negative number" >&2
+  exit 2
+fi
+deadline_filter_args=()
+case "$deadline_filter" in
+  enabled) ;;
+  disabled) deadline_filter_args+=(--disable_offload_deadline_filter) ;;
+  *) echo "deadline filter must be enabled or disabled" >&2; exit 2 ;;
 esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -97,6 +114,7 @@ exec "$python_bin" "$train_script" \
   --lr 0.0001 \
   --critic_lr 0.0005 \
   --clip_param 0.15 \
+  --gamma 0.99 \
   --ppo_epoch 4 \
   --num_mini_batch 1 \
   --entropy_coef 0 \
@@ -108,6 +126,7 @@ exec "$python_bin" "$train_script" \
   --ego_query_critic \
   --local_reward \
   --continuous_associate \
+  --association_threshold 0.5 \
   --not_served_rew_to_nearest \
   --cartesian_flight \
   --actor_message_mode disabled \
@@ -116,8 +135,9 @@ exec "$python_bin" "$train_script" \
   --spatial_flight_actor \
   --completion_priority_user_sort \
   --n_iterations 50 \
-  --advantage_mode per_agent_noise \
+  --advantage_mode "$advantage_mode" \
   --experiment_name "$experiment_name" \
-  --noise_scale 3.0 \
+  --noise_scale "$noise_scale" \
   --episode_layout_context \
-  --episode_layout_context_units meters_v2
+  --episode_layout_context_units meters_v2 \
+  "${deadline_filter_args[@]}"
