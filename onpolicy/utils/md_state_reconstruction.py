@@ -1,4 +1,5 @@
 from copy import deepcopy
+import time
 
 import numpy as np
 import torch
@@ -116,6 +117,18 @@ class _RolloutSessionBuffer:
         last = int(np.searchsorted(np.cumsum(counts), int(target_budget), side="left"))
         return pairs[:min(last + 1, len(pairs))]
 
+    def target_batches(self, pairs, target_batch_size, max_batches):
+        """Partition shuffled whole sessions into disjoint target-budget batches."""
+        batches = []
+        cursor = 0
+        for _ in range(int(max_batches)):
+            batch = self.take_target_budget(pairs[cursor:], target_batch_size)
+            if not len(batch):
+                break
+            batches.append(batch)
+            cursor += len(batch)
+        return batches, cursor
+
     def age_values(self, pairs=None):
         if pairs is None:
             lengths, gaps = self.lengths, self.gaps
@@ -159,8 +172,15 @@ class _DenseMemoryBank:
         # Tasks are current-slot data only. task_valid is cleared in begin_step.
         self.tasks = np.zeros((environments, capacity, 3), dtype=np.float32)
         self.task_valid = np.zeros((environments, capacity), dtype=bool)
-        self.hidden = torch.zeros(
-            environments, capacity, hidden_dim, device=device, dtype=torch.float32
+        self.free_slots = np.broadcast_to(
+            np.arange(capacity, dtype=np.int16), (environments, capacity)
+        ).copy()
+        self.free_count = np.full(environments, capacity, dtype=np.int16)
+        self.hidden = (
+            torch.zeros(
+                environments, capacity, hidden_dim, device=device, dtype=torch.float32
+            )
+            if hidden_dim > 0 else None
         )
 
     def ensure_session_capacity(self, required):
@@ -184,7 +204,12 @@ class _DenseMemoryBank:
         self.last_feature[environment_mask] = 0
         self.tasks[environment_mask] = 0
         self.task_valid[environment_mask] = False
-        self.hidden[torch.as_tensor(environment_mask, device=self.device)] = 0
+        self.free_slots[environment_mask] = np.arange(
+            self.capacity, dtype=np.int16
+        )
+        self.free_count[environment_mask] = self.capacity
+        if self.hidden is not None:
+            self.hidden[torch.as_tensor(environment_mask, device=self.device)] = 0
 
     def find(self, environment, session_id):
         if 0 <= session_id < self.session_capacity:
@@ -213,6 +238,15 @@ class _DenseMemoryBank:
         environments, slots = np.nonzero(expired)
         if not len(slots):
             return
+        unique_environments, starts, counts = np.unique(
+            environments, return_index=True, return_counts=True
+        )
+        ranks = np.arange(len(environments)) - np.repeat(starts, counts)
+        free_positions = self.free_count[environments].astype(np.int64) + ranks
+        if np.any(free_positions >= self.capacity):
+            raise RuntimeError("MD memory free-slot accounting overflowed")
+        self.free_slots[environments, free_positions] = slots
+        self.free_count[unique_environments] += counts.astype(np.int16)
         old_ids = self.ids[environments, slots]
         valid_ids = old_ids >= 0
         self.slot_by_session[environments[valid_ids], old_ids[valid_ids]] = -1
@@ -221,10 +255,11 @@ class _DenseMemoryBank:
         self.expire_at[environments, slots] = -1
         self.last_feature[environments, slots] = 0
         self.tasks[environments, slots] = 0
-        self.hidden[
-            torch.as_tensor(environments, device=self.device),
-            torch.as_tensor(slots, device=self.device),
-        ] = 0
+        if self.hidden is not None:
+            self.hidden[
+                torch.as_tensor(environments, device=self.device),
+                torch.as_tensor(slots, device=self.device),
+            ] = 0
 
     def lookup_or_allocate(self, environments, session_ids):
         if not len(session_ids):
@@ -232,19 +267,39 @@ class _DenseMemoryBank:
         self.ensure_session_capacity(int(np.max(session_ids)) + 1)
         slots = self.slot_by_session[environments, session_ids].astype(np.int64)
         missing = slots < 0
-        for environment in np.unique(environments[missing]):
-            indices = np.flatnonzero(missing & (environments == environment))
-            free = np.flatnonzero(self.ids[environment] == -1)
-            if len(free) < len(indices):
-                raise RuntimeError("MD memory capacity was exceeded")
-            assigned = free[:len(indices)]
-            ids = session_ids[indices]
-            slots[indices] = assigned
-            self.ids[environment, assigned] = ids
-            self.slot_by_session[environment, ids] = assigned
-            self.last_seen[environment, assigned] = -1
-            self.expire_at[environment, assigned] = -1
-            self.hidden[environment, torch.as_tensor(assigned, device=self.device)] = 0
+        if not np.any(missing):
+            return slots
+
+        missing_indices = np.flatnonzero(missing)
+        missing_environments = environments[missing_indices]
+        order = np.argsort(missing_environments, kind="stable")
+        sorted_environments = missing_environments[order]
+        unique_environments, starts, counts = np.unique(
+            sorted_environments, return_index=True, return_counts=True
+        )
+        ranks = np.arange(len(order)) - np.repeat(starts, counts)
+        if np.any(counts > self.free_count[unique_environments]):
+            raise RuntimeError("MD memory capacity was exceeded")
+        free_positions = (
+            self.free_count[sorted_environments].astype(np.int64) - 1 - ranks
+        )
+        assigned_sorted = self.free_slots[sorted_environments, free_positions]
+        self.free_count[unique_environments] -= counts.astype(np.int16)
+        assigned = np.empty_like(assigned_sorted)
+        assigned[order] = assigned_sorted
+        ids = session_ids[missing_indices]
+        slots[missing_indices] = assigned
+        self.ids[missing_environments, assigned] = ids
+        self.slot_by_session[missing_environments, ids] = assigned
+        self.last_seen[missing_environments, assigned] = -1
+        self.expire_at[missing_environments, assigned] = -1
+        if self.hidden is not None:
+            self.hidden[
+                torch.as_tensor(
+                    missing_environments, device=self.device, dtype=torch.long
+                ),
+                torch.as_tensor(assigned, device=self.device, dtype=torch.long),
+            ] = 0
         return slots
 
 
@@ -270,19 +325,24 @@ class MDStateReconstructor:
         )
         self.packet_capacity = int(args.max_GUs_in_range)
         self.hidden_dim = int(args.md_gru_hidden_dim)
-        self.train_samples = int(getattr(args, "md_gru_train_samples", 512))
+        target_batch_size = getattr(args, "md_gru_target_batch_size", None)
+        if target_batch_size is None:
+            target_batch_size = getattr(args, "md_gru_train_samples", 2048)
+        self.target_batch_size = int(target_batch_size)
+        self.batches_per_rollout = int(
+            getattr(args, "md_gru_batches_per_rollout", 10)
+        )
         self.min_ready_samples = int(
-            getattr(args, "md_gru_min_ready_samples", 512)
+            getattr(args, "md_gru_min_ready_samples", 2048)
         )
         if self.mode == "md_gru":
-            if self.hidden_dim <= 0 or args.md_gru_max_samples <= 0:
-                raise ValueError("md_gru_hidden_dim and md_gru_max_samples must be positive")
-            if args.md_gru_lr <= 0 or args.md_gru_epochs <= 0 or args.md_gru_batch_size <= 0:
+            if self.hidden_dim <= 0 or args.md_gru_lr <= 0:
+                raise ValueError("md_gru_hidden_dim and md_gru_lr must be positive")
+            if self.target_batch_size <= 0 or self.batches_per_rollout <= 0:
                 raise ValueError(
-                    "md_gru_lr, md_gru_epochs, and md_gru_batch_size must be positive"
+                    "md_gru_target_batch_size and md_gru_batches_per_rollout "
+                    "must be positive"
                 )
-            if self.train_samples <= 0:
-                raise ValueError("md_gru_train_samples must be positive")
             if self.min_ready_samples <= 0:
                 raise ValueError("md_gru_min_ready_samples must be positive")
         self.distance_only_user_sort = resolve_distance_only_user_sort(args)
@@ -310,13 +370,123 @@ class MDStateReconstructor:
             if self.predictors is not None else [True for _ in range(self.n_uavs)]
         )
         self.residual_prediction = [True for _ in range(self.n_uavs)]
-        self.banks = None
+        self.bank = None
         self.session_buffers = None
         self.environments = None
         self.clock = None
         self.last_data = None
         self.query_age_counts = np.zeros((self.n_uavs, 4), dtype=np.int64)
         self._collect_metrics = False
+        senders = np.arange(self.n_uavs)
+        self.sender_order = np.asarray([
+            np.concatenate(([receiver], senders[senders != receiver]))
+            for receiver in range(self.n_uavs)
+        ])
+        self.sender_rank = np.argsort(self.sender_order, axis=1)
+        self.receiver_index = np.arange(self.n_uavs)[:, None]
+        self.online_parameters = None
+        if self.predictors is not None:
+            self._refresh_online_parameters()
+
+    def _refresh_online_parameters(self):
+        """Cache receiver-stacked weights between rollout-boundary updates."""
+        self.online_parameters = {
+            "gru_weight_ih": torch.stack([
+                predictor.gru.weight_ih.detach() for predictor in self.predictors
+            ]),
+            "gru_weight_hh": torch.stack([
+                predictor.gru.weight_hh.detach() for predictor in self.predictors
+            ]),
+            "gru_bias_ih": torch.stack([
+                predictor.gru.bias_ih.detach() for predictor in self.predictors
+            ]),
+            "gru_bias_hh": torch.stack([
+                predictor.gru.bias_hh.detach() for predictor in self.predictors
+            ]),
+            "head_weight_1": torch.stack([
+                predictor.head[0].weight.detach() for predictor in self.predictors
+            ]),
+            "head_bias_1": torch.stack([
+                predictor.head[0].bias.detach() for predictor in self.predictors
+            ]),
+            "head_weight_2": torch.stack([
+                predictor.head[2].weight.detach() for predictor in self.predictors
+            ]),
+            "head_bias_2": torch.stack([
+                predictor.head[2].bias.detach() for predictor in self.predictors
+            ]),
+        }
+
+    def _receiver_batch_indices(self, receivers):
+        receivers = np.asarray(receivers, dtype=np.int64)
+        counts = np.bincount(receivers, minlength=self.n_uavs)
+        positions = np.empty(len(receivers), dtype=np.int64)
+        for receiver in range(self.n_uavs):
+            selected = receivers == receiver
+            positions[selected] = np.arange(np.count_nonzero(selected))
+        return (
+            torch.as_tensor(receivers, device=self.device, dtype=torch.long),
+            torch.as_tensor(positions, device=self.device, dtype=torch.long),
+            int(np.max(counts, initial=0)),
+        )
+
+    def _online_update(self, receivers, features, ages, hidden):
+        receiver_index, positions, width = self._receiver_batch_indices(receivers)
+        inputs = torch.cat((
+            torch.as_tensor(features, device=self.device, dtype=torch.float32),
+            torch.as_tensor(ages, device=self.device, dtype=torch.float32),
+        ), dim=-1)
+        padded_inputs = torch.zeros(
+            self.n_uavs, width, inputs.shape[-1], device=self.device
+        )
+        padded_hidden = torch.zeros(
+            self.n_uavs, width, self.hidden_dim, device=self.device
+        )
+        padded_inputs[receiver_index, positions] = inputs
+        padded_hidden[receiver_index, positions] = hidden
+        parameters = self.online_parameters
+        input_gates = torch.bmm(
+            padded_inputs, parameters["gru_weight_ih"].transpose(1, 2)
+        ) + parameters["gru_bias_ih"][:, None]
+        hidden_gates = torch.bmm(
+            padded_hidden, parameters["gru_weight_hh"].transpose(1, 2)
+        ) + parameters["gru_bias_hh"][:, None]
+        input_reset, input_update, input_new = input_gates.chunk(3, dim=-1)
+        hidden_reset, hidden_update, hidden_new = hidden_gates.chunk(3, dim=-1)
+        reset = torch.sigmoid(input_reset + hidden_reset)
+        update = torch.sigmoid(input_update + hidden_update)
+        new = torch.tanh(input_new + reset * hidden_new)
+        updated = new + update * (padded_hidden - new)
+        return updated[receiver_index, positions]
+
+    def _online_predict(self, receivers, hidden, ages, baseline):
+        receiver_index, positions, width = self._receiver_batch_indices(receivers)
+        inputs = torch.cat((
+            hidden,
+            torch.as_tensor(ages, device=self.device, dtype=torch.float32),
+        ), dim=-1)
+        padded_inputs = torch.zeros(
+            self.n_uavs, width, inputs.shape[-1], device=self.device
+        )
+        padded_inputs[receiver_index, positions] = inputs
+        parameters = self.online_parameters
+        intermediate = torch.tanh(
+            torch.bmm(
+                padded_inputs, parameters["head_weight_1"].transpose(1, 2)
+            ) + parameters["head_bias_1"][:, None]
+        )
+        output = torch.bmm(
+            intermediate, parameters["head_weight_2"].transpose(1, 2)
+        ) + parameters["head_bias_2"][:, None]
+        output = output[receiver_index, positions]
+        baseline_tensor = torch.as_tensor(
+            baseline, device=self.device, dtype=torch.float32
+        )
+        residual = torch.as_tensor(
+            np.asarray(self.residual_prediction, dtype=bool)[receivers],
+            device=self.device,
+        )
+        return torch.where(residual[:, None], baseline_tensor + output, output)
 
     def checkpoint_state(self):
         if self.predictors is None:
@@ -354,23 +524,24 @@ class MDStateReconstructor:
             ]
             self.residual_prediction = [False for _ in range(self.n_uavs)]
         self.predictors.eval()
+        self._refresh_online_parameters()
 
     def _ensure_banks(self, environments):
-        if self.banks is not None and self.environments == environments:
+        if self.bank is not None and self.environments == environments:
             return
         self.environments = int(environments)
         self.clock = np.zeros(self.environments, dtype=np.int32)
-        self.banks = [
-            _DenseMemoryBank(
-                self.environments,
-                self.capacity,
-                self.session_capacity,
-                self.feature_dim,
-                self.hidden_dim,
-                self.device,
-            )
-            for _ in range(self.n_uavs)
-        ]
+        # Receiver and environment are flattened into one leading dimension.
+        # The storage remains receiver-local, but expiration/allocation can be
+        # performed once per slot without stacking five independent banks.
+        self.bank = _DenseMemoryBank(
+            self.n_uavs * self.environments,
+            self.capacity,
+            self.session_capacity,
+            self.feature_dim,
+            self.hidden_dim if self.predictors is not None else 0,
+            self.device,
+        )
         self.session_buffers = (
             [
                 _RolloutSessionBuffer(
@@ -388,21 +559,20 @@ class MDStateReconstructor:
         if required <= self.session_capacity:
             return
         self.session_capacity = max(int(required), 2 * self.session_capacity)
-        for bank in self.banks:
-            bank.ensure_session_capacity(self.session_capacity)
+        self.bank.ensure_session_capacity(self.session_capacity)
         if self.session_buffers is not None:
             for buffer in self.session_buffers:
                 buffer.ensure_capacity(self.session_capacity)
 
     def reset(self, environment_mask=None):
-        if self.banks is None:
+        if self.bank is None:
             return
         if environment_mask is None:
             environment_mask = np.ones(self.environments, dtype=bool)
         environment_mask = np.asarray(environment_mask, dtype=bool)
         self.clock[environment_mask] = 0
-        for bank in self.banks:
-            bank.reset(environment_mask)
+        receiver_environment_mask = np.tile(environment_mask, self.n_uavs)
+        self.bank.reset(receiver_environment_mask)
 
     def _speed_bound(self):
         candidates = [
@@ -503,116 +673,132 @@ class MDStateReconstructor:
         )
 
     @torch.no_grad()
-    def _ingest_receiver(
+    def _ingest_observations(
         self,
-        receiver,
         observation_environments,
         observation_receivers,
         observation_session_ids,
         observation_records,
         record_environment_mask,
     ):
-        selected = observation_receivers == receiver
-        environments = observation_environments[selected]
-        session_ids = observation_session_ids[selected]
-        records = observation_records[selected]
-        bank = self.banks[receiver]
-        bank.begin_step(self.clock, environments, session_ids)
-        observed_slots = np.zeros((self.environments, self.capacity), dtype=bool)
+        bank = self.bank
+        receiver_clock = np.broadcast_to(
+            self.clock, (self.n_uavs, self.environments)
+        ).reshape(-1)
+        flat_environments = (
+            observation_receivers * self.environments + observation_environments
+        )
+        bank.begin_step(
+            receiver_clock, flat_environments, observation_session_ids
+        )
+        observed_slots = np.zeros(
+            (self.n_uavs, self.environments, self.capacity), dtype=bool
+        )
+        session_ids = observation_session_ids
+        records = observation_records
         if not len(session_ids):
             return observed_slots
 
-        slots = bank.lookup_or_allocate(environments, session_ids)
-        observed_slots[environments, slots] = True
+        slots = bank.lookup_or_allocate(flat_environments, session_ids)
+        observed_slots[
+            observation_receivers, observation_environments, slots
+        ] = True
         features = self._encode_features(records)
-        old_last_seen = bank.last_seen[environments, slots]
+        old_last_seen = bank.last_seen[flat_environments, slots]
         gaps = np.where(
-            old_last_seen < 0, 0, self.clock[environments] - old_last_seen
+            old_last_seen < 0,
+            0,
+            self.clock[observation_environments] - old_last_seen,
         ).astype(np.int64)
 
         if self.session_buffers is not None:
-            record = record_environment_mask[environments]
-            self.session_buffers[receiver].append(
-                environments[record], session_ids[record], features[record], gaps[record]
-            )
+            record = record_environment_mask[observation_environments]
+            for receiver, buffer in enumerate(self.session_buffers):
+                selected = record & (observation_receivers == receiver)
+                buffer.append(
+                    observation_environments[selected],
+                    session_ids[selected],
+                    features[selected],
+                    gaps[selected],
+                )
 
-        predictor = self.predictors[receiver] if self.predictors is not None else None
-        if predictor is not None:
-            environment_index = torch.as_tensor(
-                environments, device=self.device, dtype=torch.long
+        if self.predictors is not None:
+            flat_index = torch.as_tensor(
+                flat_environments, device=self.device, dtype=torch.long
             )
-            slot_index = torch.as_tensor(slots, device=self.device, dtype=torch.long)
-            feature_tensor = torch.as_tensor(
-                features, device=self.device, dtype=torch.float32
+            slot_index = torch.as_tensor(
+                slots, device=self.device, dtype=torch.long
             )
-            age_tensor = torch.as_tensor(
+            bank.hidden[flat_index, slot_index] = self._online_update(
+                observation_receivers,
+                features,
                 gaps[:, None] / max(self.args.md_lifetime_max, 1),
-                device=self.device,
-                dtype=torch.float32,
-            )
-            bank.hidden[environment_index, slot_index] = predictor.update(
-                feature_tensor,
-                age_tensor,
-                bank.hidden[environment_index, slot_index],
+                bank.hidden[flat_index, slot_index],
             )
 
-        bank.last_feature[environments, slots] = features
-        bank.last_seen[environments, slots] = self.clock[environments]
+        bank.last_feature[flat_environments, slots] = features
+        bank.last_seen[flat_environments, slots] = self.clock[
+            observation_environments
+        ]
         lifetime = np.maximum(np.rint(records[:, 5]).astype(np.int32), 1)
-        bank.expire_at[environments, slots] = self.clock[environments] + lifetime
-        bank.tasks[environments, slots] = records[:, 7:10]
-        bank.task_valid[environments, slots] = True
+        bank.expire_at[flat_environments, slots] = (
+            self.clock[observation_environments] + lifetime
+        )
+        bank.tasks[flat_environments, slots] = records[:, 7:10]
+        bank.task_valid[flat_environments, slots] = True
         return observed_slots
 
     @torch.no_grad()
     def _current_features(self, data, observed_slots):
+        bank = self.bank
+        receiver_shape = (self.n_uavs, self.environments, self.capacity)
+        stored_features = bank.last_feature.reshape(
+            receiver_shape + (self.feature_dim,)
+        )
+        if self.predictors is None:
+            # last_obs never mutates the remembered feature tensor. Returning
+            # the contiguous receiver-major view avoids copying the complete
+            # bank every slot when only missing sender blocks will be queried.
+            return stored_features
+        features = stored_features.copy()
+
         geometric = np.asarray(data["geometric_mask"], dtype=bool)
         received = np.asarray(data["reception_mask"], dtype=bool)
         off_diagonal = ~np.eye(self.n_uavs, dtype=bool)
         missing = geometric & ~received & off_diagonal[None]
         needs_reconstruction = np.any(missing, axis=2)
-        current = []
-        for receiver, bank in enumerate(self.banks):
-            features = bank.last_feature.copy()
-            active = (bank.ids != -1) & (bank.expire_at > self.clock[:, None])
-            query = (
-                active
-                & ~observed_slots[receiver]
-                & needs_reconstruction[:, receiver, None]
+        ids = bank.ids.reshape(receiver_shape)
+        expire_at = bank.expire_at.reshape(receiver_shape)
+        last_seen = bank.last_seen.reshape(receiver_shape)
+        hidden = bank.hidden.reshape(
+            self.n_uavs, self.environments, self.capacity, self.hidden_dim
+        )
+        active = (ids != -1) & (expire_at > self.clock[None, :, None])
+        query = active & ~observed_slots & needs_reconstruction.T[..., None]
+        receivers, environments, slots = np.nonzero(query)
+        if not len(slots):
+            return features
+        ages = self.clock[environments] - last_seen[
+            receivers, environments, slots
+        ]
+        if self._collect_metrics:
+            bins = np.minimum(np.maximum(ages, 1), 4) - 1
+            np.add.at(self.query_age_counts, (receivers, bins), 1)
+        ready = np.asarray(self.predictor_ready, dtype=bool)[receivers]
+        if np.any(ready):
+            ready_receivers = receivers[ready]
+            ready_environments = environments[ready]
+            ready_slots = slots[ready]
+            prediction = self._online_predict(
+                ready_receivers,
+                hidden[ready_receivers, ready_environments, ready_slots],
+                ages[ready, None] / max(self.args.md_lifetime_max, 1),
+                features[ready_receivers, ready_environments, ready_slots],
             )
-            environments, slots = np.nonzero(query)
-            if len(slots):
-                ages = self.clock[environments] - bank.last_seen[environments, slots]
-                if self._collect_metrics:
-                    bins = np.minimum(np.maximum(ages, 1), 4) - 1
-                    self.query_age_counts[receiver] += np.bincount(
-                        bins, minlength=4
-                    )[:4]
-                if self.predictors is not None and self.predictor_ready[receiver]:
-                    environment_index = torch.as_tensor(
-                        environments, device=self.device, dtype=torch.long
-                    )
-                    slot_index = torch.as_tensor(
-                        slots, device=self.device, dtype=torch.long
-                    )
-                    age_tensor = torch.as_tensor(
-                        ages[:, None] / max(self.args.md_lifetime_max, 1),
-                        device=self.device,
-                        dtype=torch.float32,
-                    )
-                    baseline = torch.as_tensor(
-                        bank.last_feature[environments, slots],
-                        device=self.device,
-                        dtype=torch.float32,
-                    )
-                    if not self.residual_prediction[receiver]:
-                        baseline = None
-                    prediction = self.predictors[receiver].predict(
-                        bank.hidden[environment_index, slot_index], age_tensor, baseline
-                    )
-                    features[environments, slots] = prediction.cpu().numpy()
-            current.append(features)
-        return np.stack(current, axis=0)
+            features[
+                ready_receivers, ready_environments, ready_slots
+            ] = prediction.cpu().numpy()
+        return features
 
     def _channel_gain_from_horizontal(self, horizontal):
         vertical = self.args.H_UAV - self.args.H_GU
@@ -636,103 +822,81 @@ class MDStateReconstructor:
             pieces.append(metadata.reshape(self.environments, self.n_uavs, -1))
         return np.concatenate(pieces, axis=-1)
 
-    def _surrogate_prefixes(self, data, visible_count):
+    def _surrogate_prefixes(
+        self, data, environments, receivers, senders, visible_count
+    ):
         prefix = np.asarray(data["critic_prefix"], dtype=np.float32)
-        prefix_dim = prefix.shape[-1]
-        receiver_prefix = np.transpose(prefix, (1, 0, 2))
-        surrogate = np.broadcast_to(
-            receiver_prefix[:, :, None, :],
-            (self.n_uavs, self.environments, self.n_uavs, prefix_dim),
-        ).copy()
+        surrogate = prefix[environments, receivers].copy()
         cursor = int(self.args.ob_state_with_timestep)
         if self.args.ob_state_with_id:
-            surrogate[..., cursor:cursor + self.n_uavs] = np.eye(
+            surrogate[:, cursor:cursor + self.n_uavs] = np.eye(
                 self.n_uavs, dtype=np.float32
-            )[None, None]
+            )[senders]
             cursor += self.n_uavs
-        surrogate[..., cursor:cursor + 2] = np.asarray(
+        surrogate[:, cursor:cursor + 2] = np.asarray(
             data["uav_positions"], dtype=np.float32
-        )[None]
-        surrogate[..., -1] = visible_count
+        )[environments, senders]
+        surrogate[:, -1] = visible_count
         return surrogate
 
-    def _surrogate_blocks(self, data, current_features):
-        ids = np.stack([bank.ids for bank in self.banks], axis=0)
-        last_seen = np.stack([bank.last_seen for bank in self.banks], axis=0)
-        expire_at = np.stack([bank.expire_at for bank in self.banks], axis=0)
-        tasks = np.stack([bank.tasks for bank in self.banks], axis=0)
-        task_valid = np.stack([bank.task_valid for bank in self.banks], axis=0)
-        active = (ids != -1) & (expire_at > self.clock[None, :, None])
-        decoded = self._decode_features(current_features)
-        sender_positions = np.asarray(data["uav_positions"], dtype=np.float32)
-        delta = decoded[:, :, None, :, :2] - sender_positions[None, :, :, None, :]
-        distances = np.linalg.norm(delta, axis=-1)
-        eligible = active[:, :, None, :] & (distances <= self.args.Cover_R)
-        ids_by_sender = np.broadcast_to(ids[:, :, None, :], eligible.shape)
-        task_valid_by_sender = np.broadcast_to(
-            task_valid[:, :, None, :], eligible.shape
+    def _surrogate_blocks(
+        self, data, current_features, environments, receivers, senders
+    ):
+        receiver_shape = (self.n_uavs, self.environments, self.capacity)
+        ids = self.bank.ids.reshape(receiver_shape)[receivers, environments]
+        last_seen = self.bank.last_seen.reshape(receiver_shape)[
+            receivers, environments
+        ]
+        expire_at = self.bank.expire_at.reshape(receiver_shape)[
+            receivers, environments
+        ]
+        tasks = self.bank.tasks.reshape(receiver_shape + (3,))[
+            receivers, environments
+        ]
+        task_valid = self.bank.task_valid.reshape(receiver_shape)[
+            receivers, environments
+        ]
+        active = (ids != -1) & (expire_at > self.clock[environments, None])
+        decoded = self._decode_features(current_features[receivers, environments])
+        sender_positions = np.asarray(data["uav_positions"], dtype=np.float32)[
+            environments, senders
+        ]
+        distances = np.linalg.norm(
+            decoded[..., :2] - sender_positions[:, None, :], axis=-1
         )
+        eligible = active & (distances <= self.args.Cover_R)
         can_finish = tasks[..., 1] / self.args.F_n <= tasks[..., 2]
-        can_finish_by_sender = np.broadcast_to(
-            can_finish[:, :, None, :], eligible.shape
-        )
         order = order_md_candidates(
             np.where(eligible, distances, np.inf),
-            np.where(eligible, ids_by_sender, np.iinfo(np.int64).max),
-            can_finish_by_sender,
-            task_valid_by_sender & eligible,
+            np.where(eligible, ids, np.iinfo(np.int64).max),
+            can_finish,
+            task_valid & eligible,
             distance_only=self.distance_only_user_sort,
         )
         selected_count = min(self.packet_capacity, self.capacity)
         selected = order[..., :selected_count]
-        valid = np.take_along_axis(eligible, selected, axis=-1)
-        selected_distances = np.take_along_axis(distances, selected, axis=-1)
-        decoded_by_sender = np.broadcast_to(
-            decoded[:, :, None, :, :],
-            (self.n_uavs, self.environments, self.n_uavs, self.capacity, 5),
-        )
-        selected_decoded = np.take_along_axis(
-            decoded_by_sender, selected[..., None], axis=3
-        )
+        row = np.arange(len(environments))[:, None]
+        valid = eligible[row, selected]
+        selected_distances = distances[row, selected]
+        selected_decoded = decoded[row, selected]
         remaining = np.maximum(
-            expire_at - self.clock[None, :, None], 0
+            expire_at - self.clock[environments, None], 0
         ).astype(np.float32)
         age = np.maximum(
-            self.clock[None, :, None] - last_seen, 0
+            self.clock[environments, None] - last_seen, 0
         ).astype(np.float32)
-        remaining_by_sender = np.broadcast_to(
-            remaining[:, :, None, :], eligible.shape
-        )
-        age_by_sender = np.broadcast_to(age[:, :, None, :], eligible.shape)
-        selected_remaining = np.take_along_axis(
-            remaining_by_sender, selected, axis=-1
-        )
-        selected_age = np.take_along_axis(age_by_sender, selected, axis=-1)
-        tasks_by_sender = np.broadcast_to(
-            tasks[:, :, None, :, :],
-            (self.n_uavs, self.environments, self.n_uavs, self.capacity, 3),
-        )
-        selected_tasks = np.take_along_axis(
-            tasks_by_sender, selected[..., None], axis=3
-        )
-        selected_task_valid = np.take_along_axis(
-            task_valid_by_sender, selected, axis=-1
-        ) & valid
+        selected_remaining = remaining[row, selected]
+        selected_age = age[row, selected]
+        selected_tasks = tasks[row, selected]
+        selected_task_valid = task_valid[row, selected] & valid
 
         records = np.zeros(
-            (
-                self.n_uavs,
-                self.environments,
-                self.n_uavs,
-                self.packet_capacity,
-                10,
-            ),
-            dtype=np.float32,
+            (len(environments), self.packet_capacity, 10), dtype=np.float32
         )
         metadata = np.zeros(records.shape[:-1] + (3,), dtype=np.float32)
-        records[..., :selected_count, :5] = selected_decoded * valid[..., None]
-        records[..., :selected_count, 5] = selected_remaining * valid
-        records[..., :selected_count, 6] = (
+        records[:, :selected_count, :5] = selected_decoded * valid[..., None]
+        records[:, :selected_count, 5] = selected_remaining * valid
+        records[:, :selected_count, 6] = (
             self._channel_gain_from_horizontal(selected_distances) * valid
         )
         placeholder = np.asarray(
@@ -746,21 +910,21 @@ class MDStateReconstructor:
         selected_task_values = np.where(
             selected_task_valid[..., None], selected_tasks, placeholder
         )
-        records[..., :selected_count, 7:10] = selected_task_values * valid[..., None]
-        metadata[..., :selected_count, 0] = valid
-        metadata[..., :selected_count, 1] = selected_task_valid
-        metadata[..., :selected_count, 2] = (
+        records[:, :selected_count, 7:10] = selected_task_values * valid[..., None]
+        metadata[:, :selected_count, 0] = valid
+        metadata[:, :selected_count, 1] = selected_task_valid
+        metadata[:, :selected_count, 2] = (
             selected_age / max(self.args.md_lifetime_max, 1) * valid
         )
         visible_count = np.sum(eligible, axis=-1, dtype=np.int32)
         pieces = [
-            self._surrogate_prefixes(data, visible_count),
-            records.reshape(self.n_uavs, self.environments, self.n_uavs, -1),
+            self._surrogate_prefixes(
+                data, environments, receivers, senders, visible_count
+            ),
+            records.reshape(len(environments), -1),
         ]
         if self.metadata:
-            pieces.append(
-                metadata.reshape(self.n_uavs, self.environments, self.n_uavs, -1)
-            )
+            pieces.append(metadata.reshape(len(environments), -1))
         return np.concatenate(pieces, axis=-1)
 
     def reconstruct(self, data, reset_environments=None, collect_samples=True):
@@ -781,39 +945,45 @@ class MDStateReconstructor:
             record_environment_mask[reset_environments] = False
 
         observation_data = self._collect_observations(data)
-        observed_slots = [
-            self._ingest_receiver(
-                receiver, *observation_data, record_environment_mask
-            )
-            for receiver in range(self.n_uavs)
-        ]
+        observed_slots = self._ingest_observations(
+            *observation_data, record_environment_mask
+        )
         current_features = self._current_features(data, observed_slots)
         direct = self._direct_blocks(data)
-        surrogate = np.transpose(
-            self._surrogate_blocks(data, current_features), (1, 0, 2, 3)
-        )
 
         geometric = np.asarray(data["geometric_mask"], dtype=bool)
         received = np.asarray(data["reception_mask"], dtype=bool)
         identity = np.eye(self.n_uavs, dtype=bool)[None]
         use_direct = identity | (geometric & received)
         use_surrogate = ~identity & geometric & ~received
-        blocks = np.where(
-            use_direct[..., None],
-            direct[:, None, :, :],
-            np.where(use_surrogate[..., None], surrogate, 0.0),
+        ordered = np.zeros(
+            (environments, self.n_uavs, self.n_uavs, direct.shape[-1]),
+            dtype=np.float32,
         )
-        senders = np.arange(self.n_uavs)
-        sender_order = np.asarray([
-            np.concatenate(([receiver], senders[senders != receiver]))
-            for receiver in range(self.n_uavs)
-        ])
-        ordered = np.take_along_axis(
-            blocks, sender_order[None, :, :, None], axis=2
+        direct_environments, direct_receivers, direct_senders = np.nonzero(use_direct)
+        ordered[
+            direct_environments,
+            direct_receivers,
+            self.sender_rank[direct_receivers, direct_senders],
+        ] = direct[direct_environments, direct_senders]
+        missing_environments, missing_receivers, missing_senders = np.nonzero(
+            use_surrogate
         )
-        attention = np.take_along_axis(
-            use_direct | use_surrogate, sender_order[None], axis=2
-        ).astype(np.float32)
+        if len(missing_environments):
+            ordered[
+                missing_environments,
+                missing_receivers,
+                self.sender_rank[missing_receivers, missing_senders],
+            ] = self._surrogate_blocks(
+                data,
+                current_features,
+                missing_environments,
+                missing_receivers,
+                missing_senders,
+            )
+        attention = (use_direct | use_surrogate)[
+            :, self.receiver_index, self.sender_order
+        ].astype(np.float32)
         self.clock += 1
         return ordered.reshape(environments, self.n_uavs, -1), attention
 
@@ -896,20 +1066,14 @@ class MDStateReconstructor:
         if not len(pairs):
             return 0.0, 0.0, 0
         self.predictors[receiver].eval()
-        position_sse = 0.0
-        last_obs_sse = 0.0
-        count = 0
-        batch_size = int(self.args.md_gru_batch_size)
-        for start in range(0, len(pairs), batch_size):
-            result = self._predict_sequence_batch(
-                receiver, buffer, pairs[start:start + batch_size]
-            )
-            if result is None:
-                continue
-            position_sse += float(result["position_sse"].cpu())
-            last_obs_sse += float(result["last_obs_sse"].cpu())
-            count += result["target_count"]
-        return position_sse, last_obs_sse, count
+        result = self._predict_sequence_batch(receiver, buffer, pairs)
+        if result is None:
+            return 0.0, 0.0, 0
+        return (
+            float(result["position_sse"].cpu()),
+            float(result["last_obs_sse"].cpu()),
+            result["target_count"],
+        )
 
     def _prediction_diagnostics(
         self, receiver, label_counts, prediction_sse, last_obs_sse, sample_count
@@ -934,47 +1098,58 @@ class MDStateReconstructor:
     def train_predictors(self):
         metrics = []
         for receiver in range(self.n_uavs):
+            sampling_start = time.perf_counter()
             buffer = self.session_buffers[receiver]
             pairs = buffer.session_pairs()
             total_targets = buffer.target_count(pairs)
             label_counts = buffer.age_counts(pairs)
             if len(pairs):
                 pairs = pairs[self.training_rng.permutation(len(pairs))]
-            train_pairs = buffer.take_target_budget(pairs, self.train_samples)
-            train_keys = {
-                (int(environment), int(session_id))
-                for environment, session_id in train_pairs
-            }
-            remaining_pairs = np.asarray(
-                [pair for pair in pairs if tuple(map(int, pair)) not in train_keys],
-                dtype=np.int64,
+            train_batches, train_pair_count = buffer.target_batches(
+                pairs,
+                self.target_batch_size,
+                self.batches_per_rollout,
             )
-            if remaining_pairs.size == 0:
-                remaining_pairs = np.zeros((0, 2), dtype=np.int64)
+            train_pairs = (
+                np.concatenate(train_batches, axis=0)
+                if train_batches else np.zeros((0, 2), dtype=np.int64)
+            )
+            remaining_pairs = pairs[train_pair_count:]
             validation_pairs = buffer.take_target_budget(
-                remaining_pairs, max(64, self.train_samples // 4)
+                remaining_pairs, self.target_batch_size
             )
             diagnostic_pairs = validation_pairs if len(validation_pairs) else train_pairs
+            sampling_seconds = time.perf_counter() - sampling_start
+            pre_validation_start = time.perf_counter()
             pre_sse, pre_last_sse, pre_count = self._evaluate_pairs(
                 receiver, buffer, diagnostic_pairs
             )
+            pre_validation_seconds = time.perf_counter() - pre_validation_start
             diagnostics = self._prediction_diagnostics(
                 receiver, label_counts, pre_sse, pre_last_sse, pre_count
             )
             session_count = int(len(pairs))
-            if total_targets < self.min_ready_samples or not len(train_pairs):
+            if total_targets < self.min_ready_samples or not train_batches:
                 metrics.append({
                     "md_prediction_loss": 0.0,
                     "md_prediction_samples": total_targets,
+                    "md_prediction_rollout_target_count": total_targets,
                     "md_prediction_replay_size": total_targets,
                     "md_prediction_rollout_sessions": session_count,
                     "md_prediction_train_samples": 0,
                     "md_prediction_train_sessions": 0,
+                    "md_prediction_optimizer_steps": 0,
+                    "md_prediction_target_batch_size": self.target_batch_size,
+                    "md_prediction_sampled_fraction": 0.0,
                     "md_prediction_validation_samples": 0,
                     "md_prediction_position_rmse_m": 0.0,
                     "md_prediction_age_mean": 0.0,
                     "md_prediction_age_ge2_fraction": 0.0,
                     "md_prediction_enabled": float(self.predictor_ready[receiver]),
+                    "md_prediction_sampling_seconds": sampling_seconds,
+                    "md_prediction_pre_validation_seconds": pre_validation_seconds,
+                    "md_prediction_optimization_seconds": 0.0,
+                    "md_prediction_post_validation_seconds": 0.0,
                     **diagnostics,
                 })
                 buffer.reset()
@@ -983,33 +1158,36 @@ class MDStateReconstructor:
             predictor = self.predictors[receiver]
             optimizer = self.optimizers[receiver]
             predictor.train()
-            epoch_losses = []
+            optimization_start = time.perf_counter()
+            loss_target_sum = 0.0
             position_sse = 0.0
             trained_targets = 0
-            batch_size = int(self.args.md_gru_batch_size)
-            for epoch in range(int(self.args.md_gru_epochs)):
-                epoch_pairs = train_pairs[
-                    self.training_rng.permutation(len(train_pairs))
-                ]
-                for start in range(0, len(epoch_pairs), batch_size):
-                    result = self._predict_sequence_batch(
-                        receiver, buffer, epoch_pairs[start:start + batch_size]
-                    )
-                    if result is None:
-                        continue
-                    optimizer.zero_grad()
-                    result["loss"].backward()
-                    nn.utils.clip_grad_norm_(predictor.parameters(), 1.0)
-                    optimizer.step()
-                    epoch_losses.append(float(result["loss"].detach().cpu()))
-                    if epoch == int(self.args.md_gru_epochs) - 1:
-                        position_sse += float(result["position_sse"].detach().cpu())
-                        trained_targets += result["target_count"]
+            optimizer_steps = 0
+            for batch_pairs in train_batches:
+                result = self._predict_sequence_batch(
+                    receiver, buffer, batch_pairs
+                )
+                if result is None:
+                    continue
+                optimizer.zero_grad()
+                result["loss"].backward()
+                nn.utils.clip_grad_norm_(predictor.parameters(), 1.0)
+                optimizer.step()
+                batch_targets = result["target_count"]
+                loss_target_sum += (
+                    float(result["loss"].detach().cpu()) * batch_targets
+                )
+                position_sse += float(result["position_sse"].detach().cpu())
+                trained_targets += batch_targets
+                optimizer_steps += 1
             predictor.eval()
+            optimization_seconds = time.perf_counter() - optimization_start
 
+            post_validation_start = time.perf_counter()
             validation_sse, validation_last_sse, validation_count = (
                 self._evaluate_pairs(receiver, buffer, validation_pairs)
             )
+            post_validation_seconds = time.perf_counter() - post_validation_start
             if validation_count:
                 self.predictor_ready[receiver] = validation_sse <= validation_last_sse
             else:
@@ -1017,12 +1195,18 @@ class MDStateReconstructor:
                 self.predictor_ready[receiver] = True
             ages = buffer.age_values(train_pairs)
             metrics.append({
-                "md_prediction_loss": float(np.mean(epoch_losses)),
+                "md_prediction_loss": loss_target_sum / max(trained_targets, 1),
                 "md_prediction_samples": total_targets,
+                "md_prediction_rollout_target_count": total_targets,
                 "md_prediction_replay_size": total_targets,
                 "md_prediction_rollout_sessions": session_count,
-                "md_prediction_train_samples": buffer.target_count(train_pairs),
+                "md_prediction_train_samples": trained_targets,
                 "md_prediction_train_sessions": int(len(train_pairs)),
+                "md_prediction_optimizer_steps": optimizer_steps,
+                "md_prediction_target_batch_size": self.target_batch_size,
+                "md_prediction_sampled_fraction": float(
+                    trained_targets / max(total_targets, 1)
+                ),
                 "md_prediction_validation_samples": int(validation_count),
                 "md_prediction_position_rmse_m": float(np.sqrt(
                     position_sse / max(trained_targets, 1)
@@ -1038,7 +1222,12 @@ class MDStateReconstructor:
                     float(np.mean(ages >= 2)) if len(ages) else 0.0
                 ),
                 "md_prediction_enabled": float(self.predictor_ready[receiver]),
+                "md_prediction_sampling_seconds": sampling_seconds,
+                "md_prediction_pre_validation_seconds": pre_validation_seconds,
+                "md_prediction_optimization_seconds": optimization_seconds,
+                "md_prediction_post_validation_seconds": post_validation_seconds,
                 **diagnostics,
             })
             buffer.reset()
+        self._refresh_online_parameters()
         return metrics

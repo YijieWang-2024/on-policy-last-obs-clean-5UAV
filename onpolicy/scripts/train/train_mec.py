@@ -460,16 +460,34 @@ def parse_args(args, parser):
     )
     parser.add_argument("--md_gru_hidden_dim", type=int, default=64)
     parser.add_argument("--md_gru_lr", type=float, default=1e-3)
-    parser.add_argument("--md_gru_epochs", type=int, default=4)
-    parser.add_argument("--md_gru_batch_size", type=int, default=512)
-    parser.add_argument("--md_gru_max_samples", type=int, default=32768)
     parser.add_argument(
-        "--md_gru_train_samples", type=int, default=512,
-        help="Maximum replay sequences trained per receiver and PPO update.",
+        "--md_gru_target_batch_size", "--md_gru_train_samples",
+        dest="md_gru_target_batch_size", type=int, default=2048,
+        help=(
+            "Natural re-observation targets per receiver-local optimizer step; "
+            "whole MD sessions are kept intact, so the realized count may "
+            "slightly exceed this budget."
+        ),
     )
     parser.add_argument(
-        "--md_gru_min_ready_samples", type=int, default=512,
-        help="Receiver-local replay size required before GRU predictions replace last-observation fallback.",
+        "--md_gru_batches_per_rollout", type=int, default=10,
+        help="Maximum disjoint receiver-local target batches trained per rollout.",
+    )
+    parser.add_argument(
+        "--md_gru_epochs", type=int, default=1,
+        help="Deprecated compatibility option; rollout-local GRU training requires 1.",
+    )
+    parser.add_argument(
+        "--md_gru_batch_size", type=int, default=None,
+        help="Deprecated compatibility option; session batch size is target-budgeted now.",
+    )
+    parser.add_argument(
+        "--md_gru_max_samples", type=int, default=None,
+        help="Deprecated compatibility option; no persistent replay is used.",
+    )
+    parser.add_argument(
+        "--md_gru_min_ready_samples", type=int, default=2048,
+        help="Rollout-local natural targets required before training and GRU gating.",
     )
     parser.add_argument(
         "--md_prediction_loss_coef", type=float, default=1.0,
@@ -506,14 +524,21 @@ def parse_args(args, parser):
         parser.error("--md_prediction_loss_coef must be positive")
     if all_args.md_gru_hidden_dim <= 0 or all_args.md_gru_lr <= 0:
         parser.error("--md_gru_hidden_dim and --md_gru_lr must be positive")
-    if all_args.md_gru_epochs <= 0 or all_args.md_gru_batch_size <= 0:
-        parser.error("--md_gru_epochs and --md_gru_batch_size must be positive")
-    if all_args.md_gru_max_samples <= 0 or all_args.md_gru_train_samples <= 0:
-        parser.error("--md_gru_max_samples and --md_gru_train_samples must be positive")
-    if not 0 < all_args.md_gru_min_ready_samples <= all_args.md_gru_max_samples:
+    if all_args.md_gru_epochs != 1:
+        parser.error("--md_gru_epochs is deprecated and must be 1")
+    if (
+        all_args.md_gru_target_batch_size <= 0
+        or all_args.md_gru_batches_per_rollout <= 0
+        or all_args.md_gru_min_ready_samples <= 0
+    ):
         parser.error(
-            "--md_gru_min_ready_samples must be in [1, --md_gru_max_samples]"
+            "--md_gru_target_batch_size, --md_gru_batches_per_rollout, and "
+            "--md_gru_min_ready_samples must be positive"
         )
+    if all_args.md_gru_batch_size is not None and all_args.md_gru_batch_size <= 0:
+        parser.error("deprecated --md_gru_batch_size must be positive when supplied")
+    if all_args.md_gru_max_samples is not None and all_args.md_gru_max_samples <= 0:
+        parser.error("deprecated --md_gru_max_samples must be positive when supplied")
     if all_args.ego_query_critic and not all_args.use_atten_critic:
         parser.error("--ego_query_critic requires --use_atten_critic")
     if all_args.shared_ret_norm and not all_args.ret_norm:

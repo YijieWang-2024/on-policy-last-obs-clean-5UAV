@@ -23,7 +23,7 @@ if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
 
 $exitCode = 1
 & $launcher `
-    -Seed 2 `
+    -Seed 32 `
     -NumEnvSteps 60000000 `
     -RolloutThreads 64 `
     -StateReconstruction 'md_gru' `
@@ -45,7 +45,7 @@ $exitCode = 1
     -PpoEpoch 4 `
     -ActorMessageMode 'disabled' `
     -Python $python `
-    -ExperimentName 'F600_B0_proposed_unreliable_mdgru_tb2048x10_seed2_60m_cuda'
+    -ExperimentName 'F600_B0_proposed_unreliable_mdgru_tb2048x10_seed32_60m_cuda'
 $exitCode = $LASTEXITCODE
 if ($exitCode -ne 0) {
     throw "Unreliable MD-GRU training exited with code $exitCode."

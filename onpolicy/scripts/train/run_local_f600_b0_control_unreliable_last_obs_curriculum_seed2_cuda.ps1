@@ -1,7 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-# F600-B0 proposed method: unreliable data plane with rollout-local natural
-# MD trajectories and per-receiver/session GRU reconstruction for the critic.
+# F600-B0 last-observation control with training-only UAV reset curriculum.
 $python = if ($env:MARL_PYTHON) {
     $env:MARL_PYTHON
 } else {
@@ -26,7 +25,7 @@ $exitCode = 1
     -Seed 2 `
     -NumEnvSteps 60000000 `
     -RolloutThreads 64 `
-    -StateReconstruction 'md_gru' `
+    -StateReconstruction 'last_obs' `
     -AdvantageMode 'per_agent_noise' `
     -NoiseScale 3.0 `
     -CommunicationDistance 520 `
@@ -35,18 +34,17 @@ $exitCode = 1
     -A2ARicianKDb 10.0 `
     -A2ADistanceToleranceM 5.0 `
     -RunningSumRounds 50 `
-    -MDGRUTargetBatchSize 2048 `
-    -MDGRUBatchesPerRollout 10 `
-    -MDGRUMinReadySamples 2048 `
     -AssociationThreshold 0.5 `
     -DisableOffloadDeadlineFilter `
     -ClipParam 0.15 `
     -Gamma 0.99 `
     -PpoEpoch 4 `
+    -UAVResetCurriculum `
+    -UAVResetCurriculumSchedule 'p0p7_10m_25m' `
     -ActorMessageMode 'disabled' `
     -Python $python `
-    -ExperimentName 'F600_B0_proposed_unreliable_mdgru_tb2048x10_seed2_60m_cuda'
+    -ExperimentName 'F600_B0_control_unreliable_last_obs_curriculum_p0p7_10m_25m_seed2_60m_cuda'
 $exitCode = $LASTEXITCODE
 if ($exitCode -ne 0) {
-    throw "Unreliable MD-GRU training exited with code $exitCode."
+    throw "Unreliable last-observation curriculum training exited with code $exitCode."
 }

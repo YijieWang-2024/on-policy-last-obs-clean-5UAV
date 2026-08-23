@@ -345,3 +345,85 @@ The new `episode_moving_template4` mode moves only the hidden MD birth-intensity
 - 预测器仍为 receiver-local 独立 Smooth-L1/Adam；重构 NumPy state 只供 critic，PPO 梯度不进入 GRU。checkpoint 是模型/optimizer warm-start，不是含 replay 的 bitwise exact resume。
 - CPU-only 定向回归 `48 passed`，全套 `117 passed, 2 warnings`；5/6-UAV launcher 语法通过，5-UAV power-only argv probe 通过。未启动长训练或 GPU 工作负载。
 - 追加 2-slot/1-worker CPU-only 训练闭环 `codex_cpu_smoke_rangegraph_gru_20260819/run1`：PPO 更新完成，args 为 520 m / 1.1809658836 W / 10 dB / H50 / per-agent-noise / md_gru，checkpoint manifest 和 `md_gru_shared.pt` 正常生成；仅作执行验证，不作性能证据。
+
+## 2026-08-20：3090 unreliable-zero 结果回收与四路曲线
+
+- 通过历史 3090 连接流程只读登录 `test@114.212.117.24`，将完整远端目录下载并按相对路径/文件大小清单校验到 `onpolicy/scripts/results/mec/mappo/F600_B0_unreliable_control_zero_seed2_60m_cuda`。远端 `run2` 是 59.9808M 完整结果；`run1` 是 0.0768M 不完整重复，不纳入曲线。
+- 四路同图产物：`analysis/fixed600_four_way_20260820/plot.png`；精确数据 `curves.csv`；重绘脚本 `plot.py`；审核 `audit.md`/`final-status.md`。指标统一为 `agent0/system_performance_true_all_GUs`，无平滑、插值或外推。
+- 完成曲线末点：本地 reliable zero `556634.75`，远端 3090 unreliable zero `558398.94`，后者高 `1764.19`（约 `0.317%`）。最新刷新时本地 MD-GRU 到 `2.0736M`，last-observation 到 `1.2032M`；两者仍在训练，不能据此宣称最终优劣。
+- 比较边界：reliable reference 的 `critic_md_metadata=false`，三个 unreliable/current run 为 `true`；因此当前图是运行状态对比，不是严格单变量消融。四路实验均为 seed 2，但最终比较应等待两个本地 run 到 60M，并统一 metadata 配置。
+- 配置审计见 `analysis/fixed600_four_way_20260820/config-audit.md`：所有主要环境/PPO参数一致，但 Reliable zero critic 输入为 211 维，三个不可靠/current critic 为 271 维（多出 20 个 MD 槽各 3 个 metadata 特征）。`per_agent_noise` 下两种通信模式还使用不同 consensus 路径决定噪声幅度；因此 5--11M 的 unreliable 领先可由 critic metadata、优势噪声分布和单 seed 随机性解释，不能解释成丢包更优。
+
+## 2026-08-21：本地重启后的 MD-GRU/last-observation 断点
+
+- 本地重启后两个 trainer 均已退出，但 checkpoint 完整且 manifest 校验通过：MD-GRU run1 到 `12,569,600` steps，last-observation run1 到 `13,721,600` steps。
+- 按 runner 的 rollout 对齐，名义 60M 实际目标为 `59,980,800`；恢复所需剩余步数分别为 `47,411,200` 和 `46,259,200`。
+- `run_fixed600_200_unreliable_dataplane.ps1` 已增加 `-ModelDir`。恢复时沿用原 experiment name 会新建 `run2`，不会覆盖 run1。恢复加载 actor/critic、normer 和 MD-GRU predictor，但不是 bitwise exact resume，因为不保存 PPO optimizer state、环境/RNG、rollout buffer 和在线 hidden。
+- 诊断结论见 `analysis/fixed600_four_way_20260820/diagnosis.md`：5--11M 的 unreliable-zero 暂时领先主要不是“丢包更好”，而是其 critic 额外接收 60 维 MD metadata，输入 token 为 271 维；reliable token 为 211 维。该区间平均领先 6.683%，20--60M 平均只领先约 0.388%。后续需在同一 commit/设备上做 metadata=false/true 的 2×2 匹配实验。
+
+## 2026-08-20：Reliable zero 与历史 Fixed600-200 基准
+
+- 历史算法消融基准已经定位为 `dcppoR520_fixed600_200_layoutctx_noactor_peragentnoise_s3p0_md12_vmax30_psi0p5_nofilter_seed2_60m_20260814`，而不是另一条旧的 PPO-epoch 消融曲线。
+- 当前 Reliable zero 与该基准的参数文件在可比字段上完全一致；比较图和逐字段审计见 `analysis/fixed600_reliable_vs_historical_baseline_20260820/`。
+- 当前曲线在 5--11M 平均低约 6.28%，公共末点低 1.63%，但历史事件文件没有 source SHA，且两次运行不是同一时刻/同一进程状态；先按单 seed 运行差异记录，不应直接归因于参数或判定代码错误。
+
+## 2026-08-23：8 月 21 日后不可靠通信实验跨设备权威快照
+
+> 快照时间：2026-08-23 22:13（Asia/Shanghai）。本节按真实 `args.json`、TensorBoard 事件和本地/远端进程核对，覆盖 8 月 21 日以后完成、停止或仍在运行的相关实验；它取代上文“两个 seed-2 run1 仅等待恢复”的历史状态。
+
+### 统一的不可靠通信正式协议
+
+四条无 curriculum 的正式 MD-GRU/last-observation 实验在所有序列化参数上严格匹配：同 seed 的两种重构只差 `experiment_name` 和 `state_reconstruction`，同一种重构的 seed 2/32 只差 `experiment_name` 和 `seed`。
+
+- Fixed600-200 index 0，600×600 m，5 UAV 固定起点，严格每 slot `1+4` MD 到达，lifetime=12，MD 平均速度 3 m/s，UAV `v_max=30 m/s`；
+- `episode_layout_context=meters_v2`，Actor-message disabled，deadline prefilter disabled，`association_threshold=0.5`；
+- Type-S/Type-A 共用 R520，`P_c=1.1809658836 W`，`K_c=10 dB`，running-sum `H=50`；
+- `per_agent_noise`、noise scale 3、local reward、Spatial Cartesian Flight Actor、completion-priority user sort、R520 k-hop ego-query attention critic；
+- separated 5-policy MAPPO/PPO、shared return normalization、64 rollout workers、名义 60M（实际 rollout 对齐终点 59.9808M）、clip=0.15、gamma=0.99、PPO epoch=4；
+- MD-GRU 使用 receiver-local 独立模型、自然重观测监督、rollout-local session buffer，以及每 receiver `2048 targets × 10 batches × 1 epoch`；PPO 梯度不进入预测器。
+
+### 本地正式训练结果
+
+主指标是原始 TensorBoard `agent0/system_performance_true_all_GUs`；`tail20` 为最后 20 个记录点的均值。
+
+| 重构/训练 seed | curriculum | 事件终点 | tail20 | 状态 |
+|---|---|---:|---:|---|
+| MD-GRU, seed 2 (`run2`) | off | 59.9808M | 552,225.89 | 从头重跑并完成 |
+| last-observation, seed 2 (`run2`) | off | 59.9808M | 489,771.21 | 从头重跑并完成 |
+| MD-GRU, seed 32 (`run1`) | off | 59.9808M | 492,798.01 | 完成 |
+| last-observation, seed 32 (`run1`) | off | 59.9808M | 493,493.62 | 完成 |
+| MD-GRU, seed 2 | p=0.7, 10M--25M | 32.0256M | 545,211.80 | 主动提前停止 |
+| last-observation, seed 2 | p=0.7, 10M--25M | 54.0416M | 551,480.01 | 主动提前停止 |
+
+- 8 月 20 日被重启打断的 seed-2 `run1` 仍保留：MD-GRU 事件到 12.5696M，last-observation 事件到 13.6960M（后者 checkpoint 到 13.7216M）。后来的 `run2` 的 `model_dir` 为空，实际是从头重跑，不是 warm resume，不能把 run1/run2 步数相加。
+- seed 2 的 MD-GRU tail20 比 last-observation 高 12.75%，但 seed 32 低 0.14%。两 seed tail20 的简单均值差为 +6.28%，样本数只有 2 且方差很大，不能据此宣称稳定 RL 收益。
+- 预测器本身在两个 seed 上都学到了稳定的短期状态估计：seed 2 的验证 RMSE tail20 为 0.799 m，对应 last-observation 1.910 m；seed 32 为 0.817 m 对 1.951 m，均约降低 58%。这证明“预测误差更低”，不自动证明“最终策略一定更好”。
+- 在 32.0256M 的 curriculum 公共终点，历史 Fixed600-200、MD-GRU curriculum、last-observation curriculum 的 tail20 分别为 547,808.46、545,211.80、546,614.98，三者差距小于 0.5%。curriculum 主要消除了部署探索瓶颈，也消除了 MD-GRU/last-observation 的可辨识差异；因此 curriculum 不进入证明 GRU 必要性的主消融。
+- 26.7776M 的 seed-2 MD-GRU 冻结 checkpoint 已做 3 个固定 layout-0 确定性 episode：True-all 为 544,403 / 542,913 / 557,552，均值约 548,289；轨迹显示 1 架覆盖左下、其余 UAV 在右上大区域形成分工。这只是中期 checkpoint 行为检查，不是最终多 seed 评测。
+
+### 8 月 21 日后可靠侧诊断及设备状态
+
+这些训练位于可靠主线 `on-policy-last-obs-clean-5UAV`，服务于解释不可靠曲线、优势噪声和通信半径，不是 MD-GRU 重构实验。它们均为 `state_reconstruction=zero`，不能与上表合并成单变量 GRU 排名。
+
+- 远端 3090 的 PPO 敏感性组使用旧的 deadline-filter ON 协议并已完成：clip 0.05/0.30 的 tail20 为 533.110k/548.438k；gamma 0.90/0.95 为 443.755k/559.350k；PPO epoch 1/10 为 546.419k/501.054k。原 clip=0.15、gamma=0.99、PPO epoch=4 仍是冻结主设置；这组不能直接与 deadline-filter OFF 的不可靠正式实验比较。
+- R0 `local_mean_per_agent_noise` 的 noise=0/0.4/0.8/1/2/4 六路均在约 19--21M 停止。noise=0 的 tail20 最高（460.116k），增大噪声没有形成可靠收益；这是筛选，不是满 60M 结论。
+- deadline-filter OFF、`per_agent_noise=0` 的远端 R0/R260/R520 分别停止于 57.3184M/41.1392M/40.6784M，tail20 为 482.939k/543.579k/546.270k；半径增大明显改善该单 seed 训练，但终点不齐，仍只能作机制诊断。
+- `local_mean_per_agent_noise=0` 的 R260/R520 本地运行停止于 43.7504M/43.6992M，tail20 为 497.139k/499.172k；配套 R0 只有远端 19.2256M 快照，不能作最终半径排序。
+- 截至快照时，本地仍运行 `per_agent_noise=2` 的 R0/R260/R520：32.0768M/32.0256M/29.0048M，tail20 为 473.292k/540.821k/528.863k。
+- 远端 3090 仍运行 `per_agent_noise=0.8` 的 R0/R260/R520，GPU PID 为 2183268/2184235/2184654：34.9952M/33.9200M/34.1760M，tail20 为 476.917k/541.782k/539.544k。三进程各使用约 6.2 GiB 显存。
+- 远端 `/home/test/wyj/Projects/on-policy-unreliable-dataplane` 在 8 月 21 日以后没有新 TensorBoard 事件；真正的不可靠 MD-GRU/last-observation 正式训练均在本地 Windows 完成。远端 3090 当前跑的是可靠侧优势/半径诊断。
+
+### 当前结论与下一步
+
+1. 保持无 curriculum 作为 MD-GRU 必要性主消融；curriculum 只可作为独立的训练技巧结果，不能混入主比较。
+2. 当前最可靠的算法事实是“GRU 的自然重观测预测误差在 seed 2/32 上均显著低于 last-observation”；策略收益仍高度 seed-sensitive，至少补一个预先固定的第三训练 seed，并统一做最终 checkpoint 多 episode 评测后再判断。
+3. 完成当前本地 noise=2 与远端 noise=0.8 三半径组后，只在共同 step 比较；不要按异步最新点排名，也不要把可靠侧 `zero` 诊断当作 MD-GRU 消融。
+4. 严格可靠/不可靠通信对比仍需统一 `critic_md_metadata`。历史 reliable zero 是 211 维 critic token，而当前不可靠重构是 271 维，旧四路图不能承担单变量通信可靠性结论。
+
+证据入口：
+
+- 无 curriculum 主图：`analysis/fixed600_four_way_20260820/plot.py`、`curves.csv`、`plot.png`；
+- curriculum 三路：`analysis/fixed600_curriculum_three_way_20260822/`；
+- 三种可靠基准：`analysis/fixed600_three_reliable_baselines_20260823/`；
+- 可靠侧优势/半径：`on-policy-last-obs-clean-5UAV/analysis/remote_r0_noise_mode_comparison_20260822/`、`radius_noise0_comparison_20260822/`、`peragent_noise_radius_compare_20260823/`；
+- MD-GRU 三 episode 评测：`onpolicy/scripts/results/mec/mappo/F600_B0_proposed_unreliable_mdgru_tb2048x10_seed2_60m_cuda/run2/eval_3episodes_latest_step26777600/`。

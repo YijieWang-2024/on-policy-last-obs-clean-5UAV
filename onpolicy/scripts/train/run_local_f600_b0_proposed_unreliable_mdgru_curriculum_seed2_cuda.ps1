@@ -1,7 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-# F600-B0 proposed method: unreliable data plane with rollout-local natural
-# MD trajectories and per-receiver/session GRU reconstruction for the critic.
+# F600-B0 proposed method with training-only UAV reset curriculum.
 $python = if ($env:MARL_PYTHON) {
     $env:MARL_PYTHON
 } else {
@@ -43,10 +42,12 @@ $exitCode = 1
     -ClipParam 0.15 `
     -Gamma 0.99 `
     -PpoEpoch 4 `
+    -UAVResetCurriculum `
+    -UAVResetCurriculumSchedule 'p0p7_10m_25m' `
     -ActorMessageMode 'disabled' `
     -Python $python `
-    -ExperimentName 'F600_B0_proposed_unreliable_mdgru_tb2048x10_seed2_60m_cuda'
+    -ExperimentName 'F600_B0_proposed_unreliable_mdgru_curriculum_p0p7_10m_25m_tb2048x10_seed2_60m_cuda'
 $exitCode = $LASTEXITCODE
 if ($exitCode -ne 0) {
-    throw "Unreliable MD-GRU training exited with code $exitCode."
+    throw "Unreliable MD-GRU curriculum training exited with code $exitCode."
 }

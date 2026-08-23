@@ -67,6 +67,8 @@ class MECRunner(Runner):
             MDStateReconstructor(self.all_args, self.device)
             if self.state_reconstruction != "zero" else None
         )
+        if self.state_reconstructor is not None:
+            self.envs.enable_type_s_transport()
         self.md_prediction_infos = [
             {"md_prediction_loss": 0.0, "md_prediction_samples": 0}
             for _ in range(self.n_UAVs)
@@ -107,18 +109,27 @@ class MECRunner(Runner):
         episodes = int(self.num_env_steps) // self.episode_length // self.n_rollout_threads
 
         for episode in range(episodes):
+            episode_profile_start = time.perf_counter()
+            collect_seconds = 0.0
+            environment_step_seconds = 0.0
             type_s_retrieval_seconds = 0.0
             md_reconstruction_seconds = 0.0
+            normalization_seconds = 0.0
+            buffer_insert_seconds = 0.0
             if self.use_linear_lr_decay:
                 for agent_id in range(self.num_agents):
                     self.trainer[agent_id].policy.lr_decay(episode, episodes)
 
             for step in range(self.episode_length):
                 # Sample actions    (在collect里边，调用env处理了动作。输出处理后的动作，和对应的log_p)
+                phase_start = time.perf_counter()
                 values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step)
+                collect_seconds += time.perf_counter() - phase_start
 
                 # Obser reward and next obs
+                phase_start = time.perf_counter()
                 obs, share_obs, rewards, dones, infos, available_actions, Metropolis_weights, attention_active_mask = self.envs.step(actions)
+                environment_step_seconds += time.perf_counter() - phase_start
                 if self.state_reconstructor is not None:
                     type_s_start = time.perf_counter()
                     self.current_type_s_data = self.envs.get_type_s_data()
@@ -131,7 +142,9 @@ class MECRunner(Runner):
                     md_reconstruction_seconds += (
                         time.perf_counter() - reconstruction_start
                     )
+                phase_start = time.perf_counter()
                 normalize_batch(self.normer, obs, share_obs, rewards, dones)
+                normalization_seconds += time.perf_counter() - phase_start
                 # obs = self.normer._obfilt(obs)
                 # share_obs = self.normer._statefilt(share_obs)
                 # rewards = self.normer._rewsfilt(rewards, dones)
@@ -144,7 +157,9 @@ class MECRunner(Runner):
                        rnn_states, rnn_states_critic, Metropolis_weights, attention_active_mask
                 
                 # insert data into buffer
+                phase_start = time.perf_counter()
                 self.insert(data, step)
+                buffer_insert_seconds += time.perf_counter() - phase_start
             # self.system_gain[episode] = np.mean(np.mean([info['system_performance_true_all_GUs'] for info in infos], axis=0)).round(5)
             # if episode == 14:
             #     # np.savetxt('./plot_data/system_gain_7UAVs.txt', self.system_gain)
@@ -163,8 +178,12 @@ class MECRunner(Runner):
                 self.uav_positions[i] = info['uav_positions']
 
             # compute return and update network
+            phase_start = time.perf_counter()
             self.compute()
+            return_computation_seconds = time.perf_counter() - phase_start
+            phase_start = time.perf_counter()
             train_infos = self.train()
+            rl_training_seconds = time.perf_counter() - phase_start
             if self.state_reconstruction == "md_gru":
                 if not np.all(np.all(dones, axis=1)):
                     raise RuntimeError(
@@ -192,6 +211,7 @@ class MECRunner(Runner):
                     })
                 for agent_id, prediction_info in enumerate(self.md_prediction_infos):
                     train_infos[agent_id].update(prediction_info)
+
                 self.state_reconstructor.reset()
                 refreshed_share_obs, refreshed_attention = (
                     self.state_reconstructor.reconstruct(
@@ -234,14 +254,34 @@ class MECRunner(Runner):
                 for agent_id, prediction_info in enumerate(self.md_prediction_infos):
                     train_infos[agent_id].update(prediction_info)
 
+            profiled_episode_seconds = time.perf_counter() - episode_profile_start
+            phase_infos = {
+                "profile_collect_seconds": collect_seconds,
+                "profile_environment_step_seconds": environment_step_seconds,
+                "profile_type_s_retrieval_seconds": type_s_retrieval_seconds,
+                "profile_md_reconstruction_seconds": md_reconstruction_seconds,
+                "profile_normalization_seconds": normalization_seconds,
+                "profile_buffer_insert_seconds": buffer_insert_seconds,
+                "profile_return_computation_seconds": return_computation_seconds,
+                "profile_rl_training_seconds": rl_training_seconds,
+                "profile_episode_before_save_seconds": profiled_episode_seconds,
+            }
+            for train_info in train_infos:
+                train_info.update(phase_infos)
+
             if self.whether_average_network_parameters and (episode % self.average_network_parameters_interval == 0):
                 self.average_network_parameters()
             
             # post process
             total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads           
             # save model
+            checkpoint_save_seconds = 0.0
             if (episode % self.save_interval == 0 or episode == episodes - 1):
+                phase_start = time.perf_counter()
                 self.save(episode)
+                checkpoint_save_seconds = time.perf_counter() - phase_start
+            for train_info in train_infos:
+                train_info["profile_checkpoint_save_seconds"] = checkpoint_save_seconds
 
             # log information
             if episode % self.log_interval == 0:
@@ -322,6 +362,7 @@ class MECRunner(Runner):
                             'curriculum_random_probability',
                             'actor_message_neighbor_fraction',
                             'actor_message_payload_norm',
+                            'state_timely_reception_rate',
                         ):
                             if metric in infos[0]:
                                 train_infos[agent_id][metric] = np.mean(
@@ -486,6 +527,7 @@ class MECRunner(Runner):
         #         self.buffer[agent_id].value_preds[:step+1] = updated_all_values[agent_id, :, :, np.newaxis].copy()
 
     def train(self):
+        advantage_preparation_start = time.perf_counter()
         train_infos = []
         consensus_infos = {}
         if self.advantage_mode != "default":
@@ -766,6 +808,10 @@ class MECRunner(Runner):
             for agent_id in range(self.num_agents):
                 self.buffer[agent_id].advantages = updated_advantages[agent_id, :, :, np.newaxis].copy()
 
+        advantage_preparation_seconds = (
+            time.perf_counter() - advantage_preparation_start
+        )
+        ppo_training_start = time.perf_counter()
         for agent_id in range(self.num_agents):
             self.trainer[agent_id].prep_training()
             train_info = self.trainer[agent_id].train(self.buffer[agent_id])
@@ -778,6 +824,15 @@ class MECRunner(Runner):
                 train_info["flight_std_y"] = float(flight_std[1])
             train_infos.append(train_info)
             self.buffer[agent_id].after_update()
+
+        ppo_training_seconds = time.perf_counter() - ppo_training_start
+        for train_info in train_infos:
+            train_info.update({
+                "profile_advantage_preparation_seconds": (
+                    advantage_preparation_seconds
+                ),
+                "profile_ppo_training_seconds": ppo_training_seconds,
+            })
 
         return train_infos
 

@@ -95,6 +95,10 @@ class ShareVecEnv(ABC):
         """
         pass
 
+    def enable_type_s_transport(self):
+        """Enable the optimized subprocess transport when supported."""
+        return None
+
     def close_extras(self):
         """
         Clean up the  extra resources, beyond what's in this base class.
@@ -314,6 +318,7 @@ class SubprocVecEnv(ShareVecEnv):
 def shareworker(remote, parent_remote, env_fn_wrapper):
     parent_remote.close()
     env = env_fn_wrapper.x()
+    type_s_transport = False
     while True:
         cmd, data = remote.recv()
         if cmd == 'step':
@@ -324,6 +329,11 @@ def shareworker(remote, parent_remote, env_fn_wrapper):
             else:
                 if np.all(done):
                     ob, s_ob, available_actions, Metropolis_weights, attention_active_mask = env.reset()
+
+            if type_s_transport:
+                info = dict(info)
+                info['_type_s_data'] = env.get_type_s_data()
+                s_ob = np.empty(0, dtype=np.float32)
 
             remote.send((ob, s_ob, reward, done, info, available_actions, Metropolis_weights, attention_active_mask))
         elif cmd == 'process_actions':
@@ -351,6 +361,9 @@ def shareworker(remote, parent_remote, env_fn_wrapper):
                 (env.observation_space, env.share_observation_space, env.action_space, env.available_actions_space))
         elif cmd == 'get_type_s_data':
             remote.send(env.get_type_s_data())
+        elif cmd == 'enable_type_s_transport':
+            type_s_transport = True
+            remote.send(True)
         elif cmd == 'render_vulnerability':
             fr = env.render_vulnerability(data)
             remote.send((fr))
@@ -379,6 +392,7 @@ class ShareSubprocVecEnv(ShareVecEnv):
         )
         ShareVecEnv.__init__(self, len(env_fns), observation_space,
                              share_observation_space, action_space, available_actions_space)
+        self._cached_type_s_data = None
 
     def process_actions(self, actions):
         """
@@ -390,6 +404,13 @@ class ShareSubprocVecEnv(ShareVecEnv):
         processed_actions = [remote.recv() for remote in self.remotes]
         return np.stack(processed_actions)
 
+    def enable_type_s_transport(self):
+        for remote in self.remotes:
+            remote.send(('enable_type_s_transport', None))
+        enabled = [remote.recv() for remote in self.remotes]
+        if not all(enabled):
+            raise RuntimeError('Failed to enable Type-S subprocess transport')
+
     def step_async(self, actions):
         for remote, action in zip(self.remotes, actions):
             remote.send(('step', action))
@@ -399,9 +420,16 @@ class ShareSubprocVecEnv(ShareVecEnv):
         results = [remote.recv() for remote in self.remotes]
         self.waiting = False
         obs, share_obs, rews, dones, infos, available_actions, Metropolis_weights, attention_active_mask = zip(*results)
+        packets = [info.pop('_type_s_data', None) for info in infos]
+        if packets[0] is not None:
+            self._cached_type_s_data = {
+                key: np.stack([packet[key] for packet in packets])
+                for key in packets[0]
+            }
         return np.stack(obs), np.stack(share_obs), np.stack(rews), np.stack(dones), infos, np.stack(available_actions), np.stack(Metropolis_weights), np.stack(attention_active_mask)
 
     def reset(self):
+        self._cached_type_s_data = None
         for remote in self.remotes:
             remote.send(('reset', None))
         results = [remote.recv() for remote in self.remotes]
@@ -409,6 +437,10 @@ class ShareSubprocVecEnv(ShareVecEnv):
         return np.stack(obs), np.stack(share_obs), np.stack(available_actions), np.stack(Metropolis_weights), np.stack(attention_active_mask)
 
     def get_type_s_data(self):
+        if self._cached_type_s_data is not None:
+            result = self._cached_type_s_data
+            self._cached_type_s_data = None
+            return result
         for remote in self.remotes:
             remote.send(('get_type_s_data', None))
         results = [remote.recv() for remote in self.remotes]

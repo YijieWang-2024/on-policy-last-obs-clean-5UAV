@@ -14,8 +14,9 @@ param(
     [double]$A2ARicianKDb = 10.0,
     [double]$A2ADistanceToleranceM = 5.0,
     [int]$RunningSumRounds = 50,
-    [int]$MDGRUTrainSamples = 512,
-    [int]$MDGRUMinReadySamples = 512,
+    [int]$MDGRUTargetBatchSize = 2048,
+    [int]$MDGRUBatchesPerRollout = 10,
+    [int]$MDGRUMinReadySamples = 2048,
     [ValidateRange(0.0, 1.0)]
     [double]$AssociationThreshold = 0.5,
     [switch]$DisableOffloadDeadlineFilter,
@@ -28,6 +29,10 @@ param(
     [double]$Gamma = 0.99,
     [ValidateRange(1, 100)]
     [int]$PpoEpoch = 4,
+    [switch]$UAVResetCurriculum,
+    [ValidateSet('legacy', 'p0p7_10m_25m')]
+    [string]$UAVResetCurriculumSchedule = 'legacy',
+    [string]$ModelDir = '',
     [ValidateSet('disabled', 'task_summary')]
     [string]$ActorMessageMode = 'disabled',
     [switch]$CPUOnly,
@@ -73,8 +78,10 @@ if (-not $ExperimentName) {
     -UAVResourceMode $UAVResourceMode `
     -UAVResourceScaleFactors $UAVResourceScaleFactors `
     -ClipParam $ClipParam -Gamma $Gamma -PpoEpoch $PpoEpoch `
+    -ModelDir $ModelDir `
     -StateReconstruction $StateReconstruction `
-    -MDGRUTrainSamples $MDGRUTrainSamples `
+    -MDGRUTargetBatchSize $MDGRUTargetBatchSize `
+    -MDGRUBatchesPerRollout $MDGRUBatchesPerRollout `
     -MDGRUMinReadySamples $MDGRUMinReadySamples `
     -CriticMDMetadata `
     -AdvantageMode $AdvantageMode `
@@ -95,6 +102,8 @@ if (-not $ExperimentName) {
     -CartesianFlight `
     -SpatialFlightActor `
     -CompletionPriorityUserSort `
+    -UAVResetCurriculum:$UAVResetCurriculum `
+    -UAVResetCurriculumSchedule $UAVResetCurriculumSchedule `
     -EpisodeLayoutContext `
     -EpisodeLayoutContextUnits meters_v2 `
     -CPUOnly:$CPUOnly `

@@ -42,9 +42,9 @@ MD-GRU 输入/目标为位置、速度、移动方向及参考方向的连续编
 
 训练样本只在一个已知 session 后续再次成功接收时产生：历史接收上下文作为输入，重新接收到的真实持续特征作为监督目标。丢包时不会读取模拟器真值来更新 hidden state 或产生标签。
 
-在线 hidden/memory 与环境 episode 对齐：每个 episode reset 时清空，以免把不同 episode 的 MD session 串接为一条轨迹。监督训练 replay 与在线 hidden 不同：它保存每次重观测前的原始短观测序列、预测 age 和重观测真值，在 episode 之间保留，并用有界 FIFO 控制内存。
+在线 hidden/memory 与环境 episode 对齐：每个 episode reset 时清空，以免把不同 episode 的 MD session 串接为一条轨迹。监督 session buffer 与在线 hidden 不同：它保存当前 rollout 内每个 receiver/session 的原始成功观测短序列和 gap，只用于 rollout 结束后的自然重观测监督训练。
 
-rollout/episode 边界对齐后，每个有新增重观测标签的 UAV 从自己的 replay 训练自己的 GRU；没有新样本时跳过更新。训练时从零 hidden 用当前 GRU 参数重新展开原始序列，避免旧模型生成的 stale hidden 被当作固定上下文。replay 容量由 `md_gru_max_samples=32768` 控制，但每次只抽 `md_gru_train_samples=512` 条，避免把容量误当成每轮训练预算；达到 `md_gru_min_ready_samples=512` 前继续使用 last-observation fallback，不让一两个样本训练出的预测器直接污染 critic。预测采用独立 optimizer 和 Smooth-L1 监督损失；PPO 的 actor/critic loss 不反传进 GRU，GRU 输出在 rollout 构造 critic 输入时已经 detached。checkpoint 文件仍叫 `md_gru_shared.pt` 以兼容现有 manifest，但文件内部包含五套 receiver-local 模型和 optimizer；旧版单模型 checkpoint 加载时会复制为五套相同的本地初始化。正式训练目前使用 separated MEC runner；Windows 入口中的旧参数 `--share_policy` 正是选择该 runner，脚本会自动传入。
+rollout/episode 边界对齐后，每个有足够自然重观测标签的 UAV 随机排列自己的完整 MD session，并无放回构造最多 10 个 target batches；每个 optimizer step 约使用 2048 个自然 target，整条 session 保持完整，单 epoch 后清空 supervised buffer。训练时从零 hidden 用当前 GRU 参数重新展开被选中序列，避免在线旧参数生成的 stale hidden 被当作固定上下文；默认不保留跨 rollout persistent replay。达到 `md_gru_min_ready_samples=2048` 前继续使用 last-observation fallback。预测采用独立 optimizer 和 Smooth-L1 监督损失；PPO 的 actor/critic loss 不反传进 GRU，GRU 输出在 rollout 构造 critic 输入时已经 detached。checkpoint 文件仍叫 `md_gru_shared.pt` 以兼容现有 manifest，但文件内部包含五套 receiver-local 模型和 optimizer；旧版单模型 checkpoint 加载时会复制为五套相同的本地初始化。正式训练目前使用 separated MEC runner；Windows 入口中的旧参数 `--share_policy` 正是选择该 runner，脚本会自动传入。
 
 ## 5. Windows 启动入口
 
@@ -155,7 +155,7 @@ MD-GRU 只在 episode/rollout 边界对齐时更新。`md_gru_shared.pt` 连同�
 
 论文 IV-D 的核心状态结构是正确的：每个 UAV 使用一套参数、其维护的每个 MD ID 具有独立 hidden/age/lifetime。GRU 只用于丢失 Type-S 时构造 surrogate neighbor state，该状态仅进入 critic；actor 和 MD 侧关联保持不变。
 
-本轮复核修正了两处旧实现偏差：旧代码跨 UAV 共用单一预测器，且每轮清空 reservoir 并用旧参数生成的 hidden 只做一步反传；现在改为 receiver-local predictor + 跨 episode 的原始短序列 replay。论文的总损失 `L_V + lambda_p L_pred` 在参数集合互不共享且重构状态已 detached 时只是两个独立优化问题；代码因此明确使用两个 optimizer，不再用 `lambda_p=0.1` 对 Adam 梯度作没有清晰目标权衡意义的缩放。若论文保留该公式，应说明优化是交替进行且两项之间没有交叉梯度。
+本轮复核修正了两处旧实现偏差：旧代码跨 UAV 共用单一预测器，且用在线旧参数生成的 hidden 只做一步反传；现在改为 receiver-local predictor，并在每个 rollout 结束后从原始短 session 重算 hidden、完整 BPTT。论文的总损失 `L_V + lambda_p L_pred` 在参数集合互不共享且重构状态已 detached 时只是两个独立优化问题；代码因此明确使用两个 optimizer，不再用 `lambda_p=0.1` 对 Adam 梯度作没有清晰目标权衡意义的缩放。若论文保留该公式，应说明优化是交替进行且两项之间没有交叉梯度。
 
 速度归一化也已与正式环境合同对齐：上界取 `max(1.3×mean_velocity, init_max_factor×mean_velocity, update_clip_max)`。正式参数 `mean_velocity=3`、`init_max_factor=1.6`、`update_clip_max=5` 因而使用 `5 m/s`，不会再把合法的 `3.9--5 m/s` 速度错误裁成 `3.9 m/s`。
 
@@ -165,7 +165,7 @@ CPU-only 启动可显式传 `-CPUOnly`；该开关会把 Python 入口的 legacy
 
 ## 11. 验收矩阵
 
-最初速度分支同步完成时通过（早于本节之后的 receiver-local raw-sequence replay 重构）：
+最初速度分支同步完成时通过（早于本节之后的 receiver-local raw-session 重构）：
 
 - 全部单元/回归测试：`95 passed`；
 - reliable + zero；
@@ -221,9 +221,9 @@ CPU-only 启动可显式传 `-CPUOnly`；该开关会把 Python 入口的 legacy
 
 Rician `K_c` 控制范围内衰落分布，不进入 nominal radius 的确定性链路预算；因此调通信半径时以 `P_c <-> d_com` 为主，`K_c` 作为单独可靠性参数。`task_summary` Actor-message 的实际几何门控也读取解析后的 `neighbor_distance/d_com`，所以 power-only 时会自动使用反算出的半径；启动器中的 `ActorNeighborDistance` 对应旧 `neighbor_R/actor_neighbor_obs` 路径，不会覆盖 task-summary 的物理范围。
 
-MD-GRU 默认继续只使用真实信道产生的自然重观测标签，不制造人工缺失。连续成功接收产生 age=1，一次缺失后重观测产生 age=2，以此类推；age=1 多本身符合实际首次缺包风险，不能直接判为训练偏差。代码新增 replay-label age 与 rollout-query age 的 1/2/3/4+ 统计，并在同一真实重观测事件上比较 GRU 与 last-observation 的 prequential 位置 RMSE。只有日志证明某个实际常用 query-age 桶缺少自然标签，才把信道一致的数据增强作为独立消融，不改变默认论文口径。
+MD-GRU 默认继续只使用真实信道产生的自然重观测标签，不制造人工缺失。连续成功接收产生 age=1，一次缺失后重观测产生 age=2，以此类推；age=1 多本身符合实际首次缺包风险，不能直接判为训练偏差。代码新增 rollout-label age 与 rollout-query age 的 1/2/3/4+ 统计（旧 replay-label 名称只作 dashboard 兼容），并在同一真实重观测事件上比较 GRU 与 last-observation 的 prequential 位置 RMSE。只有日志证明某个实际常用 query-age 桶缺少自然标签，才把信道一致的数据增强作为独立消融，不改变默认论文口径。
 
-预测器保持独立 Smooth-L1、独立 Adam 和梯度裁剪：预测损失只更新 receiver-local GRU/head；重构后的 NumPy critic state 不携带计算图，PPO value/actor 梯度不能进入预测器。online hidden 按 episode/session 清空，跨 episode replay 保留；checkpoint 恢复模型、optimizer 和 ready 状态，但 replay 不保存，因此是 warm-start 而非 bitwise exact resume。
+预测器保持独立 Smooth-L1、独立 Adam 和梯度裁剪：预测损失只更新 receiver-local GRU/head；重构后的 NumPy critic state 不携带计算图，PPO value/actor 梯度不能进入预测器。online hidden 按 episode/session 清空；rollout-local supervised session buffer 在本轮训练后清空，不跨 episode 保留。checkpoint 恢复模型、optimizer、ready 状态和训练 RNG，下一完整 rollout 继续提供新鲜自然标签。
 
 本轮在 `CUDA_VISIBLE_DEVICES=''` 的 CPU-only 环境通过通信、running-sum、per-agent residual、MD reconstruction/GRU 的 `48 passed` 定向回归，并以工作区临时目录完成全套 `117 passed, 2 warnings`；两条 warning 是已有的空统计除法。PowerShell 三个入口语法通过，5-UAV power-only argv probe 确认只下传功率、由 Python 统一反算距离。未启动长训练或任何 GPU 工作负载。
 

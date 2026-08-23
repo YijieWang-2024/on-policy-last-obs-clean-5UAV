@@ -244,3 +244,216 @@
 - Corrected the per-agent-noise zero-denominator endpoint. A consensus estimate displaced from the global mean now yields residual 1 even if that agent's local advantage initially equalled the mean.
 - Resource check before tests: 39.57/63.91 GB RAM free, reported CPU load 0%, no Python process. With CUDA hidden, 48 targeted tests passed and the full suite passed 117 tests with two pre-existing warnings; no long training was launched.
 - After a second resource check (39.56 GB free, no Python process), ran one 2-slot/1-worker CPU-only formal-launcher smoke. PPO completed one update and published actor/critic/normer files, checkpoint manifest, and receiver-local `md_gru_shared.pt`; resolved args were d_com=520, Pc=1.1809658836179866, K=10, H=50, per_agent_noise, md_gru, cuda=false.
+
+## 2026-08-20 receiver-major Type-S reconstruction optimization
+
+### Purpose
+
+- Remove the remaining per-slot Python loops, repeated bank copies, and small-GRU launch overhead without changing the algorithm contract: Actor uses true local observations; Type-S loss only changes critic state reconstruction; Type-A loss only changes running-sum advantage consensus.
+
+### Setting
+
+- Controlled paired benchmark against clean `25a55bd`: 64 environments, 5 receivers, 20 packet slots, 10 valid records per sender, 10% off-diagonal state-packet loss, 190 timed slots; GRU hidden size 64 on CUDA.
+- End-to-end gate: Fixed600-B0, seed 2, 64 workers, episode length 400, R520/Pc=1.1809658836W/K=10dB, H=50, per-agent-noise scale 3, Actor message disabled, PPO epoch 4. A separate user-owned 60M reliable job remained alive throughout, so absolute FPS includes concurrent load.
+
+### Results
+
+- Controlled `last_obs`: 18.133 -> 5.260 ms/slot (71.0% less time; 3.45x throughput).
+- Controlled prediction-ready `md_gru`: 39.624 -> 12.444 ms/slot (68.6% less time; 3.18x throughput).
+- End-to-end `last_obs`: 879 FPS; MD reconstruction 2.046 s of a 28.874 s rollout/update cycle. The previous same-style run was 832 FPS and 3.588 s reconstruction.
+- End-to-end prediction-ready `md_gru`: 821 FPS; MD reconstruction 4.612 s, GRU supervised update 1.226 s, total pre-save cycle 30.537 s. `md_gru / last_obs = 0.934`; the previous same-style GRU run was 705 FPS and 10.148 s reconstruction.
+- The predictor trained on natural re-observations only: agent 0 used 517 target samples and 128 validation targets at step 76,800; prediction remained enabled. Full regression: 121 passed, with two pre-existing MEC empty-statistic warnings.
+
+### Analysis
+
+- Kept a single receiver-major dense belief bank while preserving receiver/session isolation. Expiration and allocation now run once per slot with a free-slot stack; received observations are deduplicated and ingested once; direct and missing blocks are assembled directly into sender order.
+- Kept five independent predictor parameter sets and five natural session buffers. Online GRU update/prediction stacks those independent weights and executes one receiver-batched `bmm`; an elementwise equivalence test locks it to the original five-module calculation.
+- Type-S payload now piggybacks on the environment step response, avoiding a second subprocess RPC and avoiding transfer of the discarded reliable `share_obs`. `last_obs` returns a bank view instead of copying the full feature store.
+- Rejected two changes after measurement: CPU shadow inference was slower (17.828 vs 15.229 ms/slot in its gate), and one unified session replay buffer was slower than five receiver-local buffers (10.723 vs 10.347 ms/slot). Both were reverted.
+
+### Next Steps
+
+- The runtime gate is satisfied; no further structural rewrite is required before a full run. Compare reliable and proposed performance only with matched PPO epoch and all other frozen arguments, then use the logged phase timers to detect any long-run drift.
+
+## 2026-08-20 rollout-local MD-GRU target-budget training
+
+### Decision
+
+- Removed cross-rollout replay from the default training path. Each receiver keeps only the current rollout's dense MD sessions; the buffer is cleared after the supervised update while online causal hidden states are refreshed from the updated receiver-local predictor.
+- Shuffle whole `(environment, MD session)` trajectories once, partition them without replacement, and preserve complete session prefixes for BPTT. Each of the five receiver-local predictors takes up to 10 optimizer steps, each containing approximately 2,048 natural re-observation targets; validation uses the next disjoint approximately 2,048-target session set.
+- `md_gru_epochs` is fixed to 1. Legacy replay-size/session-mini-batch arguments are accepted only for launcher compatibility and no longer control training.
+
+### Verification and CUDA timing
+
+- Python compile, PowerShell AST parsing, 28 targeted MD reconstruction tests, and the complete 124-test CPU suite passed; the full suite retained only two pre-existing MEC empty-statistic warnings.
+- Ran Fixed600-B0, seed 2, 64 workers, 76,800 steps, R520/Pc=1.1809658836 W/K=10 dB/H=50, per-agent-noise scale 3, Actor message disabled, PPO epoch 4, and `md_gru_target_batch_size=2048`, `md_gru_batches_per_rollout=10`, `md_gru_epochs=1`. The user's 60M reliable reference remained alive throughout, so the absolute 818 FPS is a concurrent-load result.
+- At step 76,800, receiver 0 had 59,282 trainable sessions and 541,811 natural targets. Ten disjoint batches used 2,250 sessions / 20,549 targets (3.793%); validation used 2,049 targets. The five predictors are trained independently, so the configured budget is per receiver, not divided across UAVs.
+- One rollout/update cycle took 31.506 s: policy collection 14.657 s, environment step 5.359 s, online Type-S MD reconstruction 4.848 s, normalization 1.933 s, PPO/advantage update 2.505 s, and all five supervised predictor updates 1.861 s. Receiver-0's own ten optimizer steps used 0.313 s; sampling and its two validation passes together used 0.048 s.
+- Relative to the immediately preceding 512-target receiver-major MD-GRU benchmark, train targets per receiver increased from 517 to 20,549 (39.75x), while all-five-predictor update time increased from 1.226 s to 1.861 s and total pre-save time from 30.537 s to 31.506 s. FPS was 821 versus 818 under the same concurrent-load class. Large target batches therefore use the GPU efficiently; the supervised update is not the dominant runtime bottleneck.
+
+## 2026-08-20 experiment inventory and last-observation control
+
+- Local formal runs confirmed in `onpolicy/scripts/results/mec/mappo/`: `F600_B0_reliable_reference_seed2_60m_cuda` uses `communication_mode=reliable` and `state_reconstruction=zero`; `F600_B0_proposed_unreliable_mdgru_tb2048x10_seed2_60m_cuda` is the currently active unreliable MD-GRU run. The earlier `F600_B0_proposed_unreliable_mdgru_seed2_60m_cuda` directory is retained as a separate prior formal run.
+- Added `run_local_f600_b0_control_unreliable_last_obs_seed2_cuda.ps1`, freezing the same Fixed600-B0/R520/K10/H50/per-agent-noise/PPO-4 contract and changing only `state_reconstruction=last_obs`, with experiment name `F600_B0_control_unreliable_last_obs_seed2_60m_cuda`.
+- Removed 24 Codex CPU/performance/profile result directories from the active result root. They were moved to `D:/wyj/Projects/.codex-transfer-trash/unreliable-results-20260820` for recovery rather than touching any formal run.
+- Remote access was completed read-only through the historical 3090 workflow using `test@114.212.117.24`. The complete unreliable-zero result was copied and manifest-verified into `onpolicy/scripts/results/mec/mappo/F600_B0_unreliable_control_zero_seed2_60m_cuda`; remote `run2` is the 59.9808M-step run and `run1` is an incomplete 0.0768M duplicate.
+- Four-way figure snapshot: `analysis/fixed600_four_way_20260820/plot.png`, with exact plotted rows in `curves.csv`, renderer in `plot.py`, and audit in `audit.md`. Complete endpoints are reliable zero 556,634.75 and remote unreliable zero 558,398.94 (+0.317% for unreliable zero). At the latest refresh the local MD-GRU snapshot reaches 2.0736M steps and last-observation reaches 1.2032M; neither is a final-performance comparison yet.
+- The figure is marked `PASSED_WITH_WARNINGS`: current local runs are still in progress, and reliable reference has `critic_md_metadata=false` whereas the unreliable runs have it enabled, so this is not a strict one-variable ablation.
+
+## 2026-08-20 four-run configuration explanation
+
+- Full `args.json` comparison and checkpoint-shape audit are in `analysis/fixed600_four_way_20260820/config-audit.md`. The common Fixed600-B0/PPO contract is matched across all four runs, but Reliable zero has `critic_md_metadata=false`; Unreliable zero, MD-GRU, and last-observation have it enabled.
+- This is a real critic-architecture difference, not just a logging flag: Reliable zero critic input is 211 features, while all three unreliable/current critics are 271 (`+3*20` metadata features). Actor input shapes are identical.
+- The unreliable launcher always passes `-CriticMDMetadata`; current non-zero reconstruction also forces metadata in `train_mec.py`. The older zero runs retain legacy GRU compatibility fields (`epochs=4`, batch/sample legacy values) while current local runs use rollout-local target-budget fields; those fields are inert for zero but show the saved runs were not serialized under one canonical argument schema.
+- In `per_agent_noise`, reliable and unreliable modes use different raw-consensus paths (Metropolis versus packet-loss running-sum) to set the Gaussian perturbation magnitude. Around 5--11M, reliable residual means are often larger and unreliable consensus correlation slightly higher. Therefore an early unreliable lead can be a stochastic/regularization effect, amplified by the metadata confound; it is not evidence that packet loss is intrinsically beneficial.
+- Strict next ablation: rerun Reliable zero with `critic_md_metadata=true` and canonical current compatibility fields, or disable metadata in both zero modes if retaining that contract. Use at least three seeds before claiming an ordering.
+
+## 2026-08-21 interrupted local runs and checkpoint resume
+
+- After the local reboot, no Proposed/last-observation trainer process remained. Both formal `run1` checkpoints are intact and manifest-verified: MD-GRU `12,569,600` source steps (`episode_index=490`, includes `md_gru_shared.pt`); last-observation `13,721,600` source steps (`episode_index=535`).
+- The standard 60M/64-worker/400-step loop actually ends at `59,980,800` steps because the runner floors the number of rollouts. Remaining warm-start budgets are therefore `47,411,200` for MD-GRU and `46,259,200` for last-observation.
+- Added `-ModelDir` plumbing to `onpolicy/scripts/train/run_fixed600_200_unreliable_dataplane.ps1`. Resume commands should use the same experiment name plus `-ModelDir ...\run1\models`; the launcher creates `run2` and preserves the interrupted `run1`.
+- Restore is a warm start: actor/critic, normers, and MD-GRU predictor are loaded; PPO optimizer moments, RNG/environment state, rollout buffers, and online GRU hidden/session state are not. Do not pass another 60M after restore, or the cumulative budget will overshoot.
+- Follow-up diagnosis is recorded in `analysis/fixed600_four_way_20260820/diagnosis.md`: the 5--11M unreliable-zero lead is primarily explained by the extra 60-dimensional critic metadata (`271` vs `211` critic token features), with a secondary difference from reliable Metropolis versus unreliable running-sum advantage-noise paths. The lead averages `6.683%` in 5--11M but only `0.388%` over 20--60M; it is not evidence that packet loss is intrinsically beneficial.
+
+## 2026-08-20 Reliable zero 对 Fixed600-200 历史基准复核
+
+- 对齐了当前 `F600_B0_reliable_reference_seed2_60m_cuda/run1` 与历史 `dcppoR520_fixed600_200_layoutctx_noactor_peragentnoise_s3p0_md12_vmax30_psi0p5_nofilter_seed2_60m_20260814/run1`；两份 args 的 192 个可比字段全部一致，唯一共同字段差异是实验名。当前新增的通信/GRU/resource 字段在 Reliable zero 中是默认/停用状态。
+- 原始 TensorBoard 指标同图见 `analysis/fixed600_reliable_vs_historical_baseline_20260820/plot.png`，数据/脚本/审核/配置说明在同目录。历史曲线只到 57.8304M，未做外推。
+- 公共区间末点当前 541,996.06、历史 550,950.31，当前低 8,954.25（1.63%）；5--11M 历史平均高约 30,625.93（约 6.28%），20--40M 平均差约 -0.51%，后段基本重合。
+- args 没有解释该单 seed 的中段差异；历史运行没有保存 Git SHA。两次运行来自不同时间的代码/运行环境，故在同一 commit、同一设备上复跑前不能判定为代码回归。
+
+## 2026-08-21 至 2026-08-23：不可靠通信实验跨设备完整账本
+
+### 审计口径
+
+- 本次只依据真实存在的 `args.json`、TensorBoard `events.out.tfevents.*`、checkpoint/eval 产物和 2026-08-23 22:13 的进程/GPU 快照；只写过 launcher、空事件头和 smoke 不计为正式结果。
+- 训练曲线统一读取 `agent0/system_performance_true_all_GUs` 原始 scalar，不平滑、不插值、不外推。名义 60M 在 64 workers、400-step rollout 下的实际完整终点是 59,980,800。
+- “本地”指 Windows `D:/wyj/Projects/`；“远端”指 `test@114.212.117.24` 的 `/home/test/wyj/Projects/`。远端训练进程会被 `setproctitle` 改名为 `mappo-mec-*`，仅 `ps | grep train_mec.py` 会漏报，必须同时核对 `nvidia-smi` PID。
+
+### A. 本地 unreliable 正式训练
+
+统一协议：Fixed600-200 index 0、严格 1+4、MD12/v3、UAV vmax30、固定 UAV 起点、无 Actor-message、meters_v2、deadline filter OFF、psi=0.5、R520/Pc=1.1809658836W/Kc=10dB/H50、per-agent-noise scale3、local reward、Spatial Cartesian Flight Actor、completion-priority、ego-query attention critic、separated 5-policy PPO、shared return normalization、clip0.15/gamma0.99/PPO epoch4、64 workers/60M。MD-GRU 为 receiver-local `2048×10×1` natural-target 监督更新。
+
+| 实验目录/run | seed | 重构 | curriculum | 终点 | latest | tail20 | 状态 |
+|---|---:|---|---|---:|---:|---:|---|
+| `F600_B0_proposed_unreliable_mdgru_tb2048x10_seed2_60m_cuda/run2` | 2 | MD-GRU | off | 59.9808M | 552,427.69 | 552,225.89 | 完成，从头重跑 |
+| `F600_B0_control_unreliable_last_obs_seed2_60m_cuda/run2` | 2 | last obs | off | 59.9808M | 489,965.31 | 489,771.21 | 完成，从头重跑 |
+| `F600_B0_proposed_unreliable_mdgru_tb2048x10_seed32_60m_cuda/run1` | 32 | MD-GRU | off | 59.9808M | 493,602.50 | 492,798.01 | 完成 |
+| `F600_B0_control_unreliable_last_obs_seed32_60m_cuda/run1` | 32 | last obs | off | 59.9808M | 494,187.72 | 493,493.62 | 完成 |
+| `F600_B0_proposed_unreliable_mdgru_curriculum_p0p7_10m_25m_tb2048x10_seed2_60m_cuda/run1` | 2 | MD-GRU | p0.7 10M--25M | 32.0256M | 545,460.81 | 545,211.80 | 主动停止 |
+| `F600_B0_control_unreliable_last_obs_curriculum_p0p7_10m_25m_seed2_60m_cuda/run1` | 2 | last obs | p0.7 10M--25M | 54.0416M | 547,507.31 | 551,480.01 | 主动停止 |
+
+参数逐字段校验：
+
+- MD-GRU seed2 与 last-observation seed2 仅差 `experiment_name/state_reconstruction`；
+- MD-GRU seed2 与 seed32、last-observation seed2 与 seed32 均仅差 `experiment_name/seed`；
+- 两条 curriculum 实验仅差 `experiment_name/state_reconstruction`；
+- 无 curriculum MD-GRU 与 curriculum MD-GRU 仅再差 `uav_reset_curriculum` 和 `uav_reset_curriculum_schedule`。
+
+重启边界：旧 seed-2 `run1` 的 TensorBoard 终点为 MD-GRU 12.5696M、last-observation 13.6960M，checkpoint 分别到 12.5696M/13.7216M。新 `run2` 的 `model_dir` 为空，因此两条都是从零开始的新 60M，旧 run1 不能拼接到新曲线。
+
+### B. MD-GRU 预测质量与策略结果
+
+| seed | GRU validation RMSE tail20 | last-observation RMSE tail20 | 相对降低 | GRU/last-observation 策略 tail20 |
+|---:|---:|---:|---:|---:|
+| 2 | 0.799 m | 1.910 m | 58.2% | 552.226k / 489.771k（GRU +12.75%） |
+| 32 | 0.817 m | 1.951 m | 58.1% | 492.798k / 493.494k（GRU -0.14%） |
+
+- estimator 层面的结果在两个训练 seed 上一致：MD-GRU 确实比保持 last observation 更接近下一次自然重观测位置。
+- RL 层面的结果不一致：seed 2 在约 30M 后突破到 550k 档，seed 32 的两种重构都停在约 493k。不能用 seed 2 单条好曲线证明 GRU 稳定提升；两 seed tail20 简单均值虽为 522.512k 对 491.632k（+6.28%），但该均值被一个高 seed 主导。
+- 预测 loss 数值本身约为 `1.1e-3`，不应跨特征归一化合同直接解释；位置 RMSE 和 prequential GRU-vs-last-observation 才是可读诊断。
+
+中期行为评测：`run2` 的 26.7776M checkpoint 冻结后，在固定 layout index 0、episode seeds 0/1/2 上得到 True-all 544,403 / 542,913 / 557,552（均值 548,289），完成率 98.81%/98.49%/98.22%，状态及时接收率 86.99%/86.11%/86.73%。产物位于 `.../run2/eval_3episodes_latest_step26777600/`。该评测验证了部署结构，但不是最终 checkpoint 或独立训练重复。
+
+### C. Curriculum 对照
+
+在 MD-GRU curriculum 的实际停止点 32.0256M 进行公共步数比较：
+
+| 曲线 | 公共终点 tail20 | 公共终点 latest |
+|---|---:|---:|
+| 历史 Fixed600-200 reliable baseline | 547,808.46 | 546,778.06 |
+| Proposed MD-GRU + curriculum | 545,211.80 | 545,460.81 |
+| unreliable last-observation + curriculum | 546,614.98 | 547,820.12 |
+
+三条 tail20 最大差不到 0.5%。这不是“MD-GRU 好到可以提前停”，而是 curriculum 使 reliable、MD-GRU 和 last-observation 都容易学到高性能部署，从而失去识别邻居预测必要性的能力。对应重绘脚本为 `analysis/fixed600_curriculum_three_way_20260822/plot.py`；主消融继续关闭 curriculum。
+
+### D. 8 月 21 日跨界完成的远端 PPO 敏感性实验
+
+以下均在可靠主线、R520、per-agent-noise scale3、Actor-message disabled、无 UAV curriculum、deadline filter ON 下运行；它们不是当前 deadline-filter OFF 的严格对照。
+
+| 变化 | 设备/run | 终点 | tail20 | 记录 |
+|---|---|---:|---:|---|
+| clip=0.05 | remote `...clip0p05.../run1` | 59.9808M | 533.110k | 完成 |
+| clip=0.30 | remote `...clip0p3.../run1` | 59.9808M | 548.438k | 完成 |
+| gamma=0.90 | remote `...gamma0p90.../run2` | 59.9808M | 443.755k | 完成，末段退化 |
+| gamma=0.95 | remote `...gamma0p95.../run1` | 59.9808M | 559.350k | 完成 |
+| PPO epoch=1 | local `run1` | 36.2752M | 537.331k | 本地中断副本 |
+| PPO epoch=1 | remote `run2` | 59.9808M | 546.419k | 从头重跑并完成；remote run1 仅空事件头 |
+| PPO epoch=10 | remote `run1` | 59.9808M | 501.054k | 完成 |
+
+这组未提供足够证据替换 clip0.15/gamma0.99/PPO epoch4，尤其 gamma0.95 的单 seed 小差异不能凌驾于主协议一致性。
+
+### E. 可靠侧 advantage/noise/radius 诊断
+
+共同环境已经改为当前 Fixed600-200/MD12/v3/vmax30/meters_v2/no Actor-message/deadline OFF/psi0.5/no curriculum/64 workers/60M。重构均为 `zero`；这些实验只诊断优势合同和可靠通信半径。
+
+#### E1. R0 local-mean noise sweep（远端，均已停止）
+
+| noise scale | 终点 | tail20 |
+|---:|---:|---:|
+| 0.0 | 19.2256M | 460.116k |
+| 0.4 | 20.5056M | 434.137k |
+| 0.8 | 19.2256M | 430.494k |
+| 1.0 | 20.9664M | 443.976k |
+| 2.0 | 20.3008M | 429.021k |
+| 4.0 | 19.8912M | 419.509k |
+
+本轮只说明在约 20M 的 R0 `local_mean_per_agent_noise` 筛选中，附加噪声没有改善 scale0；所有曲线都早停，不能报告为 60M 排名。轨迹网格 `analysis/remote_localmean_checkpoint_eval_20260822/trajectories_grid_6noise_3seeds.png` 是同 checkpoint 的环境-seed 评估，不是多个训练 seed。
+
+#### E2. per-agent-noise scale0 半径组
+
+| 设备 | R | 终点 | tail20 | 状态 |
+|---|---:|---:|---:|---|
+| remote | 0 | 57.3184M | 482.939k | 停止，接近预算但未完成 |
+| remote | 260 | 41.1392M | 543.579k | 停止 |
+| remote | 520 | 40.6784M | 546.270k | 停止 |
+
+R260/R520 在该单 seed 协议下明显高于 R0，但三条终点不齐；R260 与 R520 很接近。原始快照、配置审计和图见可靠主线 `analysis/radius_noise0_comparison_20260822/`。
+
+#### E3. local-mean scale0 半径组
+
+| 设备 | R | 终点 | tail20 | 状态 |
+|---|---:|---:|---:|---|
+| remote | 0 | 19.2256M | 460.116k | 早停快照 |
+| local | 260 | 43.7504M | 497.139k | 停止 |
+| local | 520 | 43.6992M | 499.172k | 停止 |
+
+R0 的训练长度与 R260/R520 不匹配，因此该组三条不能形成最终半径排序。
+
+#### E4. 当前运行的两个 per-agent-noise 半径组
+
+快照时间为 2026-08-23 22:13；下表为异步当前点，后续必须刷新并按共同 step 比较。
+
+| 设备/scale | R0（step/tail20） | R260（step/tail20） | R520（step/tail20） | 状态 |
+|---|---|---|---|---|
+| local, scale=2 | 32.0768M / 473.292k | 32.0256M / 540.821k | 29.0048M / 528.863k | 三路运行中，PID 10984/40652/53056 |
+| remote 3090, scale=0.8 | 34.9952M / 476.917k | 33.9200M / 541.782k | 34.1760M / 539.544k | 三路运行中，GPU PID 2183268/2184235/2184654，各约 6.2 GiB |
+
+同日还存在两个旧 R0 单路筛选：remote per-agent scale0.8 到 18.3552M/tail20 465.453k，scale2 到 17.8944M/tail20 500.808k，均已停止；不要与当前三半径新 run 混为同一连续训练。
+
+远端事实边界：`/home/test/wyj/Projects/on-policy-unreliable-dataplane` 在 8 月 21 日以后没有新的事件文件；上述远端任务全部来自可靠主线 `/home/test/wyj/Projects/on-policy-last-obs-clean-5UAV`。远端当前训练并没有 MD-GRU。
+
+### F. 产物与后续 gate
+
+- 无 curriculum 五路图：`analysis/fixed600_four_way_20260820/`（当前脚本保留历史 Fixed600 baseline、两 seed MD-GRU、两 seed last-observation）；
+- curriculum 三路图：`analysis/fixed600_curriculum_three_way_20260822/`；
+- reliable deadline/curriculum 三基准：`analysis/fixed600_three_reliable_baselines_20260823/`；
+- 可靠侧远端/本地 noise-radius 图：可靠主线 `analysis/remote_r0_localmean_noise_sweep_20260822/`、`remote_r0_noise_mode_comparison_20260822/`、`radius_noise0_comparison_20260822/`、`peragent_noise_radius_compare_20260823/`。
+
+下一 gate：
+
+1. 等当前 local scale2 和 remote scale0.8 三半径实验结束或到预先固定的共同步数，再冻结 event/args；不按当前异步末点排名。
+2. MD-GRU vs last-observation 至少补一个固定的第三训练 seed，并对最终 checkpoint 使用共同 episode seeds 做确定性评测。当前两个 seed 只足以报告“预测 RMSE 改善稳定、RL 性能改善不稳定”。
+3. 继续关闭 curriculum 做预测必要性消融；若论文希望报告 curriculum，只把它放在独立训练技巧/上界实验中。
+4. reliable/unreliable 通信对比必须先统一 `critic_md_metadata` 和 critic token 维度；旧 reliable-zero 211 维与当前 unreliable 271 维不可作为严格通信单变量结论。

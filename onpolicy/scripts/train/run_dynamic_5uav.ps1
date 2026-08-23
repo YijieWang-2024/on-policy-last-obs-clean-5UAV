@@ -60,11 +60,9 @@ param(
     [double]$AdvantageDeadlineMs = 21.54,
     [int]$MDGRUHiddenDim = 64,
     [double]$MDGRULearningRate = 0.001,
-    [int]$MDGRUEpochs = 4,
-    [int]$MDGRUBatchSize = 512,
-    [int]$MDGRUMaxSamples = 32768,
-    [int]$MDGRUTrainSamples = 512,
-    [int]$MDGRUMinReadySamples = 512,
+    [int]$MDGRUTargetBatchSize = 2048,
+    [int]$MDGRUBatchesPerRollout = 10,
+    [int]$MDGRUMinReadySamples = 2048,
     [double]$MDPredictionLossCoef = 1.0,
     [ValidateRange(0.0, 1.0)]
     [double]$ClipParam = 0.15,
@@ -321,10 +319,9 @@ if ($Method -eq 'dcppo') {
             $arguments += @(
                 '--md_gru_hidden_dim', $MDGRUHiddenDim,
                 '--md_gru_lr', $MDGRULearningRate,
-                '--md_gru_epochs', $MDGRUEpochs,
-                '--md_gru_batch_size', $MDGRUBatchSize,
-                '--md_gru_max_samples', $MDGRUMaxSamples,
-                '--md_gru_train_samples', $MDGRUTrainSamples,
+                '--md_gru_target_batch_size', $MDGRUTargetBatchSize,
+                '--md_gru_batches_per_rollout', $MDGRUBatchesPerRollout,
+                '--md_gru_epochs', 1,
                 '--md_gru_min_ready_samples', $MDGRUMinReadySamples,
                 '--md_prediction_loss_coef', $MDPredictionLossCoef
             )
