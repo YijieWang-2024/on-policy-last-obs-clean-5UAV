@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-communication_mode="${1:?usage: $0 reliable|unreliable zero|last_obs|md_gru seed experiment_name}"
+communication_mode="${1:?usage: $0 reliable|unreliable zero|last_obs|md_gru seed experiment_name [off|p0p7_10m_25m]}"
 state_reconstruction="${2:?missing state reconstruction}"
 seed="${3:?missing seed}"
 experiment_name="${4:?missing experiment name}"
+curriculum="${5:-off}"
 
 case "$communication_mode:$state_reconstruction" in
   reliable:zero|unreliable:zero|unreliable:last_obs|unreliable:md_gru) ;;
   *) echo "invalid mode/reconstruction pair: $communication_mode/$state_reconstruction" >&2; exit 2 ;;
+esac
+case "$curriculum" in
+  off|p0p7_10m_25m) ;;
+  *) echo "invalid curriculum: $curriculum" >&2; exit 2 ;;
 esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -108,6 +113,10 @@ args=(
   --ego_query_critic
   --shared_ret_norm
 )
+
+if [[ "$curriculum" != off ]]; then
+  args+=(--uav_reset_curriculum --uav_reset_curriculum_schedule "$curriculum")
+fi
 
 if [[ "$communication_mode" == reliable ]]; then
   args+=(--n_iterations 50)
