@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-communication_mode="${1:?usage: $0 reliable|unreliable zero|last_obs|md_gru seed experiment_name [off|p0p7_10m_25m]}"
+communication_mode="${1:?usage: $0 reliable|unreliable zero|last_obs|md_gru seed experiment_name [off|p0p7_10m_25m] [enabled|disabled] [state_deadline_ms] [advantage_deadline_ms]}"
 state_reconstruction="${2:?missing state reconstruction}"
 seed="${3:?missing seed}"
 experiment_name="${4:?missing experiment name}"
 curriculum="${5:-off}"
+deadline_filter="${6:-disabled}"
+state_deadline_ms="${7:-13.54}"
+advantage_deadline_ms="${8:-21.54}"
 
 case "$communication_mode:$state_reconstruction" in
   reliable:zero|unreliable:zero|unreliable:last_obs|unreliable:md_gru) ;;
@@ -14,6 +17,10 @@ esac
 case "$curriculum" in
   off|p0p7_10m_25m) ;;
   *) echo "invalid curriculum: $curriculum" >&2; exit 2 ;;
+esac
+case "$deadline_filter" in
+  enabled|disabled) ;;
+  *) echo "invalid deadline filter: $deadline_filter" >&2; exit 2 ;;
 esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -100,7 +107,6 @@ args=(
   --completion_priority_user_sort
   --episode_layout_context
   --episode_layout_context_units meters_v2
-  --disable_offload_deadline_filter
   --advantage_mode per_agent_noise
   --consensus_alpha 0.5
   --externality_beta 0.1
@@ -114,6 +120,10 @@ args=(
   --shared_ret_norm
 )
 
+if [[ "$deadline_filter" == disabled ]]; then
+  args+=(--disable_offload_deadline_filter)
+fi
+
 if [[ "$curriculum" != off ]]; then
   args+=(--uav_reset_curriculum --uav_reset_curriculum_schedule "$curriculum")
 fi
@@ -125,9 +135,9 @@ else
     --critic_md_metadata
     --running_sum_rounds 50
     --state_payload_bits 8000
-    --state_deadline_ms 13.54
+    --state_deadline_ms "$state_deadline_ms"
     --advantage_payload_bits 16000
-    --advantage_deadline_ms 21.54
+    --advantage_deadline_ms "$advantage_deadline_ms"
     --state_reconstruction "$state_reconstruction"
   )
   if [[ "$state_reconstruction" == md_gru ]]; then

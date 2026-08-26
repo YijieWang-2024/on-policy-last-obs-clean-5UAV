@@ -13,6 +13,8 @@ param(
     [Nullable[double]]$A2ATransmitPowerW = $null,
     [double]$A2ARicianKDb = 10.0,
     [double]$A2ADistanceToleranceM = 5.0,
+    [double]$StateDeadlineMs = 13.54,
+    [double]$AdvantageDeadlineMs = 21.54,
     [int]$RunningSumRounds = 50,
     [int]$MDGRUTargetBatchSize = 2048,
     [int]$MDGRUBatchesPerRollout = 10,
@@ -73,6 +75,8 @@ if (-not $ExperimentName) {
     -A2ATransmitPowerW $A2ATransmitPowerW `
     -A2ARicianKDb $A2ARicianKDb `
     -A2ADistanceToleranceM $A2ADistanceToleranceM `
+    -StateDeadlineMs $StateDeadlineMs `
+    -AdvantageDeadlineMs $AdvantageDeadlineMs `
     -AssociationThreshold $AssociationThreshold `
     -DisableOffloadDeadlineFilter:$DisableOffloadDeadlineFilter `
     -UAVResourceMode $UAVResourceMode `
