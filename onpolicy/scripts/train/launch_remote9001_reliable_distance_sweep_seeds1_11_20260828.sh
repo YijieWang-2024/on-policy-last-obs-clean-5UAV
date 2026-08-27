@@ -35,7 +35,8 @@ fi
 
 [[ -x "$python_bin" ]] || { echo "Python not executable: $python_bin" >&2; exit 1; }
 [[ -x "$runner" ]] || { echo "Runner not executable: $runner" >&2; exit 1; }
-if ! git -C "$repo_root" diff --quiet || ! git -C "$repo_root" diff --cached --quiet; then
+cd "$repo_root"
+if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "Refusing to launch from a repository with tracked changes" >&2
   exit 1
 fi

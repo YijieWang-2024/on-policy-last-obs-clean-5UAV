@@ -267,3 +267,12 @@ def test_remote9001_reliable_distance_sweep_maps_eight_jobs_to_eight_gpus():
         (7, 11, 260, 0),
     ]
     assert all("deadlineon_pa_s3" in p[5] for p in plans)
+
+
+def test_remote9001_launcher_does_not_require_git_dash_c_support():
+    script = TRAIN_SCRIPTS / (
+        "launch_remote9001_reliable_distance_sweep_seeds1_11_20260828.sh"
+    )
+    source = script.read_text(encoding="utf-8")
+    assert 'git -C "$repo_root"' not in source
+    assert 'cd "$repo_root"\nif ! git diff --quiet' in source
