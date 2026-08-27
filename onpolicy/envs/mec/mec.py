@@ -400,6 +400,19 @@ class MEC(gym.Env):
         )
         self.max_UAVs_in_neighbor = args.max_UAVs_in_neighbor  # 只用到自己的观测s_{i,t}中的其他无人机数目。无人机的邻居范围内距离由近到远，保留信息的最大无人机数目。
         self.neighbor_distance = args.neighbor_distance  # 无人机之间定义为通信的k跳的距离。 之前为d_cov*2=240。我的last-obs设为覆盖范围内的无人机数目。因此设置为120
+        self.critic_neighbor_distance = getattr(
+            args, "critic_neighbor_distance", None
+        )
+        if self.critic_neighbor_distance is None:
+            self.critic_neighbor_distance = self.neighbor_distance
+        if (
+            not np.isfinite(self.critic_neighbor_distance)
+            or self.critic_neighbor_distance < 0.0
+            or self.critic_neighbor_distance > self.neighbor_distance
+        ):
+            raise ValueError(
+                "critic_neighbor_distance must be finite and in [0, neighbor_distance]"
+            )
         self.neighbor_R = args.neighbor_R  # 无人机之间定义为1跳的距离。240+20米。用来告诉无人机其一跳范围内的无人机，感知到的无人机位置共享
         self.d_optimal = args.d_optimal
         self.perform_with_local_state = args.perform_with_local_state
@@ -1069,10 +1082,15 @@ class MEC(gym.Env):
         self.hotspot_layout_rng = np.random.default_rng(layout_seed)
         self.candidate_birth_rng = np.random.default_rng(candidate_seed)
 
-    def _type_s_geometric_mask(self):
+    def _communication_geometric_mask(self):
         if self.neighbor_distance <= 0:
             return np.eye(self.n_UAVs, dtype=bool)
         return self.uav_uav_distances_2d <= self.neighbor_distance
+
+    def _critic_geometric_mask(self):
+        if self.critic_neighbor_distance <= 0:
+            return np.eye(self.n_UAVs, dtype=bool)
+        return self.uav_uav_distances_2d <= self.critic_neighbor_distance
 
     def _sample_state_reception_mask(self):
         """Return the per-slot Type-S availability with axes (receiver, sender)."""
@@ -1087,7 +1105,7 @@ class MEC(gym.Env):
             deadline_ms=self.args.state_deadline_ms,
         )[0, 0].T
         off_diagonal = ~np.eye(self.n_UAVs, dtype=bool)
-        geometric = self._type_s_geometric_mask()
+        geometric = self._communication_geometric_mask()
         attempted = off_diagonal & geometric
         # The shared physical sampler already gates by d_com.  Keep this local
         # mask as an explicit Type-S contract and for patched/custom samplers.
@@ -1115,7 +1133,7 @@ class MEC(gym.Env):
         single_state_dim = self.state_dim // self.max_UAVs_obs_concat
         final_state = np.zeros((self.n_UAVs, self.state_dim))
         if self.all_uav_k_hops:
-            available = self._type_s_geometric_mask()
+            available = self._critic_geometric_mask()
             available &= self.last_state_reception_mask
             np.fill_diagonal(available, True)
             all_uavs = np.arange(self.n_UAVs)
@@ -1140,8 +1158,11 @@ class MEC(gym.Env):
         self.attention_active_mask[:, 0] = 1.0
         for receiver in range(self.n_UAVs):
             neighbor_mask = (
-                (self.neighbor_distance > 0)
-                & (self.uav_uav_distances_2d[receiver] <= self.neighbor_distance)
+                (self.critic_neighbor_distance > 0)
+                & (
+                    self.uav_uav_distances_2d[receiver]
+                    <= self.critic_neighbor_distance
+                )
                 & self.last_state_reception_mask[receiver]
                 & (np.arange(self.n_UAVs) != receiver)
             )
@@ -3553,7 +3574,7 @@ class MEC(gym.Env):
     def get_type_s_data(self):
         """Return the current structured Type-S state without exposing actor messages."""
         packet = self.current_type_s_packet
-        geometric_mask = self._type_s_geometric_mask()
+        geometric_mask = self._critic_geometric_mask()
         np.fill_diagonal(geometric_mask, True)
         return {
             "sender_ids": packet["sender_ids"].copy(),

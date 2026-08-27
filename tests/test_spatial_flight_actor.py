@@ -51,6 +51,8 @@ class SpatialFlightActorTest(unittest.TestCase):
             "use_naive_recurrent_policy": False,
         }
         settings.update(overrides)
+        if "neighbor_distance" in overrides and "critic_neighbor_distance" not in overrides:
+            settings["critic_neighbor_distance"] = settings["neighbor_distance"]
         for name, value in settings.items():
             setattr(args, name, value)
         return args

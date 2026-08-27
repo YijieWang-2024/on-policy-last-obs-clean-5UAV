@@ -9,6 +9,7 @@ param(
     [string]$AdvantageMode = 'per_agent_noise',
     [double]$NoiseScale = 3.0,
     [Nullable[double]]$CommunicationDistance = $null,
+    [Nullable[double]]$CriticNeighborDistance = $null,
     [double]$ActorNeighborDistance = 520,
     [Nullable[double]]$A2ATransmitPowerW = $null,
     [double]$A2ARicianKDb = 10.0,
@@ -70,6 +71,7 @@ if (-not $ExperimentName) {
     -MDLifetime 12 `
     -CommunicationMode unreliable `
     -CommunicationDistance $CommunicationDistance `
+    -CriticNeighborDistance $CriticNeighborDistance `
     -ActorNeighborDistance $ActorNeighborDistance `
     -RunningSumRounds $RunningSumRounds `
     -A2ATransmitPowerW $A2ATransmitPowerW `

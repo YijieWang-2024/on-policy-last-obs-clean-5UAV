@@ -34,6 +34,8 @@ class DynamicMDTest(unittest.TestCase):
             "not_served_rew_to_nearest": True,
         }
         settings.update(overrides)
+        if "neighbor_distance" in overrides and "critic_neighbor_distance" not in overrides:
+            settings["critic_neighbor_distance"] = settings["neighbor_distance"]
         for name, value in settings.items():
             setattr(args, name, value)
         return args

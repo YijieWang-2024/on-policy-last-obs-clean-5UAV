@@ -10,6 +10,7 @@ param(
     [ValidateRange(1, 100)]
     [int]$UAVMaxSpeed = 30,
     [double]$NeighborDistance = 0,
+    [Nullable[double]]$CriticNeighborDistance = $null,
     [int]$NeighborR = 0,
     [ValidateSet('fixed_legacy', 'episode_template4_600_200', 'episode_template12_600_200')]
     [string]$HotspotLayoutMode = 'fixed_legacy',
@@ -212,6 +213,10 @@ if ($UAVResourceMode -eq 'heterogeneous') {
     })
     $trainArgs += '--uav_resource_scale_factors'
     $trainArgs += $resourceScaleArgs
+}
+
+if ($null -ne $CriticNeighborDistance) {
+    $trainArgs += @('--critic_neighbor_distance', $CriticNeighborDistance)
 }
 
 if ($EpisodeLayoutContext) {

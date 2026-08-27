@@ -81,6 +81,13 @@ def parse_args(args, parser):
             "derived from --a2a_transmit_power_w; if both are omitted, d_com=520 m."
         ),
     )
+    parser.add_argument(
+        '--critic_neighbor_distance', type=float, default=None,
+        help=(
+            "Critic Type-S state radius in metres. Defaults to d_com and must "
+            "not exceed d_com. It does not change the Type-A consensus graph."
+        ),
+    )
     parser.add_argument("--neighbor_R", type=int, default=260, help="1-hop distance, Use to one-hop range drone position sharing")
     parser.add_argument('--d_optimal', type=float, default=210, help="(m), Distance between desired drones based on area size and number of drones")
     parser.add_argument('--n_GUs', type=int, default=20, help="total number of groud users")
@@ -512,6 +519,16 @@ def parse_args(args, parser):
         resolve_communication_parameters(all_args)
     except ValueError as error:
         parser.error(str(error))
+    if all_args.critic_neighbor_distance is None:
+        all_args.critic_neighbor_distance = all_args.neighbor_distance
+    elif (
+        not np.isfinite(all_args.critic_neighbor_distance)
+        or all_args.critic_neighbor_distance < 0.0
+        or all_args.critic_neighbor_distance > all_args.neighbor_distance
+    ):
+        parser.error(
+            "--critic_neighbor_distance must be finite and in [0, d_com]"
+        )
     if not 0.0 <= all_args.consensus_alpha <= 1.0:
         parser.error("--consensus_alpha must be in [0, 1]")
     if not 0.0 <= all_args.externality_beta <= 1.0:

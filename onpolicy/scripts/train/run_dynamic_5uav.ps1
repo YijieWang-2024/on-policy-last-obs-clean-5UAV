@@ -13,6 +13,7 @@ param(
     [int]$EpisodeLength = 400,
     [int]$MDLifetime = 10,
     [Nullable[double]]$CommunicationDistance = $null,
+    [Nullable[double]]$CriticNeighborDistance = $null,
     [int]$ActorNeighborDistance = 260,
     [int]$ConsensusRounds = 50,
     [ValidateSet('local', 'mixed_consensus', 'pure_consensus', 'externality_consensus', 'legacy_noise', 'per_agent_noise')]
@@ -300,6 +301,9 @@ if ($Method -eq 'dcppo') {
     )
     if ($null -ne $CommunicationDistance) {
         $arguments += @('--neighbor_distance', $CommunicationDistance)
+    }
+    if ($null -ne $CriticNeighborDistance) {
+        $arguments += @('--critic_neighbor_distance', $CriticNeighborDistance)
     }
     if ($null -ne $A2ATransmitPowerW) {
         $arguments += @('--a2a_transmit_power_w', $A2ATransmitPowerW)

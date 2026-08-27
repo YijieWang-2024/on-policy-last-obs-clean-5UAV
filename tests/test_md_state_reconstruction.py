@@ -1,4 +1,5 @@
 import copy
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -42,6 +43,7 @@ def _args(mode="last_obs", **overrides):
         "max_UAVs_obs_concat": 5,
         "max_UAVs_in_neighbor": 5,
         "neighbor_distance": 1000,
+        "critic_neighbor_distance": 1000,
         "continuous_associate": True,
         "not_served_rew_to_nearest": True,
         "communication_mode": "unreliable",
@@ -54,6 +56,8 @@ def _args(mode="last_obs", **overrides):
         "md_gru_min_ready_samples": 1,
     }
     settings.update(overrides)
+    if "critic_neighbor_distance" not in overrides:
+        settings["critic_neighbor_distance"] = settings["neighbor_distance"]
     for name, value in settings.items():
         setattr(args, name, value)
     return args
@@ -128,6 +132,40 @@ def test_type_s_codec_matches_canonical_critic_block_elementwise():
         expected = np.concatenate([_direct_block(data, sender) for sender in order])
         np.testing.assert_allclose(states[0, receiver], expected)
         np.testing.assert_array_equal(attention[0, receiver], 1)
+
+
+def test_type_s_data_keeps_dcom_attempts_but_filters_critic_sources():
+    args = _args(
+        neighbor_distance=520.0,
+        critic_neighbor_distance=260.0,
+    )
+    env = MEC(args)
+    env.seed(37)
+    env.reset()
+    env.uav_positions[:, :2] = np.asarray([
+        [0.0, 0.0],
+        [200.0, 0.0],
+        [400.0, 0.0],
+        [600.0, 0.0],
+        [800.0, 0.0],
+    ])
+    env._update_distance_matrices()
+    all_success = np.ones((1, 1, env.n_UAVs, env.n_UAVs), dtype=bool)
+    env.state_packets_attempted = 0
+    env.state_packets_received = 0
+
+    with patch(
+        "onpolicy.envs.mec.mec.sample_configured_timely_receptions",
+        return_value=all_success,
+    ):
+        env.last_state_reception_mask = env._sample_state_reception_mask()
+
+    data = env.get_type_s_data()
+
+    assert env.state_packets_attempted == 14
+    assert data["reception_mask"][0, 2]
+    assert data["geometric_mask"][0, 1]
+    assert not data["geometric_mask"][0, 2]
 
 
 def test_speed_layout_context_and_actor_message_do_not_change_type_s_codec():

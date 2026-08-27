@@ -45,6 +45,7 @@ def _mec_args(communication_mode):
         "max_UAVs_obs_concat": 5,
         "max_UAVs_in_neighbor": 5,
         "neighbor_distance": 1000,
+        "critic_neighbor_distance": 1000,
         "continuous_associate": True,
         "not_served_rew_to_nearest": True,
         "communication_mode": communication_mode,
@@ -109,6 +110,70 @@ def test_default_and_bidirectional_pc_dcom_resolution():
     )
     assert zero.neighbor_distance == 0.0
     assert zero.a2a_transmit_power_w == 0.0
+
+
+def test_critic_distance_defaults_to_dcom_and_rejects_infeasible_values():
+    default = parse_args([], get_config())
+    assert default.critic_neighbor_distance == 520.0
+
+    derived_default = parse_args(["--d_com", "260"], get_config())
+    assert derived_default.critic_neighbor_distance == 260.0
+
+    restricted = parse_args(
+        ["--d_com", "520", "--critic_neighbor_distance", "260"],
+        get_config(),
+    )
+    assert restricted.neighbor_distance == 520.0
+    assert restricted.critic_neighbor_distance == 260.0
+
+    for invalid in ("-1", "520.01", "nan"):
+        with pytest.raises(SystemExit):
+            parse_args(
+                ["--d_com", "520", "--critic_neighbor_distance", invalid],
+                get_config(),
+            )
+
+
+def test_reliable_critic_radius_filters_state_without_changing_dcom():
+    args = _mec_args("reliable")
+    args.neighbor_distance = 520.0
+    args.critic_neighbor_distance = 260.0
+    env = MEC(args)
+    env.uav_positions[:, :2] = np.asarray([
+        [0.0, 0.0],
+        [200.0, 0.0],
+        [400.0, 0.0],
+        [600.0, 0.0],
+        [800.0, 0.0],
+    ])
+    env._update_distance_matrices()
+    single_state_dim = env.state_dim // env.max_UAVs_obs_concat
+    critic_local_obs = np.repeat(
+        np.arange(1, env.n_UAVs + 1, dtype=np.float32)[:, None],
+        single_state_dim,
+        axis=1,
+    )
+
+    state = env._build_critic_state(critic_local_obs)
+    receiver_zero_blocks = state[0].reshape(env.max_UAVs_obs_concat, -1)
+
+    np.testing.assert_array_equal(
+        env.attention_active_mask[0], [1.0, 1.0, 0.0, 0.0, 0.0]
+    )
+    np.testing.assert_array_equal(receiver_zero_blocks[0], critic_local_obs[0])
+    np.testing.assert_array_equal(receiver_zero_blocks[1], critic_local_obs[1])
+    np.testing.assert_array_equal(receiver_zero_blocks[2:], 0.0)
+    assert env.neighbor_distance == 520.0
+
+
+@pytest.mark.parametrize("invalid", [-1.0, 520.01, np.nan])
+def test_mec_rejects_infeasible_critic_radius_from_programmatic_args(invalid):
+    args = _mec_args("reliable")
+    args.neighbor_distance = 520.0
+    args.critic_neighbor_distance = invalid
+
+    with pytest.raises(ValueError, match="critic_neighbor_distance"):
+        MEC(args)
 
 
 def test_pc_dcom_formula_round_trips_paper_radii():
@@ -411,6 +476,7 @@ def test_type_s_channel_rng_does_not_change_environment_trajectory():
 def test_type_s_reception_rate_counts_only_current_episode_geometric_links():
     args = _mec_args("unreliable")
     args.neighbor_distance = 1.0
+    args.critic_neighbor_distance = 1.0
     env = MEC(args)
     env.uav_positions[:, :2] = np.asarray([
         [0.0, 0.0], [0.5, 0.0], [10.0, 0.0], [20.0, 0.0], [30.0, 0.0]

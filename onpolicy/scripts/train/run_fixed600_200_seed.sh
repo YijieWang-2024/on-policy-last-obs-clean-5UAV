@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-communication_mode="${1:?usage: $0 reliable|unreliable zero|last_obs|md_gru seed experiment_name [off|p0p7_10m_25m] [enabled|disabled] [state_deadline_ms] [advantage_deadline_ms]}"
+communication_mode="${1:?usage: $0 reliable|unreliable zero|last_obs|md_gru seed experiment_name [off|p0p7_10m_25m] [enabled|disabled] [state_deadline_ms] [advantage_deadline_ms] [critic_neighbor_distance] [communication_distance]}"
 state_reconstruction="${2:?missing state reconstruction}"
 seed="${3:?missing seed}"
 experiment_name="${4:?missing experiment name}"
@@ -9,6 +9,8 @@ curriculum="${5:-off}"
 deadline_filter="${6:-disabled}"
 state_deadline_ms="${7:-13.54}"
 advantage_deadline_ms="${8:-21.54}"
+critic_neighbor_distance="${9:-}"
+communication_distance="${10:-520}"
 
 case "$communication_mode:$state_reconstruction" in
   reliable:zero|unreliable:zero|unreliable:last_obs|unreliable:md_gru) ;;
@@ -22,7 +24,6 @@ case "$deadline_filter" in
   enabled|disabled) ;;
   *) echo "invalid deadline filter: $deadline_filter" >&2; exit 2 ;;
 esac
-
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 python_bin="${MARL_PYTHON:-/home/test/miniconda3/envs/marl/bin/python}"
 train_script="$repo_root/onpolicy/scripts/train/train_mec.py"
@@ -111,8 +112,7 @@ args=(
   --consensus_alpha 0.5
   --externality_beta 0.1
   --communication_mode "$communication_mode"
-  --neighbor_distance 520
-  --a2a_transmit_power_w 1.1809658836179866
+  --neighbor_distance "$communication_distance"
   --a2a_rician_k_db 10
   --a2a_distance_tolerance_m 5
   --noise_scale 3
@@ -122,6 +122,10 @@ args=(
 
 if [[ "$deadline_filter" == disabled ]]; then
   args+=(--disable_offload_deadline_filter)
+fi
+
+if [[ -n "$critic_neighbor_distance" ]]; then
+  args+=(--critic_neighbor_distance "$critic_neighbor_distance")
 fi
 
 if [[ "$curriculum" != off ]]; then
