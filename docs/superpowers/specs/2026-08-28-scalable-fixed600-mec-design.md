@@ -61,7 +61,10 @@ The Fixed600-200 reliable and unreliable wrappers will expose:
 
 - `NumUAVs`, default 5;
 - `NumGUs`, default 60;
-- `MDLifetime`, default 12 for the current Fixed600 protocol;
+- `MDLifetime`; the unreliable Fixed600 wrapper defaults to 12, while the
+  lower-level reliable wrapper retains its historical default of 10 for
+  backward compatibility. Formal Fixed600 scale launchers pass 12 or 16
+  explicitly;
 - `MaxGUsInRange`, default 20;
 - `MDArrivalsPerRegion`, default `(1, 4)`;
 - `UAVStartPositions`, resolved to the ordered five- or seven-UAV Fixed600
