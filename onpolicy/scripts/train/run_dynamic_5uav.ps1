@@ -9,6 +9,8 @@ param(
     [int]$NumUAVs = 5,
     [ValidateRange(1, 1000)]
     [int]$NumGUs = 60,
+    [ValidateRange(1, 1000)]
+    [int]$MaxGUsInRange = 20,
     [int[]]$MDArrivalsPerRegion = @(),
     [int]$EpisodeLength = 400,
     [int]$MDLifetime = 10,
@@ -120,6 +122,19 @@ $expectedStartValues = 2 * $NumUAVs
 if ($UAVStartPositions.Count -notin @(0, $expectedStartValues)) {
     throw "UAVStartPositions must be empty or contain exactly $expectedStartValues values for $NumUAVs UAVs."
 }
+for ($index = 0; $index -lt $UAVStartPositions.Count; $index += 2) {
+    $x = [double]$UAVStartPositions[$index]
+    $y = [double]$UAVStartPositions[$index + 1]
+    if (
+        [double]::IsNaN($x) -or [double]::IsInfinity($x) -or
+        [double]::IsNaN($y) -or [double]::IsInfinity($y)
+    ) {
+        throw 'UAVStartPositions values must be finite.'
+    }
+    if ($x -lt 0 -or $x -gt $MapSize -or $y -lt 0 -or $y -gt $MapSize) {
+        throw "UAVStartPositions must lie inside the 0..$MapSize m UAV map."
+    }
+}
 if ($MDArrivalsPerRegion.Count -notin @(0, 2)) {
     throw 'MDArrivalsPerRegion must be empty or contain exactly two values.'
 }
@@ -159,6 +174,9 @@ $regionalArrivalTotal = [int]$regionArrivals[0] + [int]$regionArrivals[1]
 if ($NumGUs -lt $regionalArrivalTotal * $MDLifetime) {
     throw "NumGUs must be at least arrivals-per-slot * MDLifetime ($($regionalArrivalTotal * $MDLifetime))."
 }
+if ($MaxGUsInRange -gt $NumGUs) {
+    throw "MaxGUsInRange must be between 1 and NumGUs ($NumGUs)."
+}
 
 $arguments = @(
     $trainScript,
@@ -170,7 +188,7 @@ $arguments = @(
     '--share_policy',
     '--n_UAVs', $NumUAVs,
     '--n_GUs', $NumGUs,
-    '--max_GUs_in_range', '20',
+    '--max_GUs_in_range', $MaxGUsInRange,
     '--dynamic_md',
     '--md_arrivals_min', $regionalArrivalTotal,
     '--md_arrivals_max', $regionalArrivalTotal,

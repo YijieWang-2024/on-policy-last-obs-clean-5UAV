@@ -3,6 +3,16 @@ param(
     [long]$NumEnvSteps = 60000000,
     [int]$RolloutThreads = 64,
     [int]$EpisodeLength = 400,
+    [ValidateRange(2, 25)]
+    [int]$NumUAVs = 5,
+    [ValidateRange(1, 1000)]
+    [int]$NumGUs = 60,
+    [ValidateRange(1, 1000)]
+    [int]$MaxGUsInRange = 20,
+    [int[]]$MDArrivalsPerRegion = @(1, 4),
+    [ValidateRange(1, 400)]
+    [int]$MDLifetime = 12,
+    [double[]]$UAVStartPositions = @(),
     [ValidateSet('zero', 'last_obs', 'md_gru')]
     [string]$StateReconstruction = 'md_gru',
     [ValidateSet('local', 'mixed_consensus', 'pure_consensus', 'legacy_noise', 'per_agent_noise')]
@@ -48,6 +58,20 @@ $common = Join-Path $PSScriptRoot 'run_dynamic_5uav.ps1'
 if (-not (Test-Path -LiteralPath $common)) {
     throw "Common launcher not found: $common"
 }
+if ($UAVStartPositions.Count -eq 0) {
+    if ($NumUAVs -eq 5) {
+        $UAVStartPositions = @(
+            110, 180, 220, 180, 330, 180, 440, 180, 400, 400
+        )
+    } elseif ($NumUAVs -eq 7) {
+        $UAVStartPositions = @(
+            110, 180, 220, 180, 330, 180, 440, 180,
+            400, 400, 550, 180, 200, 400
+        )
+    } else {
+        throw "Fixed600 requires explicit UAVStartPositions for $NumUAVs UAVs."
+    }
+}
 if (-not $ExperimentName) {
     $messageTag = if ($ActorMessageMode -eq 'disabled') { 'noactor' } else { 'actor' }
     $communicationTag = if ($null -ne $CommunicationDistance) {
@@ -57,8 +81,13 @@ if (-not $ExperimentName) {
     } else {
         'R520'
     }
+    $scaleTag = if (
+        $NumUAVs -eq 5 -and $NumGUs -eq 60 -and $MDLifetime -eq 12 -and
+        $MaxGUsInRange -eq 20 -and $MDArrivalsPerRegion.Count -eq 2 -and
+        $MDArrivalsPerRegion[0] -eq 1 -and $MDArrivalsPerRegion[1] -eq 4
+    ) { '' } else { "_uav${NumUAVs}_md${NumGUs}_life${MDLifetime}" }
     $ExperimentName = (
-        "dcppo${communicationTag}_fixed600_200_vmax30_md12_unreliable_${AdvantageMode}_${StateReconstruction}_${messageTag}_seed${Seed}_60m"
+        "dcppo${communicationTag}_fixed600_200_vmax30_md12${scaleTag}_unreliable_${AdvantageMode}_${StateReconstruction}_${messageTag}_seed${Seed}_60m"
     )
 }
 
@@ -68,7 +97,11 @@ if (-not $ExperimentName) {
     -NumEnvSteps $NumEnvSteps `
     -RolloutThreads $RolloutThreads `
     -EpisodeLength $EpisodeLength `
-    -MDLifetime 12 `
+    -NumUAVs $NumUAVs `
+    -NumGUs $NumGUs `
+    -MaxGUsInRange $MaxGUsInRange `
+    -MDArrivalsPerRegion $MDArrivalsPerRegion `
+    -MDLifetime $MDLifetime `
     -CommunicationMode unreliable `
     -CommunicationDistance $CommunicationDistance `
     -CriticNeighborDistance $CriticNeighborDistance `
@@ -96,7 +129,7 @@ if (-not $ExperimentName) {
     -ActorMessagePool receiver_gated_sum `
     -ActorMessageContract absolute_raw_v2 `
     -HotspotLayoutMode episode_template4_600_200 `
-    -UAVStartPositions @(110, 180, 220, 180, 330, 180, 440, 180, 400, 400) `
+    -UAVStartPositions $UAVStartPositions `
     -MapSize 600 `
     -UAVMaxSpeed 30 `
     -MeanVelocity 3.0 `

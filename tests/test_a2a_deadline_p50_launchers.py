@@ -13,11 +13,11 @@ ADVANTAGE_DEADLINE_MS = 18.175730095548
 WINDOWS_ONLY = pytest.mark.skipif(os.name != "nt", reason="PowerShell launcher test")
 
 
-def _captured_training_command(script, tmp_path, *arguments):
+def _run_training_script(script, tmp_path, *arguments):
     capture = tmp_path / "python-arguments.txt"
     fake_python = tmp_path / "fake-python.cmd"
     fake_python.write_text(
-        '@echo off\r\necho %*>>"%CAPTURE_ARGS%"\r\nexit /b 0\r\n',
+        '@echo off\r\necho %* >>"%CAPTURE_ARGS%"\r\nexit /b 0\r\n',
         encoding="utf-8",
     )
     environment = os.environ.copy()
@@ -39,6 +39,11 @@ def _captured_training_command(script, tmp_path, *arguments):
         text=True,
         timeout=30,
     )
+    return result, capture
+
+
+def _captured_training_command(script, tmp_path, *arguments):
+    result, capture = _run_training_script(script, tmp_path, *arguments)
     assert result.returncode == 0, result.stdout + result.stderr
     return capture.read_text(encoding="utf-8").splitlines()[-1]
 
@@ -111,6 +116,130 @@ def test_fixed_reliable_launcher_forwards_critic_distance(tmp_path):
     )
     assert "--neighbor_distance 520" in command
     assert "--critic_neighbor_distance 260" in command
+
+
+@WINDOWS_ONLY
+def test_fixed_unreliable_launcher_preserves_default_scale_contract(tmp_path):
+    command = _captured_training_command(
+        TRAIN_SCRIPTS / "run_fixed600_200_unreliable_dataplane.ps1",
+        tmp_path,
+        "-NumEnvSteps", 1,
+        "-RolloutThreads", 1,
+        "-StateReconstruction", "last_obs",
+        "-Python", tmp_path / "fake-python.cmd",
+        "-ExperimentName", "default-scale-contract-test",
+    )
+
+    assert "--n_UAVs 5" in command
+    assert "--n_GUs 60" in command
+    assert "--max_GUs_in_range 20" in command
+    assert "--md_arrivals_per_region 1 4" in command
+    assert "--md_lifetime_min 12 --md_lifetime_max 12" in command
+    assert (
+        "--uav_start_positions 110 180 220 180 330 180 440 180 400 400"
+        in command
+    )
+
+
+@WINDOWS_ONLY
+def test_fixed_unreliable_launcher_supports_seven_uavs(tmp_path):
+    command = _captured_training_command(
+        TRAIN_SCRIPTS / "run_fixed600_200_unreliable_dataplane.ps1",
+        tmp_path,
+        "-NumEnvSteps", 1,
+        "-RolloutThreads", 1,
+        "-NumUAVs", 7,
+        "-NumGUs", 60,
+        "-MDLifetime", 12,
+        "-MaxGUsInRange", 20,
+        "-StateReconstruction", "last_obs",
+        "-Python", tmp_path / "fake-python.cmd",
+        "-ExperimentName", "scaled-seven-uav-test",
+    )
+
+    assert "--n_UAVs 7" in command
+    assert "--n_GUs 60" in command
+    assert "--max_GUs_in_range 20" in command
+    assert "--md_lifetime_min 12 --md_lifetime_max 12" in command
+    assert (
+        "--uav_start_positions 110 180 220 180 330 180 440 180 "
+        "400 400 550 180 200 400"
+    ) in command
+
+
+@WINDOWS_ONLY
+def test_fixed_reliable_launcher_supports_eighty_md_slots(tmp_path):
+    command = _captured_training_command(
+        TRAIN_SCRIPTS / "run_fixed2hotspot_per_agent_noise.ps1",
+        tmp_path,
+        "-NoiseScale", 3,
+        "-NumEnvSteps", 1,
+        "-RolloutThreads", 1,
+        "-NumUAVs", 5,
+        "-NumGUs", 80,
+        "-MdLifetime", 16,
+        "-MaxGUsInRange", 20,
+        "-HotspotLayoutMode", "episode_template4_600_200",
+        "-ExperimentName", "scaled-eighty-md-test",
+    )
+
+    assert "--n_UAVs 5" in command
+    assert "--n_GUs 80" in command
+    assert "--max_GUs_in_range 20" in command
+    assert "--md_lifetime_min 16 --md_lifetime_max 16" in command
+    assert "--md_arrivals_per_region 1 4" in command
+
+
+@WINDOWS_ONLY
+def test_fixed_reliable_launcher_supports_seven_uav_resource_scales(tmp_path):
+    wrapper = TRAIN_SCRIPTS / "run_fixed2hotspot_per_agent_noise.ps1"
+    driver = tmp_path / "invoke-seven-uav-heterogeneous.ps1"
+    driver.write_text(
+        "& '" + str(wrapper).replace("'", "''") + "' "
+        "-NoiseScale 3 -NumEnvSteps 1 -RolloutThreads 1 "
+        "-NumUAVs 7 -NumGUs 60 -MdLifetime 12 "
+        "-UAVResourceMode heterogeneous "
+        "-UAVResourceScaleFactors @(1, 0.9, 1.1, 1, 0.8, 1.2, 1) "
+        "-ExperimentName scaled-seven-uav-resource-test\n",
+        encoding="utf-8",
+    )
+
+    command = _captured_training_command(driver, tmp_path)
+
+    assert "--n_UAVs 7" in command
+    assert "--uav_resource_scale_factors 1 0.9 1.1 1 0.8 1.2 1" in command
+
+
+@WINDOWS_ONLY
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (
+            ("-NumGUs", 60, "-MDLifetime", 16),
+            "NumGUs must be at least arrivals-per-slot * MDLifetime (80)",
+        ),
+        (
+            ("-NumGUs", 60, "-MaxGUsInRange", 61),
+            "MaxGUsInRange must be between 1 and NumGUs (60)",
+        ),
+    ],
+)
+def test_fixed_unreliable_launcher_rejects_invalid_scale(
+    tmp_path, arguments, message
+):
+    result, _ = _run_training_script(
+        TRAIN_SCRIPTS / "run_fixed600_200_unreliable_dataplane.ps1",
+        tmp_path,
+        "-NumEnvSteps", 1,
+        "-RolloutThreads", 1,
+        "-StateReconstruction", "last_obs",
+        "-Python", tmp_path / "fake-python.cmd",
+        "-ExperimentName", "invalid-scale-test",
+        *arguments,
+    )
+
+    assert result.returncode != 0
+    assert message in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("seed", [1, 11, 21])

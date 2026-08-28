@@ -5,6 +5,14 @@ param(
     [int]$Seed = 2,
     [long]$NumEnvSteps = 60000000,
     [int]$RolloutThreads = 64,
+    [ValidateRange(2, 25)]
+    [int]$NumUAVs = 5,
+    [ValidateRange(1, 1000)]
+    [int]$NumGUs = 60,
+    [ValidateRange(1, 1000)]
+    [int]$MaxGUsInRange = 20,
+    [int[]]$MDArrivalsPerRegion = @(1, 4),
+    [double[]]$UAVStartPositions = @(),
     [ValidateRange(1, 400)]
     [int]$MdLifetime = 10,
     [ValidateRange(1, 100)]
@@ -48,6 +56,50 @@ $trainScript = Join-Path $repoRoot 'onpolicy\scripts\train\train_mec.py'
 if (-not (Test-Path -LiteralPath $trainScript)) {
     throw "Training entry point not found: $trainScript"
 }
+if ($MDArrivalsPerRegion.Count -ne 2) {
+    throw 'MDArrivalsPerRegion must contain exactly two values.'
+}
+if ($MDArrivalsPerRegion[0] -lt 0 -or $MDArrivalsPerRegion[1] -lt 0) {
+    throw 'MDArrivalsPerRegion values must be non-negative.'
+}
+$regionalArrivalTotal = $MDArrivalsPerRegion[0] + $MDArrivalsPerRegion[1]
+if ($NumGUs -lt $regionalArrivalTotal * $MdLifetime) {
+    throw "NumGUs must be at least arrivals-per-slot * MdLifetime ($($regionalArrivalTotal * $MdLifetime))."
+}
+if ($MaxGUsInRange -gt $NumGUs) {
+    throw "MaxGUsInRange must be between 1 and NumGUs ($NumGUs)."
+}
+if ($UAVStartPositions.Count -eq 0) {
+    if ($NumUAVs -eq 5) {
+        $UAVStartPositions = @(
+            110, 180, 220, 180, 330, 180, 440, 180, 400, 400
+        )
+    } elseif ($NumUAVs -eq 7) {
+        $UAVStartPositions = @(
+            110, 180, 220, 180, 330, 180, 440, 180,
+            400, 400, 550, 180, 200, 400
+        )
+    } else {
+        throw "Fixed600 requires explicit UAVStartPositions for $NumUAVs UAVs."
+    }
+}
+$expectedStartValues = 2 * $NumUAVs
+if ($UAVStartPositions.Count -ne $expectedStartValues) {
+    throw "UAVStartPositions must contain exactly $expectedStartValues values for $NumUAVs UAVs."
+}
+for ($index = 0; $index -lt $UAVStartPositions.Count; $index += 2) {
+    $x = [double]$UAVStartPositions[$index]
+    $y = [double]$UAVStartPositions[$index + 1]
+    if (
+        [double]::IsNaN($x) -or [double]::IsInfinity($x) -or
+        [double]::IsNaN($y) -or [double]::IsInfinity($y)
+    ) {
+        throw 'UAVStartPositions values must be finite.'
+    }
+    if ($x -lt 0 -or $x -gt 600 -or $y -lt 0 -or $y -gt 600) {
+        throw 'UAVStartPositions must lie inside the 0..600 m UAV map.'
+    }
+}
 
 if ($ModelDir) {
     if (-not (Test-Path -LiteralPath $ModelDir -PathType Container)) {
@@ -74,7 +126,11 @@ if (-not (Test-Path -LiteralPath $python)) {
 
 $noiseTag = ('{0:00}' -f [int][math]::Round($NoiseScale * 100))
 if (-not $ExperimentName) {
-    $ExperimentName = 'fixed2hotspot_nocurr_A_peragentnoise_s' + $noiseTag + '_seed' + $Seed + '_60m_20260807'
+    $scaleTag = if (
+        $NumUAVs -eq 5 -and $NumGUs -eq 60 -and $MaxGUsInRange -eq 20 -and
+        $MDArrivalsPerRegion[0] -eq 1 -and $MDArrivalsPerRegion[1] -eq 4
+    ) { '' } else { "_uav${NumUAVs}_md${NumGUs}_life${MdLifetime}" }
+    $ExperimentName = 'fixed2hotspot_nocurr_A_peragentnoise_s' + $noiseTag + $scaleTag + '_seed' + $Seed + '_60m_20260807'
 }
 
 $running = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
@@ -107,21 +163,21 @@ $trainArgs = @(
     '--share_policy',
     '--n_training_threads', '1',
     '--n_rollout_threads', $RolloutThreads,
-    '--n_UAVs', '5',
-    '--max_UAVs_in_neighbor', '5',
-    '--max_UAVs_obs_concat', '5',
+    '--n_UAVs', $NumUAVs,
+    '--max_UAVs_in_neighbor', $NumUAVs,
+    '--max_UAVs_obs_concat', $NumUAVs,
     '--neighbor_distance', $NeighborDistance,
     '--neighbor_R', $NeighborR,
     '--d_optimal', '210',
-    '--n_GUs', '60',
-    '--max_GUs_in_range', '20',
+    '--n_GUs', $NumGUs,
+    '--max_GUs_in_range', $MaxGUsInRange,
     '--dynamic_md',
-    '--md_arrivals_min', '5',
-    '--md_arrivals_max', '5',
-    '--md_arrivals_per_region', '1', '4',
+    '--md_arrivals_min', $regionalArrivalTotal,
+    '--md_arrivals_max', $regionalArrivalTotal,
+    '--md_arrivals_per_region', $MDArrivalsPerRegion[0], $MDArrivalsPerRegion[1],
     '--hotspot_layout_mode', $HotspotLayoutMode,
-    '--five_uav_start_layout', 'line',
-    '--uav_start_positions', '110', '180', '220', '180', '330', '180', '440', '180', '400', '400',
+    '--five_uav_start_layout', 'line'
+) + @('--uav_start_positions') + $UAVStartPositions + @(
     '--md_lifetime_min', $MdLifetime,
     '--md_lifetime_max', $MdLifetime,
     '--x_max', '600',
@@ -205,8 +261,8 @@ $trainArgs = @(
 )
 
 if ($UAVResourceMode -eq 'heterogeneous') {
-    if ($UAVResourceScaleFactors.Count -ne 5) {
-        throw "Five-UAV heterogeneous mode requires exactly 5 resource scale factors. Got $($UAVResourceScaleFactors.Count)."
+    if ($UAVResourceScaleFactors.Count -ne $NumUAVs) {
+        throw "$NumUAVs-UAV heterogeneous mode requires exactly $NumUAVs resource scale factors. Got $($UAVResourceScaleFactors.Count)."
     }
     $resourceScaleArgs = @($UAVResourceScaleFactors | ForEach-Object {
         $_.ToString('0.################', [System.Globalization.CultureInfo]::InvariantCulture)
@@ -243,7 +299,12 @@ Write-Host "MD lifetime: $MdLifetime"
 Write-Host "UAV v_max  : $UAVMaxSpeed"
 Write-Host "Layout     : $HotspotLayoutMode"
 Write-Host "Actor msg  : $ActorMessageMode ($ActorMessageContract)"
-Write-Host "Resources  : $UAVResourceMode $(if ($UAVResourceMode -eq 'heterogeneous') { '[' + ($resourceScaleArgs -join ', ') + ']' } else { '[1, 1, 1, 1, 1]' })"
+$resourceDisplay = if ($UAVResourceMode -eq 'heterogeneous') {
+    '[' + ($resourceScaleArgs -join ', ') + ']'
+} else {
+    '[' + (((1..$NumUAVs) | ForEach-Object { '1' }) -join ', ') + ']'
+}
+Write-Host "Resources  : $UAVResourceMode $resourceDisplay"
 Write-Host "UAV reset  : $(if ($UAVResetCurriculum) { 'curriculum ' + $UAVResetCurriculumSchedule } else { 'fixed' })"
 Write-Host "PPO config : clip=$ClipParam gamma=$Gamma epochs=$PpoEpoch"
 Write-Host "Association: psi=$AssociationThreshold"
