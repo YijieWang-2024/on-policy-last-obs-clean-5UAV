@@ -87,7 +87,7 @@ if (-not $ExperimentName) {
         $MDArrivalsPerRegion[0] -eq 1 -and $MDArrivalsPerRegion[1] -eq 4
     ) { '' } else { "_uav${NumUAVs}_md${NumGUs}_life${MDLifetime}" }
     $ExperimentName = (
-        "dcppo${communicationTag}_fixed600_200_vmax30_md12${scaleTag}_unreliable_${AdvantageMode}_${StateReconstruction}_${messageTag}_seed${Seed}_60m"
+        "dcppo${communicationTag}_fixed600_200_vmax30_md${MDLifetime}${scaleTag}_unreliable_${AdvantageMode}_${StateReconstruction}_${messageTag}_seed${Seed}_60m"
     )
 }
 

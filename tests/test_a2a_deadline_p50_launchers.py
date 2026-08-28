@@ -168,6 +168,23 @@ def test_fixed_unreliable_launcher_supports_seven_uavs(tmp_path):
 
 
 @WINDOWS_ONLY
+def test_fixed_unreliable_scaled_auto_name_uses_effective_lifetime(tmp_path):
+    command = _captured_training_command(
+        TRAIN_SCRIPTS / "run_fixed600_200_unreliable_dataplane.ps1",
+        tmp_path,
+        "-NumEnvSteps", 1,
+        "-RolloutThreads", 1,
+        "-NumUAVs", 5,
+        "-NumGUs", 80,
+        "-MDLifetime", 16,
+        "-StateReconstruction", "last_obs",
+        "-Python", tmp_path / "fake-python.cmd",
+    )
+
+    assert "fixed600_200_vmax30_md16_uav5_md80_life16_unreliable" in command
+
+
+@WINDOWS_ONLY
 def test_fixed_reliable_launcher_supports_eighty_md_slots(tmp_path):
     command = _captured_training_command(
         TRAIN_SCRIPTS / "run_fixed2hotspot_per_agent_noise.ps1",
