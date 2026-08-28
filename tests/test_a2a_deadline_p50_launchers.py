@@ -329,6 +329,8 @@ def test_linux_seed_runner_accepts_a2a_deadline_overrides(tmp_path):
     assert f"--advantage_deadline_ms {ADVANTAGE_DEADLINE_MS}" in command
     assert "--neighbor_distance 520" in command
     assert "--critic_neighbor_distance 260" in command
+    assert "--n_GUs 60" in command
+    assert "--md_lifetime_min 12 --md_lifetime_max 12" in command
 
 
 @pytest.mark.parametrize(
@@ -379,6 +381,90 @@ def test_linux_seed_runner_accepts_independent_communication_and_critic_distance
     assert f"--neighbor_distance {communication_distance}" in command
     assert f"--critic_neighbor_distance {critic_distance}" in command
     assert "--a2a_transmit_power_w" not in command
+
+
+def test_linux_seed_runner_accepts_scaled_md_population_and_lifetime(tmp_path):
+    bash = (
+        Path(r"C:\Program Files\Git\bin\bash.exe")
+        if os.name == "nt"
+        else Path("/bin/bash")
+    )
+    capture = tmp_path / "python-arguments.txt"
+    fake_python = tmp_path / "fake-python.sh"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" > \"$CAPTURE_ARGS\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    environment = os.environ.copy()
+    environment["MARL_PYTHON"] = fake_python.as_posix()
+    environment["CAPTURE_ARGS"] = capture.as_posix()
+    result = subprocess.run(
+        [
+            str(bash),
+            (TRAIN_SCRIPTS / "run_fixed600_200_seed.sh").as_posix(),
+            "reliable",
+            "zero",
+            "1",
+            "linux-reliable-5uav80md-test",
+            "off",
+            "enabled",
+            str(STATE_DEADLINE_MS),
+            str(ADVANTAGE_DEADLINE_MS),
+            "260",
+            "260",
+            "80",
+            "16",
+        ],
+        cwd=REPO,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    command = capture.read_text(encoding="utf-8")
+    assert "--n_UAVs 5" in command
+    assert "--n_GUs 80" in command
+    assert "--max_GUs_in_range 20" in command
+    assert "--md_arrivals_min 5 --md_arrivals_max 5" in command
+    assert "--md_arrivals_per_region 1 4" in command
+    assert "--md_lifetime_min 16 --md_lifetime_max 16" in command
+
+
+def test_linux_seed_runner_rejects_insufficient_md_capacity(tmp_path):
+    bash = (
+        Path(r"C:\Program Files\Git\bin\bash.exe")
+        if os.name == "nt"
+        else Path("/bin/bash")
+    )
+    environment = os.environ.copy()
+    environment["MARL_PYTHON"] = "/usr/bin/echo"
+    result = subprocess.run(
+        [
+            str(bash),
+            (TRAIN_SCRIPTS / "run_fixed600_200_seed.sh").as_posix(),
+            "reliable",
+            "zero",
+            "1",
+            "linux-invalid-capacity-test",
+            "off",
+            "enabled",
+            str(STATE_DEADLINE_MS),
+            str(ADVANTAGE_DEADLINE_MS),
+            "260",
+            "260",
+            "60",
+            "16",
+        ],
+        cwd=REPO,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode != 0
+    assert "n_GUs must be at least arrivals-per-slot * md_lifetime (80)" in result.stderr
 
 
 def test_remote9001_reliable_distance_sweep_maps_eight_jobs_to_eight_gpus():
