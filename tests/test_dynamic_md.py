@@ -40,6 +40,90 @@ class DynamicMDTest(unittest.TestCase):
             setattr(args, name, value)
         return args
 
+    @staticmethod
+    def fixed600_starts(n_uavs):
+        starts = [
+            110, 180,
+            220, 180,
+            330, 180,
+            440, 180,
+            400, 400,
+            550, 180,
+            200, 400,
+        ]
+        return starts[:2 * n_uavs]
+
+    def scaled_fixed600_args(self, n_uavs, n_gus, lifetime):
+        return self.make_args(
+            n_UAVs=n_uavs,
+            n_GUs=n_gus,
+            max_GUs_in_range=20,
+            max_UAVs_obs_concat=n_uavs,
+            max_UAVs_in_neighbor=n_uavs,
+            md_arrivals_min=5,
+            md_arrivals_max=5,
+            md_arrivals_per_region=[1, 4],
+            md_lifetime_min=lifetime,
+            md_lifetime_max=lifetime,
+            episode_length=2,
+            hotspot_layout_mode="episode_template4_600_200",
+            hotspot_layout_indices=[0],
+            episode_layout_context=True,
+            episode_layout_context_units="meters_v2",
+            uav_start_positions=self.fixed600_starts(n_uavs),
+            spatial_flight_actor=True,
+            cartesian_flight=True,
+            completion_priority_user_sort=True,
+            actor_message_mode="disabled",
+        )
+
+    def test_explicit_uav_starts_must_be_finite_and_inside_uav_map(self):
+        for invalid in (np.nan, np.inf, -0.01, 600.01):
+            with self.subTest(invalid=invalid):
+                starts = self.fixed600_starts(5)
+                starts[0] = invalid
+                args = self.scaled_fixed600_args(5, 60, 12)
+                args.uav_start_positions = starts
+                with self.assertRaises(ValueError):
+                    MEC(args)
+
+    def test_scaled_fixed600_environment_contracts(self):
+        cases = (
+            (7, 60, 12, (7, 211), (7, 1477), (7, 20)),
+            (5, 80, 16, (5, 211), (5, 1055), (5, 20)),
+        )
+        for n_uavs, n_gus, lifetime, obs_shape, state_shape, avail_shape in cases:
+            with self.subTest(n_uavs=n_uavs, n_gus=n_gus):
+                args = self.scaled_fixed600_args(n_uavs, n_gus, lifetime)
+                env = MEC(args)
+                env.seed(2)
+                obs, state, avail, _, _ = env.reset()
+
+                self.assertEqual(np.asarray(obs).shape, obs_shape)
+                self.assertEqual(np.asarray(state).shape, state_shape)
+                self.assertEqual(np.asarray(avail).shape, avail_shape)
+                self.assertEqual(env.dynamic_md_candidates, 5)
+                self.assertLessEqual(int(np.sum(env.active_md_mask)), 5)
+                np.testing.assert_allclose(
+                    env.uav_positions[:, :2],
+                    np.asarray(self.fixed600_starts(n_uavs)).reshape(n_uavs, 2),
+                )
+
+                action_dim = sum(
+                    int(np.prod(space.shape)) for space in env.action_space.spaces
+                )
+                self.assertEqual(action_dim, 62)
+                action = np.full((n_uavs, action_dim), 0.5, dtype=np.float32)
+                action[:, :2] = 0.0
+                next_obs, rewards, _, next_state, next_avail, *_ = env.step(action)
+
+                self.assertEqual(np.asarray(next_obs).shape, obs_shape)
+                self.assertEqual(np.asarray(next_state).shape, state_shape)
+                self.assertEqual(np.asarray(next_avail).shape, avail_shape)
+                self.assertTrue(np.all(np.isfinite(next_obs)))
+                self.assertTrue(np.all(np.isfinite(next_state)))
+                self.assertTrue(np.all(np.isfinite(rewards)))
+
     def test_population_invariants(self):
         args = self.make_args(
             md_arrivals_min=3,

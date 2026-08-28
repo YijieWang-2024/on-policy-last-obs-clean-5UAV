@@ -299,7 +299,22 @@ class MEC(gym.Env):
                     f"uav_start_positions must contain {expected} values "
                     f"for {self.n_UAVs} UAVs, got {values.size}"
                 )
-            self.uav_start_positions = values.reshape(self.n_UAVs, 2).copy()
+            positions = values.reshape(self.n_UAVs, 2)
+            if not np.all(np.isfinite(positions)):
+                raise ValueError("uav_start_positions values must be finite")
+            inside_x = (
+                (positions[:, 0] >= args.x_min_uav)
+                & (positions[:, 0] <= args.x_max_uav)
+            )
+            inside_y = (
+                (positions[:, 1] >= args.y_min_uav)
+                & (positions[:, 1] <= args.y_max_uav)
+            )
+            if not np.all(inside_x & inside_y):
+                raise ValueError(
+                    "uav_start_positions must lie inside the configured UAV map"
+                )
+            self.uav_start_positions = positions.copy()
         self.hotspot_layout_rng = np.random.default_rng()
         self.candidate_birth_rng = np.random.default_rng()
         self.hotspot_layout_index = 0
