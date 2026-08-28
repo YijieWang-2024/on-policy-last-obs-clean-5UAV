@@ -124,6 +124,67 @@ class DynamicMDTest(unittest.TestCase):
                 self.assertTrue(np.all(np.isfinite(next_state)))
                 self.assertTrue(np.all(np.isfinite(rewards)))
 
+    def test_existing_five_uav_sixty_md_seed2_birth_stream_is_unchanged(self):
+        def trajectory():
+            env = MEC(self.scaled_fixed600_args(5, 60, 12))
+            env.seed(2)
+            obs, state, avail, _, attention = env.reset()
+            active = env.active_md_mask.copy()
+            session_ids = env.md_session_ids[active].copy()
+            positions = env.gu_positions[active, :2].copy()
+            tasks = env.gu_tasks[active].copy()
+            candidates = env.dynamic_md_candidates_by_region.copy()
+            action_dim = sum(
+                int(np.prod(space.shape)) for space in env.action_space.spaces
+            )
+            action = np.full((5, action_dim), 0.5, dtype=np.float32)
+            action[:, :2] = 0.0
+            next_obs, rewards, _, next_state, next_avail, *_ = env.step(action)
+            return {
+                "obs": np.asarray(obs).copy(),
+                "state": np.asarray(state).copy(),
+                "avail": np.asarray(avail).copy(),
+                "attention": np.asarray(attention).copy(),
+                "session_ids": session_ids,
+                "positions": positions,
+                "tasks": tasks,
+                "candidates": candidates,
+                "next_obs": np.asarray(next_obs).copy(),
+                "next_state": np.asarray(next_state).copy(),
+                "next_avail": np.asarray(next_avail).copy(),
+                "rewards": np.asarray(rewards).copy(),
+            }
+
+        first = trajectory()
+        second = trajectory()
+        for name in first:
+            np.testing.assert_array_equal(first[name], second[name])
+
+        self.assertEqual(first["obs"].shape, (5, 211))
+        self.assertEqual(first["state"].shape, (5, 1055))
+        np.testing.assert_array_equal(first["session_ids"], [0, 1])
+        np.testing.assert_allclose(
+            first["positions"],
+            [
+                [530.38477290, 220.77519807],
+                [479.64692616, 322.23629155],
+            ],
+            rtol=0,
+            atol=1e-8,
+        )
+        np.testing.assert_allclose(
+            first["tasks"],
+            [
+                [284073.56041750, 700581079.2547303, 0.49929965],
+                [266066.96420077, 752408870.7938330, 0.49926683],
+            ],
+            rtol=1e-12,
+            atol=1e-8,
+        )
+        np.testing.assert_array_equal(
+            first["candidates"], [1, 4]
+        )
+
     def test_population_invariants(self):
         args = self.make_args(
             md_arrivals_min=3,

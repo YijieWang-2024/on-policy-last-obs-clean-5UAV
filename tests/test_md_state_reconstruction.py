@@ -4,6 +4,10 @@ from unittest.mock import patch
 import numpy as np
 import torch
 
+from onpolicy.algorithms.r_mappo.algorithm.r_actor_critic import R_Actor
+from onpolicy.algorithms.r_mappo.algorithm.r_actor_critic_attention import (
+    R_Critic_Attention,
+)
 from onpolicy.config import get_config
 from onpolicy.envs.mec.mec import MEC
 from onpolicy.scripts.train.train_mec import parse_args
@@ -65,6 +69,44 @@ def _args(mode="last_obs", **overrides):
 
 def _batched(data):
     return {name: np.expand_dims(value, 0) for name, value in data.items()}
+
+
+def _fixed600_scale_args(n_uavs, n_gus, lifetime, mode="md_gru"):
+    starts = [
+        110, 180, 220, 180, 330, 180, 440, 180,
+        400, 400, 550, 180, 200, 400,
+    ][:2 * n_uavs]
+    return _args(
+        mode=mode,
+        n_UAVs=n_uavs,
+        n_GUs=n_gus,
+        max_UAVs_obs_concat=n_uavs,
+        max_UAVs_in_neighbor=n_uavs,
+        md_arrivals_min=5,
+        md_arrivals_max=5,
+        md_arrivals_per_region=[1, 4],
+        md_lifetime_min=lifetime,
+        md_lifetime_max=lifetime,
+        hotspot_layout_mode="episode_template4_600_200",
+        hotspot_layout_indices=[0],
+        uav_start_positions=starts,
+        neighbor_distance=520,
+        critic_neighbor_distance=520,
+        episode_layout_context=True,
+        episode_layout_context_units="meters_v2",
+        actor_message_mode="disabled",
+        spatial_flight_actor=True,
+        cartesian_flight=True,
+        completion_priority_user_sort=True,
+        hidden_size=256,
+        layer_N=2,
+        use_recurrent_policy=False,
+        use_naive_recurrent_policy=False,
+        use_atten_actor=False,
+        use_atten_critic=True,
+        ego_query_critic=True,
+        perform_with_local_state=False,
+    )
 
 
 def _direct_block(data, sender):
@@ -294,6 +336,71 @@ def test_six_uav_unreliable_gru_uses_generic_state_and_predictor_shapes():
         _batched(env.get_type_s_data())
     )
     assert np.all(np.isfinite(next_reconstructed))
+
+
+def test_fixed600_scale_gru_storage_and_type_s_payload_contracts():
+    cases = ((7, 60, 12, 7773), (5, 80, 16, 7774))
+    for n_uavs, n_gus, lifetime, schema_bits in cases:
+        args = _fixed600_scale_args(n_uavs, n_gus, lifetime)
+        env = MEC(args)
+        env.seed(2)
+        env.reset()
+        reconstructor = MDStateReconstructor(args, torch.device("cpu"))
+        type_s_data = env.get_type_s_data()
+        reconstructed, attention = reconstructor.reconstruct(
+            _batched(type_s_data)
+        )
+
+        assert env.type_s_schema_bits == schema_bits
+        assert env.type_s_schema_bits <= args.state_payload_bits
+        assert type_s_data["reception_mask"].shape == (n_uavs, n_uavs)
+        assert type_s_data["geometric_mask"].shape == (n_uavs, n_uavs)
+        assert np.all(np.diag(type_s_data["reception_mask"]))
+        assert np.all(np.diag(type_s_data["geometric_mask"]))
+        assert type_s_data["record_features"].shape == (n_uavs, 20, 10)
+        assert reconstructor.capacity == n_gus
+        assert reconstructor.packet_capacity == 20
+        assert reconstructor.bank.ids.shape == (n_uavs, n_gus)
+        assert len(reconstructor.session_buffers) == n_uavs
+        for buffer in reconstructor.session_buffers:
+            assert buffer.features.shape == (1, n_gus, lifetime, 7)
+            assert buffer.gaps.shape == (1, n_gus, lifetime)
+            assert buffer.lengths.shape == (1, n_gus)
+        assert reconstructed.shape == (1, n_uavs, env.state_dim)
+        assert attention.shape == (1, n_uavs, n_uavs)
+        assert np.all(np.isfinite(reconstructed))
+
+        last_obs_args = _fixed600_scale_args(
+            n_uavs, n_gus, lifetime, mode="last_obs"
+        )
+        last_obs = MDStateReconstructor(last_obs_args, torch.device("cpu"))
+        last_reconstructed, last_attention = last_obs.reconstruct(
+            _batched(type_s_data)
+        )
+        assert last_reconstructed.shape == reconstructed.shape
+        assert last_attention.shape == attention.shape
+        assert np.all(np.isfinite(last_reconstructed))
+
+
+def test_fixed600_scale_keeps_per_policy_actor_and_attention_critic_sizes():
+    parameter_contracts = []
+    for n_uavs, n_gus, lifetime in ((5, 60, 12), (7, 60, 12), (5, 80, 16)):
+        args = _fixed600_scale_args(n_uavs, n_gus, lifetime)
+        env = MEC(args)
+        actor = R_Actor(args, env.observation_space, env.action_space)
+        critic = R_Critic_Attention(args, env.state_space)
+        actor_count = sum(parameter.numel() for parameter in actor.parameters())
+        critic_count = sum(parameter.numel() for parameter in critic.parameters())
+        actor_shapes = tuple(tuple(parameter.shape) for parameter in actor.parameters())
+        critic_shapes = tuple(tuple(parameter.shape) for parameter in critic.parameters())
+        parameter_contracts.append(
+            (actor_count, critic_count, actor_shapes, critic_shapes)
+        )
+
+    assert parameter_contracts[1] == parameter_contracts[0]
+    assert parameter_contracts[2] == parameter_contracts[0]
+    per_policy_total = sum(parameter_contracts[0][:2])
+    assert 7 * per_policy_total > 5 * per_policy_total
 
 
 def test_heterogeneous_resources_preserve_total_budget_under_unreliable_mode():
