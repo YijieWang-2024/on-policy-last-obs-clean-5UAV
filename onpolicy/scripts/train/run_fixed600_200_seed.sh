@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-communication_mode="${1:?usage: $0 reliable|unreliable zero|last_obs|md_gru seed experiment_name [off|p0p7_10m_25m] [enabled|disabled] [state_deadline_ms] [advantage_deadline_ms] [critic_neighbor_distance] [communication_distance] [n_GUs] [md_lifetime]}"
+communication_mode="${1:?usage: $0 reliable|unreliable zero|last_obs|md_gru seed experiment_name [off|p0p7_10m_25m] [enabled|disabled] [state_deadline_ms] [advantage_deadline_ms] [critic_neighbor_distance] [communication_distance] [n_GUs] [md_lifetime] [n_UAVs]}"
 state_reconstruction="${2:?missing state reconstruction}"
 seed="${3:?missing seed}"
 experiment_name="${4:?missing experiment name}"
@@ -13,6 +13,7 @@ critic_neighbor_distance="${9:-}"
 communication_distance="${10:-520}"
 num_gus="${11:-60}"
 md_lifetime="${12:-12}"
+num_uavs="${13:-5}"
 
 case "$communication_mode:$state_reconstruction" in
   reliable:zero|unreliable:zero|unreliable:last_obs|unreliable:md_gru) ;;
@@ -39,6 +40,11 @@ if (( num_gus < required_md_capacity )); then
   echo "n_GUs must be at least arrivals-per-slot * md_lifetime ($required_md_capacity)" >&2
   exit 2
 fi
+case "$num_uavs" in
+  5) uav_start_positions=(110 180 220 180 330 180 440 180 400 400) ;;
+  7) uav_start_positions=(110 180 220 180 330 180 440 180 400 400 550 180 200 400) ;;
+  *) echo "n_UAVs must be 5 or 7 for the automatic Fixed600 starts: $num_uavs" >&2; exit 2 ;;
+esac
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 python_bin="${MARL_PYTHON:-/home/test/miniconda3/envs/marl/bin/python}"
 train_script="$repo_root/onpolicy/scripts/train/train_mec.py"
@@ -58,7 +64,7 @@ args=(
   --user_name test
   --seed "$seed"
   --share_policy
-  --n_UAVs 5
+  --n_UAVs "$num_uavs"
   --n_GUs "$num_gus"
   --max_GUs_in_range 20
   --dynamic_md
@@ -67,7 +73,7 @@ args=(
   --md_arrivals_per_region 1 4
   --hotspot_layout_mode episode_template4_600_200
   --five_uav_start_layout line
-  --uav_start_positions 110 180 220 180 330 180 440 180 400 400
+  --uav_start_positions "${uav_start_positions[@]}"
   --md_lifetime_min "$md_lifetime"
   --md_lifetime_max "$md_lifetime"
   --x_max 600
@@ -76,8 +82,8 @@ args=(
   --x_min_gu 0 --x_max_gu 600
   --y_min_gu 0 --y_max_gu 600
   --fix_hotspot
-  --max_UAVs_in_neighbor 5
-  --max_UAVs_obs_concat 5
+  --max_UAVs_in_neighbor "$num_uavs"
+  --max_UAVs_obs_concat "$num_uavs"
   --neighbor_R 520
   --state_is_k_hops
   --all_uav_k_hops

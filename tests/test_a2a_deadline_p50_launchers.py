@@ -432,6 +432,59 @@ def test_linux_seed_runner_accepts_scaled_md_population_and_lifetime(tmp_path):
     assert "--md_lifetime_min 16 --md_lifetime_max 16" in command
 
 
+def test_linux_seed_runner_accepts_seven_uavs_with_fixed_ordered_starts(tmp_path):
+    bash = (
+        Path(r"C:\Program Files\Git\bin\bash.exe")
+        if os.name == "nt"
+        else Path("/bin/bash")
+    )
+    capture = tmp_path / "python-arguments.txt"
+    fake_python = tmp_path / "fake-python.sh"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" > \"$CAPTURE_ARGS\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    environment = os.environ.copy()
+    environment["MARL_PYTHON"] = fake_python.as_posix()
+    environment["CAPTURE_ARGS"] = capture.as_posix()
+    result = subprocess.run(
+        [
+            str(bash),
+            (TRAIN_SCRIPTS / "run_fixed600_200_seed.sh").as_posix(),
+            "reliable",
+            "zero",
+            "1",
+            "linux-reliable-7uav60md-test",
+            "off",
+            "enabled",
+            str(STATE_DEADLINE_MS),
+            str(ADVANTAGE_DEADLINE_MS),
+            "260",
+            "260",
+            "60",
+            "12",
+            "7",
+        ],
+        cwd=REPO,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    command = capture.read_text(encoding="utf-8")
+    assert "--n_UAVs 7" in command
+    assert "--max_UAVs_in_neighbor 7" in command
+    assert "--max_UAVs_obs_concat 7" in command
+    assert "--n_GUs 60" in command
+    assert "--md_lifetime_min 12 --md_lifetime_max 12" in command
+    assert (
+        "--uav_start_positions 110 180 220 180 330 180 440 180 "
+        "400 400 550 180 200 400"
+    ) in command
+
+
 def test_linux_seed_runner_rejects_insufficient_md_capacity(tmp_path):
     bash = (
         Path(r"C:\Program Files\Git\bin\bash.exe")
